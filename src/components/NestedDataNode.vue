@@ -251,6 +251,117 @@ const deleteNestedItem = (idx) => {
   }
 };
 
+const duplicateNestedItem = (idx) => {
+  if (!Array.isArray(props.parentObj[props.arrayKey])) return;
+  const original = props.parentObj[props.arrayKey][idx];
+  if (!original) return;
+  
+  const clone = JSON.parse(JSON.stringify(original));
+  
+  // Append _copia to ID if primary key is present
+  const pKey = effectiveFields.value[0] || Object.keys(clone).find(k => k.startsWith('id_') || k.endsWith('_id') || k === 'id');
+  if (pKey && typeof clone[pKey] === 'string' && clone[pKey].trim() !== '') {
+    clone[pKey] = `${clone[pKey]}_copia`;
+  }
+  
+  props.parentObj[props.arrayKey].splice(idx + 1, 0, clone);
+};
+
+const isMoveModalOpen = ref(false);
+const itemToMoveIndex = ref(null);
+const availableMoveTargets = ref([]);
+const selectedTargetParent = ref(null);
+
+const getItemLabel = (item, fallback) => {
+  if (!item || typeof item !== 'object') return fallback;
+  const idKey = Object.keys(item).find(k => k.startsWith('id_') || k === 'id');
+  const labelKey = Object.keys(item).find(k => isPrimitive(item[k]) && k !== 'id' && !k.startsWith('id_') && typeof item[k] === 'string' && item[k].trim() !== '')
+    || Object.keys(item).find(k => isPrimitive(item[k]) && typeof item[k] === 'string' && item[k].trim() !== '');
+  
+  const idVal = idKey ? String(item[idKey]) : '';
+  const labelVal = labelKey ? String(item[labelKey]) : '';
+  
+  if (idVal && labelVal && idVal !== labelVal) {
+    return `${idVal} - ${labelVal}`;
+  }
+  return labelVal || idVal || fallback;
+};
+
+const openMoveModal = (idx) => {
+  itemToMoveIndex.value = idx;
+  selectedTargetParent.value = null;
+  const targets = [];
+  
+  const walkForTargets = (obj, pathPrefix = '', parentLabel = 'Arrel') => {
+    if (!obj || typeof obj !== 'object') return;
+    
+    if (Array.isArray(obj)) {
+      obj.forEach((elem, elemIdx) => {
+        if (elem && typeof elem === 'object') {
+          const elemP = `${pathPrefix}[${elemIdx}]`;
+          const elemLbl = getItemLabel(elem, `${parentLabel} #${elemIdx + 1}`);
+          
+          if (Array.isArray(elem[props.arrayKey]) && elem !== props.parentObj) {
+            targets.push({
+              container: elem,
+              path: elemP,
+              label: `${elemLbl}`
+            });
+          }
+          
+          Object.entries(elem).forEach(([k, v]) => {
+            if (k !== '_hierarchy_schema' && Array.isArray(v)) {
+              walkForTargets(v, `${elemP}.${k}`, elemLbl);
+            }
+          });
+        }
+      });
+    } else {
+      Object.entries(obj).forEach(([k, v]) => {
+        if (k === 'editor_metadata' || k === '_hierarchy_schema') return;
+        const curP = pathPrefix ? `${pathPrefix}.${k}` : k;
+        if (Array.isArray(v)) {
+          walkForTargets(v, curP, k);
+        } else if (typeof v === 'object' && v !== null) {
+          if (Array.isArray(v[props.arrayKey]) && v !== props.parentObj) {
+            targets.push({
+              container: v,
+              path: curP,
+              label: `${k} (${curP})`
+            });
+          }
+          walkForTargets(v, curP, k);
+        }
+      });
+    }
+  };
+
+  walkForTargets(store.excelJsonData, '');
+  availableMoveTargets.value = targets;
+  if (targets.length > 0) {
+    selectedTargetParent.value = targets[0].container;
+  }
+  isMoveModalOpen.value = true;
+};
+
+const executeMoveItem = () => {
+  if (itemToMoveIndex.value === null || !selectedTargetParent.value) return;
+  const idx = itemToMoveIndex.value;
+  const list = props.parentObj[props.arrayKey];
+  if (!Array.isArray(list) || idx < 0 || idx >= list.length) return;
+  
+  const [movedItem] = list.splice(idx, 1);
+  
+  if (!Array.isArray(selectedTargetParent.value[props.arrayKey])) {
+    selectedTargetParent.value[props.arrayKey] = [];
+  }
+  
+  selectedTargetParent.value[props.arrayKey].push(movedItem);
+  
+  isMoveModalOpen.value = false;
+  itemToMoveIndex.value = null;
+};
+
 const getItemPath = (idx, fieldKey) => {
   return fieldKey !== '' ? `${fullPath.value}.${idx}.${fieldKey}` : `${fullPath.value}.${idx}`;
 };
@@ -326,7 +437,7 @@ const getItemPath = (idx, fieldKey) => {
               <th v-for="h in getLeafTableHeaders" :key="h" style="padding: 6px 8px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 600;">
                 {{ h }}
               </th>
-              <th style="width: 40px; text-align: center; border-bottom: 2px solid var(--border-color);"></th>
+              <th style="width: 90px; text-align: center; border-bottom: 2px solid var(--border-color);">Accions</th>
             </tr>
           </thead>
           <tbody>
@@ -342,15 +453,35 @@ const getItemPath = (idx, fieldKey) => {
                 />
               </td>
               <td style="padding: 4px 6px; border-bottom: 1px solid var(--border-color); text-align: center;">
-                <button 
-                  type="button"
-                  class="btn-icon-only text-danger" 
-                  style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
-                  title="Elimina fila"
-                  @click="deleteNestedItem(rIdx)"
-                >
-                  🗑️
-                </button>
+                <div style="display: flex; align-items: center; justify-content: center; gap: 4px;">
+                  <button 
+                    type="button"
+                    class="btn-icon-only" 
+                    style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+                    title="Duplica fila"
+                    @click="duplicateNestedItem(rIdx)"
+                  >
+                    📋
+                  </button>
+                  <button 
+                    type="button"
+                    class="btn-icon-only" 
+                    style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+                    title="Trasllada fila a un altre pare"
+                    @click="openMoveModal(rIdx)"
+                  >
+                    ↔️
+                  </button>
+                  <button 
+                    type="button"
+                    class="btn-icon-only text-danger" 
+                    style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+                    title="Elimina fila"
+                    @click="deleteNestedItem(rIdx)"
+                  >
+                    🗑️
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -370,17 +501,37 @@ const getItemPath = (idx, fieldKey) => {
           <!-- Card Header -->
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; padding-bottom: 0.25rem; border-bottom: 1px dashed var(--border-color);">
             <span style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary);">
-              #{{ idx + 1 }} {{ arrayKey }}
+              #{{ idx + 1 }} {{ arrayKey }}: <strong>{{ getItemLabel(item, `Element #${idx + 1}`) }}</strong>
             </span>
-            <button 
-              type="button"
-              class="btn-icon-only text-danger" 
-              style="height: 22px; width: 22px; min-width: 22px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
-              title="Elimina element"
-              @click="deleteNestedItem(idx)"
-            >
-              🗑️
-            </button>
+            <div style="display: flex; align-items: center; gap: 4px;">
+              <button 
+                type="button"
+                class="btn btn-secondary" 
+                style="padding: 2px 6px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 3px;"
+                title="Duplica aquest element i totes les mebres aniuades"
+                @click="duplicateNestedItem(idx)"
+              >
+                📋 Duplica
+              </button>
+              <button 
+                type="button"
+                class="btn btn-secondary" 
+                style="padding: 2px 6px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 3px;"
+                title="Trasllada aquest element a un altre pare"
+                @click="openMoveModal(idx)"
+              >
+                ↔️ Trasllada
+              </button>
+              <button 
+                type="button"
+                class="btn-icon-only text-danger" 
+                style="height: 22px; width: 22px; min-width: 22px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+                title="Elimina element"
+                @click="deleteNestedItem(idx)"
+              >
+                🗑️
+              </button>
+            </div>
           </div>
 
           <!-- Primitive Fields Form Grid (Key-Value style) -->
@@ -410,5 +561,41 @@ const getItemPath = (idx, fieldKey) => {
         </div>
       </div>
     </template>
+
+    <!-- Modal for Moving Item to Another Parent -->
+    <div class="modal-overlay" :style="{ display: isMoveModalOpen ? 'flex' : 'none' }">
+      <div class="modal-content" style="max-width: 450px;">
+        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; margin-bottom: 0.75rem;">
+          <h4 style="margin: 0; border: none; font-size: 0.95rem; font-weight: 700;">↔️ Traslladar element {{ arrayKey }}</h4>
+          <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.3rem; cursor: pointer;" @click="isMoveModalOpen = false">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 0.5rem 0;">
+          <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0; margin-bottom: 0.75rem;">
+            Tria el node pare de destí on vols traslladar aquest element de <strong>{{ arrayKey }}</strong>:
+          </p>
+
+          <div v-if="availableMoveTargets.length === 0" style="font-size: 0.8rem; color: var(--text-muted); font-style: italic; padding: 0.75rem; background: rgba(0,0,0,0.03); border-radius: 4px; text-align: center;">
+            No s'ha trobat cap altre pare disponible a l'arbre per rebre aquest element de {{ arrayKey }}.
+          </div>
+
+          <div v-else style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Destí:</label>
+            <select v-model="selectedTargetParent" class="data-input" style="width: 100%; height: 36px; font-size: 0.82rem;">
+              <option v-for="(tgt, tIdx) in availableMoveTargets" :key="tIdx" :value="tgt.container">
+                {{ tgt.label }}
+              </option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
+          <button type="button" class="btn btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem;" @click="isMoveModalOpen = false">
+            Cancel·la
+          </button>
+          <button type="button" class="btn btn-primary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem;" :disabled="!selectedTargetParent" @click="executeMoveItem">
+            ↔️ Trasllada Aquí
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
