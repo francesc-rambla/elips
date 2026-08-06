@@ -55,20 +55,23 @@ const isRootSheet = (name) => {
   return !name.includes('.');
 };
 
-const getTopLevelChildArrayKeys = (sheetName, sheetData) => {
-  const keys = new Set();
-  const schemaChildren = store.hierarchySchema?.[sheetName]?.children || [];
-  schemaChildren.forEach(k => keys.add(k));
+const getRootSchema = (sheetName) => {
+  const dict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
+  return dict[sheetName] || { fields: [], children: {} };
+};
 
+const getTopLevelChildSchemas = (sheetName, sheetData) => {
+  const rootS = getRootSchema(sheetName);
+  const res = { ...(rootS.children || {}) };
+  
   if (sheetData && typeof sheetData === 'object' && !Array.isArray(sheetData)) {
     Object.keys(sheetData).forEach(k => {
-      if (k !== '_hierarchy_schema' && !isPrimitive(sheetData[k])) {
-        keys.add(k);
+      if (k !== '_hierarchy_schema' && !isPrimitive(sheetData[k]) && !(k in res)) {
+        res[k] = { fields: [], children: {} };
       }
     });
   }
-  
-  return Array.from(keys);
+  return res;
 };
 
 const scrollToTargetDataPath = (path) => {
@@ -1053,11 +1056,11 @@ onUnmounted(() => {
             </div>
             
             <!-- Integrated Hierarchical Nested Sub-Tables -->
-            <template v-for="subArrayKey in getTopLevelChildArrayKeys(name, sheetData)" :key="subArrayKey">
+            <template v-for="(subSchema, subKey) in getTopLevelChildSchemas(name, sheetData)" :key="subKey">
               <NestedDataNode 
                 :parentObj="sheetData"
-                :arrayKey="subArrayKey"
-                :schemaPath="`${name}.${subArrayKey}`"
+                :arrayKey="subKey"
+                :schema="subSchema"
                 :parentPath="name"
               />
             </template>

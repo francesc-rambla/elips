@@ -11,6 +11,10 @@ const props = defineProps({
     type: String,
     required: true
   },
+  schema: {
+    type: Object,
+    default: () => ({ fields: [], children: {} })
+  },
   schemaPath: {
     type: String,
     default: ''
@@ -32,19 +36,15 @@ const fullPath = computed(() => {
   return props.parentPath ? `${props.parentPath}.${props.arrayKey}` : props.arrayKey;
 });
 
-const effectiveSchemaPath = computed(() => {
-  if (props.schemaPath) {
-    return cleanPath(props.schemaPath);
-  }
-  return cleanPath(fullPath.value);
-});
-
 const nodeSchema = computed(() => {
-  const schemaDict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
-  if (effectiveSchemaPath.value && schemaDict[effectiveSchemaPath.value]) {
-    return schemaDict[effectiveSchemaPath.value];
+  if (props.schema && (props.schema.fields || props.schema.children)) {
+    return props.schema;
   }
-  // Smart Fallback: search schemaDict for any key ending with .<arrayKey> or matching <arrayKey>
+  const schemaDict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
+  const effPath = cleanPath(props.schemaPath || fullPath.value);
+  if (effPath && schemaDict[effPath]) {
+    return schemaDict[effPath];
+  }
   if (props.arrayKey) {
     for (const [sKey, sVal] of Object.entries(schemaDict)) {
       if (sKey === props.arrayKey || sKey.endsWith(`.${props.arrayKey}`)) {
@@ -52,25 +52,37 @@ const nodeSchema = computed(() => {
       }
     }
   }
-  return { fields: [], children: [] };
+  return { fields: [], children: {} };
+});
+
+const childSchemas = computed(() => {
+  const children = nodeSchema.value.children;
+  if (children && typeof children === 'object' && !Array.isArray(children)) {
+    return children;
+  }
+  const res = {};
+  if (Array.isArray(children)) {
+    children.forEach(cKey => {
+      res[cKey] = { fields: [], children: {} };
+    });
+  }
+  return res;
 });
 
 const childKeys = computed(() => {
-  const schemaChildren = nodeSchema.value.children || [];
-  const itemChildren = new Set(schemaChildren);
-  
+  const keys = new Set(Object.keys(childSchemas.value));
   if (Array.isArray(props.parentObj?.[props.arrayKey])) {
     props.parentObj[props.arrayKey].forEach(item => {
       if (item && typeof item === 'object') {
         Object.keys(item).forEach(k => {
           if (Array.isArray(item[k])) {
-            itemChildren.add(k);
+            keys.add(k);
           }
         });
       }
     });
   }
-  return Array.from(itemChildren);
+  return Array.from(keys);
 });
 
 const isLeafLevel = computed(() => {
@@ -159,7 +171,6 @@ const deleteNestedItem = (idx) => {
 const getItemPath = (idx, fieldKey) => {
   return fieldKey !== '' ? `${fullPath.value}.${idx}.${fieldKey}` : `${fullPath.value}.${idx}`;
 };
-
 </script>
 
 <template>
@@ -273,7 +284,7 @@ const getItemPath = (idx, fieldKey) => {
             <NestedDataNode 
               :parentObj="item"
               :arrayKey="cKey"
-              :schemaPath="`${effectiveSchemaPath}.${cKey}`"
+              :schema="childSchemas[cKey] || { fields: [], children: {} }"
               :parentPath="getItemPath(idx, '')"
             />
           </template>

@@ -355,20 +355,27 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
             ref_k = None
             fields = [k for k, v in data.items() if not isinstance(v, (list, dict))]
             
-        if path_str not in hierarchy_schema:
-            hierarchy_schema[path_str] = {'ref_key': ref_k, 'fields': fields, 'children': []}
-        else:
-            hierarchy_schema[path_str]['ref_key'] = ref_k
-            if fields:
-                hierarchy_schema[path_str]['fields'] = fields
+        # Build recursive schema tree
+        curr_schema_dict = hierarchy_schema
+        for idx, part in enumerate(parts):
+            is_last = (idx == len(parts) - 1)
+            if part not in curr_schema_dict:
+                curr_schema_dict[part] = {
+                    'sheet': raw_name if is_last else '',
+                    'kind': kind if is_last else 'tabular',
+                    'ref_key': ref_k if is_last else None,
+                    'fields': fields if is_last else [],
+                    'children': {}
+                }
+            else:
+                if is_last:
+                    curr_schema_dict[part]['sheet'] = raw_name
+                    curr_schema_dict[part]['kind'] = kind
+                    curr_schema_dict[part]['ref_key'] = ref_k
+                    if fields:
+                        curr_schema_dict[part]['fields'] = fields
             
-        if len(parts) > 1:
-            parent_path_str = '.'.join(parts[:-1])
-            sub_key = parts[-1]
-            if parent_path_str not in hierarchy_schema:
-                hierarchy_schema[parent_path_str] = {'ref_key': None, 'fields': [], 'children': []}
-            if sub_key not in hierarchy_schema[parent_path_str]['children']:
-                hierarchy_schema[parent_path_str]['children'].append(sub_key)
+            curr_schema_dict = curr_schema_dict[part]['children']
         
         if len(parts) == 1:
             root[parts[0]] = data if data is not None else {}
