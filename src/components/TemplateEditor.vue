@@ -105,14 +105,26 @@ const emitGenerate = () => {
   emit('generate');
 };
 
+const isInternalMetadataKey = (k) => {
+  return k === 'editor_metadata' || k === '_hierarchy_schema';
+};
+
 // Resolve nested object path inside excelJsonData
 const resolvePath = (obj, path) => {
   if (!obj || !path) return null;
-  if (!path.includes('.')) {
-    return obj[path];
-  }
   
-  const parts = path.split('.');
+  let effectivePath = path;
+  if (activeLoopContext.value && activeLoopContext.value.iterator) {
+    const iter = activeLoopContext.value.iterator;
+    if (effectivePath === iter) {
+      effectivePath = activeLoopContext.value.arrayPath;
+    } else if (effectivePath.startsWith(`${iter}.`)) {
+      const sub = effectivePath.slice(iter.length + 1);
+      effectivePath = `${activeLoopContext.value.arrayPath}.${sub}`;
+    }
+  }
+
+  const parts = effectivePath.split('.');
   let cur = obj;
   for (const p of parts) {
     if (cur && typeof cur === 'object') {
@@ -179,8 +191,8 @@ const getActiveLoopContext = (targetNode = null) => {
       
       let columns = [];
       const arr = resolvePath(store.excelJsonData, arrayPath);
-      if (arr && Array.isArray(arr) && arr.length > 0) {
-        columns = Object.keys(arr[0]);
+      if (arr && Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
+        columns = Object.keys(arr[0]).filter(k => !isInternalMetadataKey(k));
       }
       
       return {
@@ -207,6 +219,7 @@ const availableVariables = computed(() => {
   if (activeLoopContext.value) {
     const ctx = activeLoopContext.value;
     for (const col of ctx.columns) {
+      if (isInternalMetadataKey(col)) continue;
       list.push({ 
         path: `${ctx.iterator}.${col}`, 
         label: `Bucle actiu (${ctx.iterator}.${col})`, 
@@ -217,87 +230,94 @@ const availableVariables = computed(() => {
   }
 
   // 2. All sheets, arrays, array expressions, and scalar variables
-  for (const [sheetName, sheetData] of Object.entries(store.excelJsonData)) {
-    if (sheetName === 'editor_metadata') continue;
-
-    if (Array.isArray(sheetData)) {
-      // Tabular Sheet (e.g. Lots)
-      list.push({
-        path: sheetName,
-        label: `Llista ${sheetName}`,
-        category: 'array',
-        isContext: false
-      });
-      list.push({
-        path: `${sheetName}|length`,
-        label: `Nombre d'elements a ${sheetName}`,
-        category: 'arrayExpr',
-        isContext: false
-      });
-      
-      if (sheetData.length > 0) {
-        for (const k of Object.keys(sheetData[0])) {
-          list.push({
-            path: `${sheetName}[0].${k}`,
-            label: `Primer element (${sheetName}[0].${k})`,
-            category: 'arrayItem',
-            isContext: false
-          });
-        }
+  const walkVars = (obj, pathPrefix = '') => {
+    if (!obj || typeof obj !== 'object') return;
+    
+    if (Array.isArray(obj)) {
+      if (pathPrefix) {
+        list.push({ path: pathPrefix, label: `Llista ${pathPrefix}`, category: 'array', isContext: false });
+        list.push({ path: `${pathPrefix}|length`, label: `Nombre d'elements a ${pathPrefix}`, category: 'arrayExpr', isContext: false });
       }
-    } else if (typeof sheetData === 'object' && sheetData !== null) {
-      for (const [k, v] of Object.entries(sheetData)) {
-        if (Array.isArray(v)) {
-          list.push({
-            path: `${sheetName}.${k}`,
-            label: `Llista ${sheetName}.${k}`,
-            category: 'array',
-            isContext: false
-          });
-          list.push({
-            path: `${sheetName}.${k}|length`,
-            label: `Nombre d'elements a ${sheetName}.${k}`,
-            category: 'arrayExpr',
-            isContext: false
-          });
-        } else if (typeof v === 'object' && v !== null) {
-          for (const [subK, subV] of Object.entries(v)) {
-            list.push({
-              path: `${sheetName}.${k}.${subK}`,
-              label: `${sheetName}.${k}.${subK}`,
-              category: 'scalar',
-              isContext: false
-            });
+      if (obj.length > 0 && typeof obj[0] === 'object' && obj[0] !== null) {
+        Object.entries(obj[0]).forEach(([k, v]) => {
+          if (isInternalMetadataKey(k)) return;
+          const childP = pathPrefix ? `${pathPrefix}.${k}` : k;
+          if (Array.isArray(v)) {
+            walkVars(v, childP);
+          } else {
+            list.push({ path: `${pathPrefix}[0].${k}`, label: `Primer element (${pathPrefix}[0].${k})`, category: 'arrayItem', isContext: false });
           }
-        } else {
-          list.push({
-            path: `${sheetName}.${k}`,
-            label: `${sheetName}.${k}`,
-            category: 'scalar',
-            isContext: false
-          });
-        }
+        });
       }
+    } else {
+      Object.entries(obj).forEach(([k, v]) => {
+        if (isInternalMetadataKey(k)) return;
+        const childP = pathPrefix ? `${pathPrefix}.${k}` : k;
+        if (Array.isArray(v)) {
+          walkVars(v, childP);
+        } else if (typeof v === 'object' && v !== null) {
+          walkVars(v, childP);
+        } else {
+          list.push({ path: childP, label: childP, category: 'scalar', isContext: false });
+        }
+      });
     }
-  }
+  };
+
+  walkVars(store.excelJsonData, '');
   return list;
 });
 
 const availableArrays = computed(() => {
   if (!store.excelJsonData) return [];
-  const list = [];
-  for (const [sheetName, sheetData] of Object.entries(store.excelJsonData)) {
-    if (Array.isArray(sheetData)) {
-      list.push(sheetName);
-    } else if (typeof sheetData === 'object' && sheetData !== null) {
-      for (const [k, v] of Object.entries(sheetData)) {
-        if (Array.isArray(v)) {
-          list.push(`${sheetName}.${k}`);
-        }
+  const setList = new Set();
+  
+  const walkArrays = (obj, pathPrefix = '') => {
+    if (!obj || typeof obj !== 'object') return;
+    
+    if (Array.isArray(obj)) {
+      if (pathPrefix) setList.add(pathPrefix);
+      if (obj.length > 0 && typeof obj[0] === 'object' && obj[0] !== null) {
+        Object.entries(obj[0]).forEach(([k, v]) => {
+          if (isInternalMetadataKey(k)) return;
+          const childP = pathPrefix ? `${pathPrefix}.${k}` : k;
+          if (Array.isArray(v)) {
+            setList.add(childP);
+            walkArrays(v, childP);
+          }
+        });
       }
+    } else {
+      Object.entries(obj).forEach(([k, v]) => {
+        if (isInternalMetadataKey(k)) return;
+        const childP = pathPrefix ? `${pathPrefix}.${k}` : k;
+        if (Array.isArray(v)) {
+          setList.add(childP);
+          walkArrays(v, childP);
+        } else if (typeof v === 'object' && v !== null) {
+          walkArrays(v, childP);
+        }
+      });
+    }
+  };
+
+  walkArrays(store.excelJsonData, '');
+
+  // Add iterator-relative array options if inside an active FOR loop!
+  if (activeLoopContext.value) {
+    const ctx = activeLoopContext.value;
+    if (ctx.columns) {
+      ctx.columns.forEach(col => {
+        if (isInternalMetadataKey(col)) return;
+        const arr = resolvePath(store.excelJsonData, `${ctx.iterator}.${col}`);
+        if (arr && Array.isArray(arr)) {
+          setList.add(`${ctx.iterator}.${col}`);
+        }
+      });
     }
   }
-  return list;
+
+  return Array.from(setList);
 });
 
 // Detect numeric column in Excel to set default alignment
