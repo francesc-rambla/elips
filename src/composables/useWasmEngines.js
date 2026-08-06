@@ -1509,7 +1509,7 @@ def _filter_empty_rows(data):
     if isinstance(data, dict):
         new_dict = {}
         for k, v in data.items():
-            if k == 'editor_metadata':
+            if k in ('editor_metadata', '_hierarchy_schema'):
                 new_dict[k] = v
             else:
                 new_dict[k] = _filter_empty_rows(v)
@@ -1518,7 +1518,8 @@ def _filter_empty_rows(data):
         filtered_list = []
         for item in data:
             if isinstance(item, dict):
-                is_empty = all(v in (0, 0.0, '', None, False) for v in item.values())
+                primitive_vals = [v for k, v in item.items() if not isinstance(v, (list, dict))]
+                is_empty = all(v in (0, 0.0, '', None, False) for v in primitive_vals) if primitive_vals else False
                 if not is_empty:
                     filtered_list.append(_filter_empty_rows(item))
             else:
@@ -1643,16 +1644,24 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
     
     // Clean all-zeros or empty rows to empty strings to avoid showing '0' for blank formula rows
     Object.keys(parsed).forEach(sheetName => {
+      if (sheetName === '_hierarchy_schema') return;
       const sheetData = parsed[sheetName];
       if (Array.isArray(sheetData)) {
         sheetData.forEach(row => {
-          const isAllZeros = Object.values(row).every(val => 
-            val === 0 || val === 0.0 || val === '' || val === null || val === undefined || val === false
-          );
-          if (isAllZeros) {
-            Object.keys(row).forEach(key => {
-              row[key] = '';
-            });
+          if (row && typeof row === 'object') {
+            const primitiveValues = Object.entries(row)
+              .filter(([k, v]) => !Array.isArray(v) && typeof v !== 'object')
+              .map(([k, v]) => v);
+            const isAllZeros = primitiveValues.length > 0 && primitiveValues.every(val => 
+              val === 0 || val === 0.0 || val === '' || val === null || val === undefined || val === false
+            );
+            if (isAllZeros) {
+              Object.keys(row).forEach(key => {
+                if (!Array.isArray(row[key]) && typeof row[key] !== 'object') {
+                  row[key] = '';
+                }
+              });
+            }
           }
         });
       }
@@ -1662,6 +1671,12 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
     
     // Save to in.json in Pyodide FS as well
     _pyodide.FS.writeFile('/work/in.json', new TextEncoder().encode(cleanedJsonStr));
+    
+    // Log structure details clearly to app log terminal
+    if (parsed._hierarchy_schema) {
+      store.addLog(`Esquema jeràrquic del llibre Excel (_hierarchy_schema):\n${JSON.stringify(parsed._hierarchy_schema, null, 2)}`, 'info');
+    }
+    store.addLog(`Arbre JSON de dades carregat des de l'Excel:\n${JSON.stringify(parsed, null, 2)}`, 'info');
     
     return parsed;
   };
