@@ -296,14 +296,6 @@ def _extract_flat_rows_for_sheet(data, raw_sheet_name, has_prefixed_sheets, vali
     return flat_rows
 
 def excel_to_json(excel_path, date_format='iso', strict=False):
-    if os.path.exists('/work/in.json'):
-        try:
-            with open('/work/in.json', 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return _cast_numeric_strings(data)
-        except Exception:
-            pass
-
     wb = load_workbook(excel_path, data_only=True)
     parsed = {}
     
