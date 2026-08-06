@@ -168,17 +168,23 @@ const items = computed(() => {
   return props.parentObj[props.arrayKey];
 });
 
-const isPrimitive = (val) => {
-  return !Array.isArray(val) && (typeof val !== 'object' || val === null);
-};
+const effectiveFields = computed(() => {
+  const schemaFields = nodeSchema.value.fields || [];
+  if (schemaFields.length > 0) {
+    return schemaFields;
+  }
+  if (items.value.length > 0 && typeof items.value[0] === 'object' && items.value[0] !== null) {
+    return Object.keys(items.value[0]).filter(k => k !== '_hierarchy_schema' && isPrimitive(items.value[0][k]));
+  }
+  return [];
+});
 
 const getPrimitiveFields = (item) => {
   if (!item || typeof item !== 'object') return {};
   const res = {};
   
-  // First include fields from schema
-  const schemaFields = nodeSchema.value.fields || [];
-  schemaFields.forEach(f => {
+  // First include fields from effectiveFields
+  effectiveFields.value.forEach(f => {
     if (f !== '_hierarchy_schema') {
       res[f] = item[f] !== undefined ? item[f] : '';
     }
@@ -194,12 +200,7 @@ const getPrimitiveFields = (item) => {
 };
 
 const getLeafTableHeaders = computed(() => {
-  const schemaFields = nodeSchema.value.fields || [];
-  if (schemaFields.length > 0) return schemaFields;
-  if (items.value.length > 0 && typeof items.value[0] === 'object') {
-    return Object.keys(items.value[0]).filter(k => k !== '_hierarchy_schema' && isPrimitive(items.value[0][k]));
-  }
-  return ['valor'];
+  return effectiveFields.value.length > 0 ? effectiveFields.value : ['valor'];
 });
 
 const addNestedItem = () => {
@@ -257,7 +258,7 @@ const getItemPath = (idx, fieldKey) => {
           📜 Fulla (Vista Tabular)
         </span>
         <span v-else style="font-size: 0.68rem; padding: 2px 6px; background: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-radius: 4px; font-weight: 500;">
-          📁 Intermedi (Vista Formularia: claus=[{{ (nodeSchema.fields || []).join(', ') }}], fills=[{{ childKeys.join(', ') }}])
+          📁 Intermedi (Vista Formularia: claus=[{{ effectiveFields.join(', ') }}], fills=[{{ childKeys.join(', ') }}])
         </span>
       </div>
 
