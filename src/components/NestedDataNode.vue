@@ -268,13 +268,19 @@ const getItemPath = (idx, fieldKey) => {
 
     <!-- Collapsible Debug Inspector -->
     <div v-if="showDebug" style="margin-bottom: 0.75rem; padding: 0.5rem; background: #1e1e1e; color: #4ec9b0; border-radius: 4px; font-family: monospace; font-size: 0.72rem; overflow-x: auto;">
-      <div style="color: #ce9178; font-weight: bold; margin-bottom: 4px;">🔍 Diagnòstic Jeràrquic ({{ arrayKey }}):</div>
+      <div style="color: #ce9178; font-weight: bold; margin-bottom: 4px;">🔍 Traça de Paràmetres ({{ arrayKey }}):</div>
       <pre style="margin: 0; white-space: pre-wrap;">{{ JSON.stringify({
         arrayKey,
+        parentPath: props.parentPath,
+        schemaPathProp: props.schemaPath,
+        calculatedFullPath: fullPath,
+        cleanedSchemaPath: cleanPath(props.schemaPath || fullPath),
+        receivedPropSchema: props.schema,
+        resolvedNodeSchema: nodeSchema,
+        resolvedNodeFields: nodeSchema.fields,
+        resolvedChildKeys: childKeys,
         isLeafLevel: isLeafLevel,
-        nodeSchemaFields: nodeSchema.fields,
-        childKeys: childKeys,
-        nodeSchema: nodeSchema
+        availableSchemaDictKeys: Object.keys(store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {})
       }, null, 2) }}</pre>
     </div>
 
