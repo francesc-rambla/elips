@@ -695,6 +695,85 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleCellKeyDown);
 });
+const loadMockData = () => {
+  const mockTreeSchema = {
+    "pres": {
+      "sheet": "OUT_pres",
+      "kind": "kv",
+      "ref_key": null,
+      "fields": ["pressupost", "import", "tipus_iva", "iva"],
+      "children": {
+        "parts": {
+          "sheet": "OUT_pres.parts",
+          "kind": "tabular",
+          "ref_key": null,
+          "fields": ["id_partida", "partida", "import", "lot"],
+          "children": {
+            "activitats": {
+              "sheet": "OUT_pres.parts.activitats",
+              "kind": "tabular",
+              "ref_key": "id_partida",
+              "fields": ["id_activitat", "descripcio_activitat", "import"],
+              "children": {
+                "cost": {
+                  "sheet": "OUT_pres.parts.activitats.cost",
+                  "kind": "tabular",
+                  "ref_key": "id_activitat",
+                  "fields": ["element", "unitats", "preu_unitari", "import"],
+                  "children": {}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  };
+
+  store.excelJsonData = {
+    "pres": {
+      "pressupost": "Pressupost de Prova 2026",
+      "import": 25000,
+      "tipus_iva": 21,
+      "iva": 5250,
+      "parts": [
+        {
+          "id_partida": "PA1",
+          "partida": "Partida 1: Obres Generals",
+          "import": 15000,
+          "lot": "Lot A",
+          "activitats": [
+            {
+              "id_activitat": "ACT1",
+              "descripcio_activitat": "Moviment de terres",
+              "import": 5000,
+              "cost": [
+                {
+                  "element": "Excavadora",
+                  "unitats": 10,
+                  "preu_unitari": 300,
+                  "import": 3000
+                },
+                {
+                  "element": "Manobre de reforç",
+                  "unitats": 40,
+                  "preu_unitari": 50,
+                  "import": 2000
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "_hierarchy_schema": mockTreeSchema
+    },
+    "_hierarchy_schema": mockTreeSchema
+  };
+  
+  store.hierarchySchema = mockTreeSchema;
+  const pName = localStorage.getItem('currentProjectName') || 'Default';
+  localStorage.setItem(`${pName}:hierarchySchema`, JSON.stringify(mockTreeSchema));
+};
 </script>
 
 <template>
@@ -704,7 +783,17 @@ onUnmounted(() => {
         <h3 style="margin-bottom:0.25rem; font-size: 1.1rem; border: none; padding-bottom: 0;">Editor i Estructura de Dades</h3>
         <p style="font-size:0.75rem; color:var(--text-muted)">Modifiqueu els valors directament i exporteu de tornada a l'Excel.</p>
       </div>
-      <div style="display: flex; gap: 8px; align-items: center;">
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <!-- Test Data Button -->
+        <button 
+          class="btn btn-secondary" 
+          style="width: auto; padding: 0.4rem 0.8rem; font-size:0.75rem; background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-color: var(--color-primary, #0284c7);"
+          @click="loadMockData"
+          title="Carrega un conjunt de dades jeràrquiques codificats per fer proves de l'editor"
+        >
+          🧪 Carrega Dades de Prova
+        </button>
+
         <!-- Segmented Control for Layout (only if not in raw JSON view) -->
         <div v-if="isExcelLoaded && !showJsonView" class="segmented-control" style="display: inline-flex; border: 1px solid var(--border-color); border-radius: 6px; padding: 2px; background: var(--bg-tertiary);">
           <button 
