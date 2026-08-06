@@ -142,11 +142,19 @@ const getItemPath = (idx, fieldKey) => {
   return fieldKey !== '' ? `${fullPath.value}.${idx}.${fieldKey}` : `${fullPath.value}.${idx}`;
 };
 
-const ensureChildArray = (item, cKey) => {
-  if (!item[cKey] || !Array.isArray(item[cKey])) {
-    item[cKey] = [];
+watch(() => [props.parentObj, props.arrayKey, childKeys.value], () => {
+  if (items.value && Array.isArray(items.value)) {
+    items.value.forEach(item => {
+      if (item && typeof item === 'object') {
+        childKeys.value.forEach(cKey => {
+          if (!item[cKey] || !Array.isArray(item[cKey])) {
+            item[cKey] = [];
+          }
+        });
+      }
+    });
   }
-};
+}, { immediate: true, deep: true });
 </script>
 
 <template>
@@ -162,49 +170,49 @@ const ensureChildArray = (item, cKey) => {
       <button 
         type="button"
         class="btn btn-secondary" 
-        style="width: auto; padding: 3px 10px; font-size: 0.75rem; border-radius: 4px; display: flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
+        style="padding: 0.3rem 0.6rem; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;"
         @click="addNestedItem"
       >
         ➕ Afegeix {{ arrayKey }}
       </button>
     </div>
 
-    <!-- Empty List State -->
-    <div v-if="items.length === 0" style="font-size: 0.75rem; color: var(--text-muted); font-style: italic; text-align: center; padding: 0.75rem 0;">
-      Sense elements a {{ arrayKey }}. Utilitzeu "➕ Afegeix {{ arrayKey }}" per crear el primer element.
+    <!-- Empty State -->
+    <div v-if="items.length === 0" style="padding: 0.75rem; font-size: 0.8rem; color: var(--text-muted); font-style: italic; background: rgba(0,0,0,0.02); border-radius: 4px; text-align: center;">
+      Sense registres a <strong style="color: var(--text-primary);">{{ arrayKey }}</strong>. Feu clic a <strong>"➕ Afegeix {{ arrayKey }}"</strong> per afegir un element.
     </div>
 
-    <!-- LEAF LEVEL: Tabular Table View -->
+    <!-- LEAF LEVEL: Render as Compact Tabular Table -->
     <template v-else-if="isLeafLevel">
-      <div style="overflow-x: auto;">
-        <table class="inspector-table" style="background: var(--bg-primary);">
+      <div style="overflow-x: auto; max-width: 100%;">
+        <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
           <thead>
-            <tr>
-              <th v-for="col in getLeafTableHeaders" :key="col" style="padding: 6px;">
-                {{ col }}
+            <tr style="background: var(--bg-tertiary);">
+              <th v-for="h in getLeafTableHeaders" :key="h" style="padding: 6px 8px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 600;">
+                {{ h }}
               </th>
-              <th style="width: 45px; text-align: center; padding: 6px;">Acció</th>
+              <th style="width: 40px; text-align: center; border-bottom: 2px solid var(--border-color);"></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(item, idx) in items" :key="idx" :id="'data-row-' + fullPath + '-' + idx">
-              <td v-for="col in getLeafTableHeaders" :key="col" style="padding: 4px;">
+            <tr v-for="(row, rIdx) in items" :key="rIdx">
+              <td v-for="h in getLeafTableHeaders" :key="h" style="padding: 4px 6px; border-bottom: 1px solid var(--border-color);">
                 <input 
                   type="text" 
-                  v-model="item[col]" 
+                  v-model="row[h]" 
                   class="data-input" 
-                  style="height: 30px; font-size: 0.8rem; padding: 2px 8px; width: 100%;"
-                  :id="'data-field-' + fullPath + '-' + idx + '-' + col"
-                  :data-path="getItemPath(idx, col)"
+                  style="width: 100%; height: 28px; font-size: 0.78rem; padding: 2px 6px;"
+                  :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
+                  :data-path="getItemPath(rIdx, h)"
                 />
               </td>
-              <td style="text-align: center; vertical-align: middle; padding: 4px;">
+              <td style="padding: 4px 6px; border-bottom: 1px solid var(--border-color); text-align: center;">
                 <button 
                   type="button"
                   class="btn-icon-only text-danger" 
                   style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
                   title="Elimina fila"
-                  @click="deleteNestedItem(idx)"
+                  @click="deleteNestedItem(rIdx)"
                 >
                   🗑️
                 </button>
@@ -213,30 +221,19 @@ const ensureChildArray = (item, cKey) => {
           </tbody>
         </table>
       </div>
-      <div style="margin-top: 8px;">
-        <button 
-          type="button"
-          class="btn btn-secondary" 
-          style="width: auto; padding: 3px 10px; font-size: 0.75rem; border-radius: 4px; display: flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
-          @click="addNestedItem"
-        >
-          ➕ Afegeix fila a {{ arrayKey }}
-        </button>
-      </div>
     </template>
 
-    <!-- INTERMEDIATE LEVEL: Form Cards (Key-Value) with Child Arrays -->
+    <!-- INTERMEDIATE LEVEL: Render as Form Cards with Sub-Hierarchies -->
     <template v-else>
-      <div style="display: flex; flex-direction: column; gap: 0.85rem;">
+      <div style="display: flex; flex-direction: column; gap: 0.75rem;">
         <div 
           v-for="(item, idx) in items" 
-          :key="idx" 
+          :key="idx"
           class="nested-card-item"
-          style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.02);"
-          :id="'data-row-' + fullPath + '-' + idx"
+          style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04);"
         >
-          <!-- Item Header -->
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; border-bottom: 1px dashed var(--border-color); padding-bottom: 0.35rem;">
+          <!-- Card Header -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; padding-bottom: 0.25rem; border-bottom: 1px dashed var(--border-color);">
             <span style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary);">
               #{{ idx + 1 }} {{ arrayKey }}
             </span>
@@ -266,9 +263,8 @@ const ensureChildArray = (item, cKey) => {
             </div>
           </div>
 
-          <!-- Child Hierarchies (e.g. activitats under partida, costos under activitat) -->
+          <!-- Child Hierarchies -->
           <template v-for="cKey in childKeys" :key="cKey">
-            {{ ensureChildArray(item, cKey) }}
             <NestedDataNode 
               :parentObj="item"
               :arrayKey="cKey"
