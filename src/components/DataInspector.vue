@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import { useWasmEngines } from '../composables/useWasmEngines';
+import NestedDataNode from './NestedDataNode.vue';
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
 
@@ -32,6 +33,22 @@ const toggleSheet = (name) => {
 
 const getSheetType = (sheetData) => {
   return Array.isArray(sheetData) ? 'tabular' : 'kv';
+};
+
+const getKvPrimitiveEntries = (sheetData) => {
+  if (!sheetData || typeof sheetData !== 'object' || Array.isArray(sheetData)) return {};
+  const res = {};
+  Object.keys(sheetData).forEach(k => {
+    if (!Array.isArray(sheetData[k])) {
+      res[k] = sheetData[k];
+    }
+  });
+  return res;
+};
+
+const getNestedArrayKeys = (obj) => {
+  if (!obj || typeof obj !== 'object') return [];
+  return Object.keys(obj).filter(k => Array.isArray(obj[k]));
 };
 
 const scrollToTargetDataPath = (path) => {
@@ -725,7 +742,7 @@ onUnmounted(() => {
                 </thead>
                 <tbody>
                   <tr v-for="(row, idx) in sheetData.slice(0, visibleRowsCount[name])" :key="idx" :id="'data-row-' + name + '-' + idx">
-                    <td v-for="col in Object.keys(sheetData[0])" :key="col" style="padding: 4px;">
+                    <td v-for="col in Object.keys(sheetData[0]).filter(k => !Array.isArray(sheetData[0][k]))" :key="col" style="padding: 4px;">
                       <span v-if="typeof row[col] === 'object' && row[col] !== null" style="font-size:0.75rem; color:var(--text-muted)">
                         [Complex]
                       </span>
@@ -876,7 +893,7 @@ onUnmounted(() => {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(val, key) in sheetData" :key="key">
+                <tr v-for="(val, key) in getKvPrimitiveEntries(sheetData)" :key="key">
                   <td style="vertical-align: middle; padding: 6px 12px;">
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;">
                       <code>{{ key }}</code>
@@ -1011,9 +1028,18 @@ onUnmounted(() => {
                 style="width: auto; padding: 0.4rem 0.8rem; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;"
                 @click="addKvKey(name)"
               >
-                ➕ Afegeix clau-valor
+                ➕ Afegeix clau
               </button>
             </div>
+            
+            <!-- Integrated Hierarchical Nested Sub-Tables -->
+            <template v-for="subArrayKey in getNestedArrayKeys(sheetData)" :key="subArrayKey">
+              <NestedDataNode 
+                :parentObj="sheetData"
+                :arrayKey="subArrayKey"
+                :parentPath="name"
+              />
+            </template>
           </template>
         </div>
       </div>

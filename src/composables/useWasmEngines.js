@@ -218,8 +218,74 @@ def _cast_numeric_strings(obj):
                 pass
     return obj
 
+def _get_nested_containers(root, path_parts):
+    containers = [root]
+    for p in path_parts:
+        next_containers = []
+        for c in containers:
+            if isinstance(c, dict):
+                if p in c:
+                    val = c[p]
+                    if isinstance(val, list):
+                        next_containers.extend(val)
+                    elif isinstance(val, dict):
+                        next_containers.append(val)
+            elif isinstance(c, list):
+                for item in c:
+                    if isinstance(item, dict) and p in item:
+                        val = item[p]
+                        if isinstance(val, list):
+                            next_containers.extend(val)
+                        elif isinstance(val, dict):
+                            next_containers.append(val)
+        containers = next_containers
+    return containers
+
+def _extract_flat_rows_for_sheet(data, raw_sheet_name, has_prefixed_sheets, valid_prefixes):
+    stripped = raw_sheet_name
+    if has_prefixed_sheets:
+        for pfx in valid_prefixes:
+            if raw_sheet_name.upper().startswith(pfx):
+                stripped = raw_sheet_name[len(pfx):]
+                break
+    parts = [sanitize_id(p) for p in stripped.split('.')]
+    
+    if len(parts) == 1:
+        val = data.get(parts[0])
+        if isinstance(val, list):
+            clean_rows = []
+            for r in val:
+                if isinstance(r, dict):
+                    clean_rows.append({k: v for k, v in r.items() if not isinstance(v, (list, dict))})
+            return clean_rows
+        return val
+
+    parent_parts = parts[:-1]
+    sub_key = parts[-1]
+    
+    parents = _get_nested_containers(data, parent_parts)
+    flat_rows = []
+    
+    for p_item in parents:
+        if not isinstance(p_item, dict):
+            continue
+        p_ref_key = next(iter(p_item.keys())) if p_item else None
+        p_ref_val = p_item.get(p_ref_key) if p_ref_key else None
+        
+        children = p_item.get(sub_key, [])
+        if isinstance(children, list):
+            for child in children:
+                if isinstance(child, dict):
+                    row = {}
+                    if p_ref_key and p_ref_val is not None:
+                        row[p_ref_key] = p_ref_val
+                    for k, v in child.items():
+                        if not isinstance(v, (list, dict)):
+                            row[k] = v
+                    flat_rows.append(row)
+    return flat_rows
+
 def excel_to_json(excel_path, date_format='iso', strict=False):
-    # Prioritize in.json if it exists, since it contains the latest modified values from the editor
     if os.path.exists('/work/in.json'):
         try:
             with open('/work/in.json', 'r', encoding='utf-8') as f:
@@ -242,62 +308,186 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
         else:
             parsed[raw_name] = _parse_sheet(wb[raw_name], date_format)
 
-    root = {}
-    for raw_name, (_, data) in parsed.items():
-        if '.' not in raw_name:
-            stripped_name = raw_name
-            if has_prefixed_sheets:
-                for prefix in valid_prefixes:
-                    if raw_name.upper().startswith(prefix):
-                        stripped_name = raw_name[len(prefix):]
-                        break
-            root[sanitize_id(stripped_name)] = data
-
-    for raw_name, (_, data) in parsed.items():
-        if '.' not in raw_name:
-            continue
-        base_raw, sub_raw = raw_name.split('.', 1)
-        
-        stripped_base = base_raw
+    def _sheet_depth(raw):
+        s = raw
         if has_prefixed_sheets:
-            for prefix in valid_prefixes:
-                if base_raw.upper().startswith(prefix):
-                    stripped_base = base_raw[len(prefix):]
+            for pfx in valid_prefixes:
+                if raw.upper().startswith(pfx):
+                    s = raw[len(pfx):]
                     break
-                    
-        base = sanitize_id(stripped_base)
-        sub = sanitize_id(sub_raw)
+        return (s.count('.'), len(s))
+
+    sorted_raw_names = sorted(parsed.keys(), key=_sheet_depth)
+    
+    root = {}
+
+    for raw_name in sorted_raw_names:
+        kind, data = parsed[raw_name]
+        stripped = raw_name
+        if has_prefixed_sheets:
+            for pfx in valid_prefixes:
+                if raw_name.upper().startswith(pfx):
+                    stripped = raw_name[len(pfx):]
+                    break
         
-        if base not in root:
-            if strict:
-                raise ValueError(f'Full base inexistent: {base_raw} (necessari per {raw_name})')
-            root[base] = {}
-        base_obj = root[base]
-        if isinstance(base_obj, dict):
-            base_obj[sub] = data
-            continue
-        if isinstance(base_obj, list):
-            if data is None:
-                data = []
-            if not isinstance(data, list):
-                raise ValueError(f'El full {raw_name} ha de ser tabular perquè {base_raw} és tabular')
-            if not base_obj:
+        parts = [sanitize_id(p) for p in stripped.split('.')]
+        
+        if len(parts) == 1:
+            root[parts[0]] = data if data is not None else {}
+        else:
+            parent_parts = parts[:-1]
+            sub_key = parts[-1]
+            
+            parents = _get_nested_containers(root, parent_parts)
+            if not parents:
                 continue
-            base_key = next(iter(base_obj[0].keys()))
-            sub_ref_key = next(iter(data[0].keys())) if data else None
-            groups = defaultdict(list)
-            if data and sub_ref_key:
-                for row in data:
-                    ref = row.get(sub_ref_key)
-                    child = {k: v for k, v in row.items() if k != sub_ref_key}
-                    groups[ref].append(child)
-            for row in base_obj:
-                ref = row.get(base_key)
-                row[sub] = groups.get(ref, [])
-            continue
-        raise ValueError(f'Tipus de base no suportat per {base_raw}: {type(base_obj)}')
+                
+            for parent in parents:
+                if isinstance(parent, dict):
+                    if data is None:
+                        data_to_set = []
+                    else:
+                        data_to_set = data
+                    
+                    if isinstance(data_to_set, list):
+                        if not parent:
+                            parent[sub_key] = []
+                            continue
+                        parent_ref_key = next(iter(parent.keys()))
+                        child_ref_key = next(iter(data_to_set[0].keys())) if data_to_set else None
+                        
+                        groups = defaultdict(list)
+                        if data_to_set and child_ref_key and parent_ref_key:
+                            for child_row in data_to_set:
+                                ref_val = child_row.get(child_ref_key)
+                                clean_child = {k: v for k, v in child_row.items() if k != child_ref_key}
+                                groups[ref_val].append(clean_child)
+                                
+                        ref_val = parent.get(parent_ref_key)
+                        parent[sub_key] = groups.get(ref_val, [])
+                    else:
+                        parent[sub_key] = data_to_set
 
     return root
+
+def update_excel_from_json(excel_path, json_str, out_excel_path):
+    wb = load_workbook(excel_path)
+    data = json.loads(json_str)
+    
+    valid_prefixes = ('OUT_', 'JSON_', 'EXPORT_')
+    has_prefixed_sheets = any(sheet.upper().startswith(valid_prefixes) for sheet in wb.sheetnames)
+    
+    for sheet_name in wb.sheetnames:
+        sheet_name_upper = sheet_name.upper()
+        if has_prefixed_sheets and not sheet_name_upper.startswith(valid_prefixes):
+            continue
+            
+        stripped_name = sheet_name
+        if has_prefixed_sheets:
+            for prefix in valid_prefixes:
+                if sheet_name_upper.startswith(prefix):
+                    stripped_name = sheet_name[len(prefix):]
+                    break
+                    
+        sheet_id = sanitize_id(stripped_name)
+        
+        if sheet_id == 'editor_metadata':
+            ws = wb[sheet_name]
+            meta_data = data.get('editor_metadata', [])
+            ws.delete_rows(1, ws.max_row)
+            headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width']
+            for c_idx, h in enumerate(headers):
+                ws.cell(1, c_idx + 1).value = h
+            
+            for r_idx, row_obj in enumerate(meta_data):
+                excel_row = r_idx + 2
+                for c_idx, h in enumerate(headers):
+                    val = row_obj.get(h, '')
+                    if isinstance(val, list):
+                        val = ', '.join(str(x) for x in val)
+                    elif isinstance(val, bool):
+                        val = int(val)
+                    write_cell_value(ws, excel_row, c_idx + 1, val)
+            ws.sheet_state = 'hidden'
+            continue
+            
+        ws = wb[sheet_name]
+        sheet_data = _extract_flat_rows_for_sheet(data, sheet_name, has_prefixed_sheets, valid_prefixes)
+        if sheet_data is None:
+            continue
+            
+        rows = _read_rows(ws, 'iso')
+        kind = _detect_kind(rows)
+        
+        if kind in ('kv', 'kv_header'):
+            start_row = 1 if kind == 'kv_header' else 0
+            if isinstance(sheet_data, dict):
+                existing_keys = set()
+                for r in range(ws.max_row, start_row, -1):
+                    k_val = ws.cell(r, 1).value
+                    if k_val not in (None, ''):
+                        s_key = sanitize_id(k_val)
+                        if s_key in sheet_data:
+                            existing_keys.add(s_key)
+                            val = sheet_data[s_key]
+                            if not isinstance(val, (list, dict)):
+                                write_cell_value(ws, r, 2, val)
+                        else:
+                            ws.delete_rows(r)
+                            
+                for k_val, val in sheet_data.items():
+                    if isinstance(val, (list, dict)):
+                        continue
+                    s_key = sanitize_id(k_val)
+                    if s_key not in existing_keys:
+                        next_row = ws.max_row + 1
+                        ws.cell(next_row, 1).value = k_val
+                        write_cell_value(ws, next_row, 2, val)
+                        
+        elif kind == 'tabular' and isinstance(sheet_data, list):
+            excel_headers = []
+            for c in range(1, ws.max_column + 1):
+                val = ws.cell(1, c).value
+                excel_headers.append(sanitize_id(val) if val not in (None, '') else '')
+            
+            active_cols = []
+            if sheet_data:
+                active_cols = [sanitize_id(k) for k in sheet_data[0].keys() if k]
+            
+            for c_idx in range(len(excel_headers) - 1, -1, -1):
+                h = excel_headers[c_idx]
+                if h and h not in active_cols:
+                    ws.delete_cols(c_idx + 1)
+            
+            excel_headers = []
+            for c in range(1, ws.max_column + 1):
+                val = ws.cell(1, c).value
+                excel_headers.append(sanitize_id(val) if val not in (None, '') else '')
+            
+            for h in active_cols:
+                if h not in excel_headers:
+                    new_col_idx = len(excel_headers) + 1
+                    ws.cell(1, new_col_idx).value = h
+                    excel_headers.append(h)
+            
+            excess = ws.max_row - (len(sheet_data) + 1)
+            if excess > 0:
+                ws.delete_rows(len(sheet_data) + 2, excess)
+                
+            for r_idx, row_obj in enumerate(sheet_data):
+                excel_row = r_idx + 2
+                for c_idx, h in enumerate(excel_headers):
+                    matched_key = None
+                    for key in row_obj.keys():
+                        if sanitize_id(key) == h:
+                            matched_key = key
+                            break
+                    if matched_key is not None:
+                        val = row_obj[matched_key]
+                        if not isinstance(val, (list, dict)):
+                            write_cell_value(ws, excel_row, c_idx + 1, val)
+
+    wb.save(out_excel_path)
 
 # -------------------- Jinja: recuperació d'errors --------------------
 RE_DOTTED = re.compile(r"\\b([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+)\\b")
