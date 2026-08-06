@@ -98,30 +98,21 @@ const addNestedItem = () => {
   const list = props.parentObj[props.arrayKey];
   const newRow = {};
   
-  const refKey = nodeSchema.value.ref_key;
-  if (refKey && props.parentObj && props.parentObj[refKey] !== undefined) {
-    newRow[refKey] = props.parentObj[refKey];
-  }
-  
   // Populate primitive fields from schema or sample
   const fields = nodeSchema.value.fields || [];
   if (fields.length > 0) {
     fields.forEach(f => {
-      if (!(f in newRow)) {
-        newRow[f] = '';
-      }
+      newRow[f] = '';
     });
   } else if (list.length > 0) {
     Object.keys(list[0]).forEach(k => {
-      if (!(k in newRow) && isPrimitive(list[0][k])) {
+      if (isPrimitive(list[0][k])) {
         newRow[k] = '';
       }
     });
   } else {
-    if (!refKey) {
-      newRow['id'] = `item_${list.length + 1}`;
-      newRow['nom'] = '';
-    }
+    newRow['id'] = `item_${list.length + 1}`;
+    newRow['nom'] = '';
   }
 
   // Initialize child sub-arrays for intermediate nodes

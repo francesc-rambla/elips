@@ -288,7 +288,7 @@ def _extract_flat_rows_for_sheet(data, raw_sheet_name, has_prefixed_sheets, vali
                 if isinstance(child, dict):
                     row = {}
                     if p_ref_key and p_ref_val is not None:
-                        row[p_ref_key] = child.get(p_ref_key, p_ref_val)
+                        row[p_ref_key] = p_ref_val
                     for k, v in child.items():
                         if not isinstance(v, (list, dict)):
                             row[k] = v
@@ -396,7 +396,8 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                             groups = defaultdict(list)
                             for child_row in data_to_set:
                                 ref_val = child_row.get(child_ref_key)
-                                groups[ref_val].append(child_row)
+                                clean_child = {k: v for k, v in child_row.items() if k != child_ref_key}
+                                groups[ref_val].append(clean_child)
                                 
                             parent_ref_val = parent.get(child_ref_key)
                             parent[sub_key] = groups.get(parent_ref_val, [])
