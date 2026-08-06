@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 
 const props = defineProps({
@@ -26,6 +26,7 @@ const props = defineProps({
 });
 
 const store = useWorkspaceStore();
+const showDebug = ref(false);
 
 const cleanPath = (p) => {
   if (!p) return '';
@@ -37,7 +38,7 @@ const fullPath = computed(() => {
 });
 
 const nodeSchema = computed(() => {
-  if (props.schema && (props.schema.fields || props.schema.children)) {
+  if (props.schema && (props.schema.fields?.length > 0 || (props.schema.children && Object.keys(props.schema.children).length > 0))) {
     return props.schema;
   }
   const schemaDict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
@@ -57,13 +58,34 @@ const nodeSchema = computed(() => {
 
 const childSchemas = computed(() => {
   const children = nodeSchema.value.children;
-  if (children && typeof children === 'object' && !Array.isArray(children)) {
-    return children;
-  }
   const res = {};
-  if (Array.isArray(children)) {
+  const schemaDict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
+  
+  if (children && typeof children === 'object' && !Array.isArray(children)) {
+    Object.entries(children).forEach(([cKey, cVal]) => {
+      if (cVal && (cVal.fields?.length > 0 || (cVal.children && Object.keys(cVal.children).length > 0))) {
+        res[cKey] = cVal;
+      } else {
+        let found = null;
+        for (const [sKey, sVal] of Object.entries(schemaDict)) {
+          if (sKey === cKey || sKey.endsWith(`.${cKey}`)) {
+            found = sVal;
+            break;
+          }
+        }
+        res[cKey] = found || { fields: [], children: {} };
+      }
+    });
+  } else if (Array.isArray(children)) {
     children.forEach(cKey => {
-      res[cKey] = { fields: [], children: {} };
+      let found = null;
+      for (const [sKey, sVal] of Object.entries(schemaDict)) {
+        if (sKey === cKey || sKey.endsWith(`.${cKey}`)) {
+          found = sVal;
+          break;
+        }
+      }
+      res[cKey] = found || { fields: [], children: {} };
     });
   }
   return res;
@@ -176,21 +198,51 @@ const getItemPath = (idx, fieldKey) => {
 <template>
   <div class="nested-hierarchy-container" style="margin-top: 0.85rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 0.75rem;">
     <!-- Section Header -->
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
-      <h5 style="margin: 0; font-size: 0.85rem; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-        <span>📂 Sub-taula: <strong style="color: var(--color-primary);">{{ arrayKey }}</strong></span>
-        <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">({{ items.length }} registres)</span>
-        <span v-if="isLeafLevel" style="font-size: 0.68rem; padding: 2px 6px; background: rgba(0,0,0,0.06); border-radius: 4px; font-weight: 500;">Vista Tabular</span>
-        <span v-else style="font-size: 0.68rem; padding: 2px 6px; background: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-radius: 4px; font-weight: 500;">Vista Formularia (Clau-Valor)</span>
-      </h5>
-      <button 
-        type="button"
-        class="btn btn-secondary" 
-        style="padding: 0.3rem 0.6rem; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;"
-        @click="addNestedItem"
-      >
-        ➕ Afegeix {{ arrayKey }}
-      </button>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; flex-wrap: wrap; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+        <h5 style="margin: 0; font-size: 0.85rem; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+          <span>📂 Sub-taula: <strong style="color: var(--color-primary);">{{ arrayKey }}</strong></span>
+          <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">({{ items.length }} registres)</span>
+        </h5>
+        <span v-if="isLeafLevel" style="font-size: 0.68rem; padding: 2px 6px; background: rgba(0,0,0,0.06); border-radius: 4px; font-weight: 500;">
+          📜 Fulla (Vista Tabular)
+        </span>
+        <span v-else style="font-size: 0.68rem; padding: 2px 6px; background: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-radius: 4px; font-weight: 500;">
+          📁 Intermedi (Vista Formularia: claus=[{{ (nodeSchema.fields || []).join(', ') }}], fills=[{{ childKeys.join(', ') }}])
+        </span>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <button 
+          type="button"
+          class="btn btn-secondary" 
+          style="padding: 0.25rem 0.5rem; font-size: 0.72rem; display: flex; align-items: center; gap: 4px;"
+          @click="showDebug = !showDebug"
+          :title="showDebug ? 'Amaga diagnòstic jeràrquic' : 'Mostra diagnòstic jeràrquic'"
+        >
+          🔍 {{ showDebug ? 'Amaga Debug' : 'Debug Esquema' }}
+        </button>
+        <button 
+          type="button"
+          class="btn btn-secondary" 
+          style="padding: 0.3rem 0.6rem; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;"
+          @click="addNestedItem"
+        >
+          ➕ Afegeix {{ arrayKey }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Collapsible Debug Inspector -->
+    <div v-if="showDebug" style="margin-bottom: 0.75rem; padding: 0.5rem; background: #1e1e1e; color: #4ec9b0; border-radius: 4px; font-family: monospace; font-size: 0.72rem; overflow-x: auto;">
+      <div style="color: #ce9178; font-weight: bold; margin-bottom: 4px;">🔍 Diagnòstic Jeràrquic ({{ arrayKey }}):</div>
+      <pre style="margin: 0; white-space: pre-wrap;">{{ JSON.stringify({
+        arrayKey,
+        isLeafLevel: isLeafLevel,
+        nodeSchemaFields: nodeSchema.fields,
+        childKeys: childKeys,
+        nodeSchema: nodeSchema
+      }, null, 2) }}</pre>
     </div>
 
     <!-- Empty State -->
