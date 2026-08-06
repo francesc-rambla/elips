@@ -344,7 +344,11 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
         parts = [sanitize_id(p) for p in stripped.split('.')]
         path_str = '.'.join(parts)
         
-        ref_k = headers[0] if (headers and len(parts) > 1) else (next(iter(data[0].keys())) if (isinstance(data, list) and data and len(parts) > 1) else None)
+        parent_is_tabular = (len(parts) > 2)
+        ref_k = None
+        if parent_is_tabular:
+            ref_k = headers[0] if (headers and len(parts) > 1) else (next(iter(data[0].keys())) if (isinstance(data, list) and data and len(parts) > 1) else None)
+
         fields = []
         if kind == 'tabular':
             if headers:
@@ -372,8 +376,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     curr_schema_dict[part]['sheet'] = raw_name
                     curr_schema_dict[part]['kind'] = kind
                     curr_schema_dict[part]['ref_key'] = ref_k
-                    if fields:
-                        curr_schema_dict[part]['fields'] = fields
+                    curr_schema_dict[part]['fields'] = fields
             
             curr_schema_dict = curr_schema_dict[part]['children']
         
