@@ -322,7 +322,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
 
     sorted_raw_names = sorted(parsed.keys(), key=_sheet_depth)
     
-    root = {}
+    hierarchy_schema = {}
 
     for raw_name in sorted_raw_names:
         kind, data = parsed[raw_name]
@@ -334,6 +334,28 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     break
         
         parts = [sanitize_id(p) for p in stripped.split('.')]
+        path_str = '.'.join(parts)
+        
+        fields = []
+        if isinstance(data, list) and data:
+            ref_k = next(iter(data[0].keys())) if len(parts) > 1 else None
+            fields = [k for k in data[0].keys() if k != ref_k]
+        elif isinstance(data, dict):
+            fields = [k for k, v in data.items() if not isinstance(v, (list, dict))]
+            
+        if path_str not in hierarchy_schema:
+            hierarchy_schema[path_str] = {'fields': fields, 'children': []}
+        else:
+            if fields:
+                hierarchy_schema[path_str]['fields'] = fields
+            
+        if len(parts) > 1:
+            parent_path_str = '.'.join(parts[:-1])
+            sub_key = parts[-1]
+            if parent_path_str not in hierarchy_schema:
+                hierarchy_schema[parent_path_str] = {'fields': [], 'children': []}
+            if sub_key not in hierarchy_schema[parent_path_str]['children']:
+                hierarchy_schema[parent_path_str]['children'].append(sub_key)
         
         if len(parts) == 1:
             root[parts[0]] = data if data is not None else {}
@@ -373,6 +395,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     else:
                         parent[sub_key] = data_to_set
 
+    root['_hierarchy_schema'] = hierarchy_schema
     return root
 
 def update_excel_from_json(excel_path, json_str, out_excel_path):

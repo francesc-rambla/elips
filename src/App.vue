@@ -441,10 +441,17 @@ const watchRefDocFile = watch(() => store.refDocFile, (newFile) => {
   }
 });
 
-// Watch Excel JSON data for embedded editor_metadata sheet configs
+// Watch Excel JSON data for embedded editor_metadata sheet configs and hierarchy schema
 watch(() => store.excelJsonData, (newVal) => {
-  if (newVal && newVal.editor_metadata) {
-    store.editorMetadata = newVal.editor_metadata;
+  if (newVal) {
+    if (newVal.editor_metadata) {
+      store.editorMetadata = newVal.editor_metadata;
+    }
+    if (newVal._hierarchy_schema) {
+      store.hierarchySchema = newVal._hierarchy_schema;
+      const pName = localStorage.getItem('currentProjectName') || 'Default';
+      localStorage.setItem(`${pName}:hierarchySchema`, JSON.stringify(newVal._hierarchy_schema));
+    }
   }
 }, { immediate: true });
 

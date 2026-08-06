@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue';
+import { useWorkspaceStore } from '../stores/workspace';
 
 const props = defineProps({
   parentObj: {
@@ -14,6 +15,38 @@ const props = defineProps({
     type: String,
     default: ''
   }
+});
+
+const store = useWorkspaceStore();
+
+const fullPath = computed(() => {
+  return props.parentPath ? `${props.parentPath}.${props.arrayKey}` : props.arrayKey;
+});
+
+const nodeSchema = computed(() => {
+  return store.hierarchySchema?.[fullPath.value] || { fields: [], children: [] };
+});
+
+const childKeys = computed(() => {
+  const schemaChildren = nodeSchema.value.children || [];
+  const itemChildren = new Set(schemaChildren);
+  
+  if (Array.isArray(props.parentObj?.[props.arrayKey])) {
+    props.parentObj[props.arrayKey].forEach(item => {
+      if (item && typeof item === 'object') {
+        Object.keys(item).forEach(k => {
+          if (Array.isArray(item[k])) {
+            itemChildren.add(k);
+          }
+        });
+      }
+    });
+  }
+  return Array.from(itemChildren);
+});
+
+const isLeafLevel = computed(() => {
+  return childKeys.value.length === 0;
 });
 
 const items = computed(() => {
@@ -31,18 +64,32 @@ const isPrimitive = (val) => {
 const getPrimitiveFields = (item) => {
   if (!item || typeof item !== 'object') return {};
   const res = {};
+  
+  // First include fields from schema
+  const schemaFields = nodeSchema.value.fields || [];
+  schemaFields.forEach(f => {
+    if (f !== '_hierarchy_schema') {
+      res[f] = item[f] !== undefined ? item[f] : '';
+    }
+  });
+
+  // Then add any other primitive fields present on item
   Object.keys(item).forEach(k => {
-    if (isPrimitive(item[k])) {
+    if (k !== '_hierarchy_schema' && isPrimitive(item[k]) && !(k in res)) {
       res[k] = item[k];
     }
   });
   return res;
 };
 
-const getNestedArrayKeys = (item) => {
-  if (!item || typeof item !== 'object') return [];
-  return Object.keys(item).filter(k => Array.isArray(item[k]));
-};
+const getLeafTableHeaders = computed(() => {
+  const schemaFields = nodeSchema.value.fields || [];
+  if (schemaFields.length > 0) return schemaFields;
+  if (items.value.length > 0 && typeof items.value[0] === 'object') {
+    return Object.keys(items.value[0]).filter(k => k !== '_hierarchy_schema' && isPrimitive(items.value[0][k]));
+  }
+  return ['id', 'nom'];
+});
 
 const addNestedItem = () => {
   if (!Array.isArray(props.parentObj[props.arrayKey])) {
@@ -51,12 +98,15 @@ const addNestedItem = () => {
   const list = props.parentObj[props.arrayKey];
   const newRow = {};
   
-  if (list.length > 0) {
-    const sample = list[0];
-    Object.keys(sample).forEach(k => {
-      if (Array.isArray(sample[k])) {
-        newRow[k] = [];
-      } else {
+  // Populate primitive fields from schema or sample
+  const fields = nodeSchema.value.fields || [];
+  if (fields.length > 0) {
+    fields.forEach(f => {
+      newRow[f] = '';
+    });
+  } else if (list.length > 0) {
+    Object.keys(list[0]).forEach(k => {
+      if (isPrimitive(list[0][k])) {
         newRow[k] = '';
       }
     });
@@ -64,6 +114,12 @@ const addNestedItem = () => {
     newRow['id'] = `item_${list.length + 1}`;
     newRow['nom'] = '';
   }
+
+  // Initialize child sub-arrays for intermediate nodes
+  childKeys.value.forEach(cKey => {
+    newRow[cKey] = [];
+  });
+
   list.push(newRow);
 };
 
@@ -74,8 +130,13 @@ const deleteNestedItem = (idx) => {
 };
 
 const getItemPath = (idx, fieldKey) => {
-  const base = props.parentPath ? `${props.parentPath}.${props.arrayKey}` : props.arrayKey;
-  return fieldKey !== '' ? `${base}.${idx}.${fieldKey}` : `${base}.${idx}`;
+  return fieldKey !== '' ? `${fullPath.value}.${idx}.${fieldKey}` : `${fullPath.value}.${idx}`;
+};
+
+const ensureChildArray = (item, cKey) => {
+  if (!item[cKey] || !Array.isArray(item[cKey])) {
+    item[cKey] = [];
+  }
 };
 </script>
 
@@ -86,6 +147,8 @@ const getItemPath = (idx, fieldKey) => {
       <h5 style="margin: 0; font-size: 0.85rem; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
         <span>📂 Sub-taula: <strong style="color: var(--color-primary);">{{ arrayKey }}</strong></span>
         <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">({{ items.length }} registres)</span>
+        <span v-if="isLeafLevel" style="font-size: 0.68rem; padding: 2px 6px; background: rgba(0,0,0,0.06); border-radius: 4px; font-weight: 500;">Vista Tabular</span>
+        <span v-else style="font-size: 0.68rem; padding: 2px 6px; background: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-radius: 4px; font-weight: 500;">Vista Formularia (Clau-Valor)</span>
       </h5>
       <button 
         type="button"
@@ -102,55 +165,109 @@ const getItemPath = (idx, fieldKey) => {
       Sense elements a {{ arrayKey }}. Utilitzeu "➕ Afegeix {{ arrayKey }}" per crear el primer element.
     </div>
 
-    <!-- Items List -->
-    <div v-else style="display: flex; flex-direction: column; gap: 0.75rem;">
-      <div 
-        v-for="(item, idx) in items" 
-        :key="idx" 
-        class="nested-card-item"
-        style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.02);"
-        :id="'data-row-' + (parentPath ? parentPath + '-' + arrayKey : arrayKey) + '-' + idx"
-      >
-        <!-- Item Header -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; border-bottom: 1px dashed var(--border-color); padding-bottom: 0.35rem;">
-          <span style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary);">
-            #{{ idx + 1 }} {{ arrayKey }}
-          </span>
-          <button 
-            type="button"
-            class="btn-icon-only text-danger" 
-            style="height: 22px; width: 22px; min-width: 22px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
-            title="Elimina element"
-            @click="deleteNestedItem(idx)"
-          >
-            🗑️
-          </button>
-        </div>
-
-        <!-- Primitive Fields Form Grid -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.5rem; margin-bottom: 0.5rem;">
-          <div v-for="(val, fKey) in getPrimitiveFields(item)" :key="fKey" style="display: flex; flex-direction: column; gap: 2px;">
-            <label style="font-size: 0.7rem; font-weight: 600; color: var(--text-muted); margin: 0;">{{ fKey }}</label>
-            <input 
-              type="text" 
-              v-model="item[fKey]" 
-              class="data-input" 
-              style="height: 30px; font-size: 0.8rem; padding: 2px 8px;"
-              :id="'data-field-' + (parentPath ? parentPath + '-' + arrayKey : arrayKey) + '-' + idx + '-' + fKey"
-              :data-path="getItemPath(idx, fKey)"
-            />
-          </div>
-        </div>
-
-        <!-- Recursive Child Hierarchies (e.g. activitats inside partida, costos inside activitat) -->
-        <template v-for="subArrayKey in getNestedArrayKeys(item)" :key="subArrayKey">
-          <NestedDataNode 
-            :parentObj="item"
-            :arrayKey="subArrayKey"
-            :parentPath="getItemPath(idx, '')"
-          />
-        </template>
+    <!-- LEAF LEVEL: Tabular Table View -->
+    <template v-else-if="isLeafLevel">
+      <div style="overflow-x: auto;">
+        <table class="inspector-table" style="background: var(--bg-primary);">
+          <thead>
+            <tr>
+              <th v-for="col in getLeafTableHeaders" :key="col" style="padding: 6px;">
+                {{ col }}
+              </th>
+              <th style="width: 45px; text-align: center; padding: 6px;">Acció</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(item, idx) in items" :key="idx" :id="'data-row-' + fullPath + '-' + idx">
+              <td v-for="col in getLeafTableHeaders" :key="col" style="padding: 4px;">
+                <input 
+                  type="text" 
+                  v-model="item[col]" 
+                  class="data-input" 
+                  style="height: 30px; font-size: 0.8rem; padding: 2px 8px; width: 100%;"
+                  :id="'data-field-' + fullPath + '-' + idx + '-' + col"
+                  :data-path="getItemPath(idx, col)"
+                />
+              </td>
+              <td style="text-align: center; vertical-align: middle; padding: 4px;">
+                <button 
+                  type="button"
+                  class="btn-icon-only text-danger" 
+                  style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+                  title="Elimina fila"
+                  @click="deleteNestedItem(idx)"
+                >
+                  🗑️
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-    </div>
+      <div style="margin-top: 8px;">
+        <button 
+          type="button"
+          class="btn btn-secondary" 
+          style="width: auto; padding: 3px 10px; font-size: 0.75rem; border-radius: 4px; display: flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
+          @click="addNestedItem"
+        >
+          ➕ Afegeix fila a {{ arrayKey }}
+        </button>
+      </div>
+    </template>
+
+    <!-- INTERMEDIATE LEVEL: Form Cards (Key-Value) with Child Arrays -->
+    <template v-else>
+      <div style="display: flex; flex-direction: column; gap: 0.85rem;">
+        <div 
+          v-for="(item, idx) in items" 
+          :key="idx" 
+          class="nested-card-item"
+          style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.02);"
+          :id="'data-row-' + fullPath + '-' + idx"
+        >
+          <!-- Item Header -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; border-bottom: 1px dashed var(--border-color); padding-bottom: 0.35rem;">
+            <span style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary);">
+              #{{ idx + 1 }} {{ arrayKey }}
+            </span>
+            <button 
+              type="button"
+              class="btn-icon-only text-danger" 
+              style="height: 22px; width: 22px; min-width: 22px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+              title="Elimina element"
+              @click="deleteNestedItem(idx)"
+            >
+              🗑️
+            </button>
+          </div>
+
+          <!-- Primitive Fields Form Grid (Key-Value style) -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.5rem; margin-bottom: 0.5rem;">
+            <div v-for="(val, fKey) in getPrimitiveFields(item)" :key="fKey" style="display: flex; flex-direction: column; gap: 2px;">
+              <label style="font-size: 0.7rem; font-weight: 600; color: var(--text-muted); margin: 0;">{{ fKey }}</label>
+              <input 
+                type="text" 
+                v-model="item[fKey]" 
+                class="data-input" 
+                style="height: 30px; font-size: 0.8rem; padding: 2px 8px;"
+                :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                :data-path="getItemPath(idx, fKey)"
+              />
+            </div>
+          </div>
+
+          <!-- Child Hierarchies (e.g. activitats under partida, costos under activitat) -->
+          <template v-for="cKey in childKeys" :key="cKey">
+            {{ ensureChildArray(item, cKey) }}
+            <NestedDataNode 
+              :parentObj="item"
+              :arrayKey="cKey"
+              :parentPath="getItemPath(idx, '')"
+            />
+          </template>
+        </div>
+      </div>
+    </template>
   </div>
 </template>

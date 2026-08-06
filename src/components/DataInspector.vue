@@ -667,7 +667,7 @@ onUnmounted(() => {
         >
           <option 
             v-for="(sheetData, name) in store.excelJsonData" 
-            v-show="name !== 'editor_metadata'"
+            v-show="name !== 'editor_metadata' && name !== '_hierarchy_schema'"
             :key="name" 
             :value="name"
           >
@@ -678,7 +678,7 @@ onUnmounted(() => {
 
       <div 
         v-for="(sheetData, name) in store.excelJsonData" 
-        v-show="name !== 'editor_metadata' && (viewMode === 'complete' || name === selectedCompactSheet)"
+        v-show="name !== 'editor_metadata' && name !== '_hierarchy_schema' && (viewMode === 'complete' || name === selectedCompactSheet)"
         :key="name" 
         :data-sheet="name"
         class="accordion-item"

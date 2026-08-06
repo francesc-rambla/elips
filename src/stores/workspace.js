@@ -35,6 +35,13 @@ export const useWorkspaceStore = defineStore('workspace', {
     renderedMarkdown: '',
     cleanMarkdown: '',
     targetDataPath: null,
+    hierarchySchema: (() => {
+      try {
+        return JSON.parse(localStorage.getItem('hierarchySchema') || '{}');
+      } catch (e) {
+        return {};
+      }
+    })(),
     
     // UI state
     enginesReady: false,
