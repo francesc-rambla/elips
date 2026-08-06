@@ -50,9 +50,25 @@ const getKvPrimitiveEntries = (sheetData) => {
   return res;
 };
 
-const getNestedArrayKeys = (obj) => {
-  if (!obj || typeof obj !== 'object') return [];
-  return Object.keys(obj).filter(k => !isPrimitive(obj[k]));
+const isRootSheet = (name) => {
+  if (name === 'editor_metadata' || name === '_hierarchy_schema') return false;
+  return !name.includes('.');
+};
+
+const getTopLevelChildArrayKeys = (sheetName, sheetData) => {
+  const keys = new Set();
+  const schemaChildren = store.hierarchySchema?.[sheetName]?.children || [];
+  schemaChildren.forEach(k => keys.add(k));
+
+  if (sheetData && typeof sheetData === 'object' && !Array.isArray(sheetData)) {
+    Object.keys(sheetData).forEach(k => {
+      if (k !== '_hierarchy_schema' && !isPrimitive(sheetData[k])) {
+        keys.add(k);
+      }
+    });
+  }
+  
+  return Array.from(keys);
 };
 
 const scrollToTargetDataPath = (path) => {
@@ -667,7 +683,7 @@ onUnmounted(() => {
         >
           <option 
             v-for="(sheetData, name) in store.excelJsonData" 
-            v-show="name !== 'editor_metadata' && name !== '_hierarchy_schema'"
+            v-show="isRootSheet(name)"
             :key="name" 
             :value="name"
           >
@@ -678,7 +694,7 @@ onUnmounted(() => {
 
       <div 
         v-for="(sheetData, name) in store.excelJsonData" 
-        v-show="name !== 'editor_metadata' && name !== '_hierarchy_schema' && (viewMode === 'complete' || name === selectedCompactSheet)"
+        v-show="isRootSheet(name) && (viewMode === 'complete' || name === selectedCompactSheet)"
         :key="name" 
         :data-sheet="name"
         class="accordion-item"
@@ -1037,7 +1053,7 @@ onUnmounted(() => {
             </div>
             
             <!-- Integrated Hierarchical Nested Sub-Tables -->
-            <template v-for="subArrayKey in getNestedArrayKeys(sheetData)" :key="subArrayKey">
+            <template v-for="subArrayKey in getTopLevelChildArrayKeys(name, sheetData)" :key="subArrayKey">
               <NestedDataNode 
                 :parentObj="sheetData"
                 :arrayKey="subArrayKey"
