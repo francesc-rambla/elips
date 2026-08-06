@@ -35,11 +35,15 @@ const getSheetType = (sheetData) => {
   return Array.isArray(sheetData) ? 'tabular' : 'kv';
 };
 
+const isPrimitive = (val) => {
+  return !Array.isArray(val) && (typeof val !== 'object' || val === null);
+};
+
 const getKvPrimitiveEntries = (sheetData) => {
   if (!sheetData || typeof sheetData !== 'object' || Array.isArray(sheetData)) return {};
   const res = {};
   Object.keys(sheetData).forEach(k => {
-    if (!Array.isArray(sheetData[k])) {
+    if (isPrimitive(sheetData[k])) {
       res[k] = sheetData[k];
     }
   });
@@ -48,7 +52,7 @@ const getKvPrimitiveEntries = (sheetData) => {
 
 const getNestedArrayKeys = (obj) => {
   if (!obj || typeof obj !== 'object') return [];
-  return Object.keys(obj).filter(k => Array.isArray(obj[k]));
+  return Object.keys(obj).filter(k => !isPrimitive(obj[k]));
 };
 
 const scrollToTargetDataPath = (path) => {
@@ -726,7 +730,7 @@ onUnmounted(() => {
                 <thead>
                   <tr>
                     <th 
-                      v-for="col in Object.keys(sheetData[0])" 
+                      v-for="col in Object.keys(sheetData[0]).filter(k => isPrimitive(sheetData[0][k]))" 
                       :key="col" 
                       :style="getColumnWidthStyle(name, col)"
                     >
@@ -742,7 +746,7 @@ onUnmounted(() => {
                 </thead>
                 <tbody>
                   <tr v-for="(row, idx) in sheetData.slice(0, visibleRowsCount[name])" :key="idx" :id="'data-row-' + name + '-' + idx">
-                    <td v-for="col in Object.keys(sheetData[0]).filter(k => !Array.isArray(sheetData[0][k]))" :key="col" style="padding: 4px;">
+                    <td v-for="col in Object.keys(sheetData[0]).filter(k => isPrimitive(sheetData[0][k]))" :key="col" style="padding: 4px;">
                       <span v-if="typeof row[col] === 'object' && row[col] !== null" style="font-size:0.75rem; color:var(--text-muted)">
                         [Complex]
                       </span>

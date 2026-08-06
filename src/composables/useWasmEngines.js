@@ -354,20 +354,22 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     
                     if isinstance(data_to_set, list):
                         if not parent:
-                            parent[sub_key] = []
+                            parent[sub_key] = data_to_set
                             continue
-                        parent_ref_key = next(iter(parent.keys()))
+                        
                         child_ref_key = next(iter(data_to_set[0].keys())) if data_to_set else None
                         
-                        groups = defaultdict(list)
-                        if data_to_set and child_ref_key and parent_ref_key:
+                        if child_ref_key and child_ref_key in parent:
+                            groups = defaultdict(list)
                             for child_row in data_to_set:
                                 ref_val = child_row.get(child_ref_key)
                                 clean_child = {k: v for k, v in child_row.items() if k != child_ref_key}
                                 groups[ref_val].append(clean_child)
                                 
-                        ref_val = parent.get(parent_ref_key)
-                        parent[sub_key] = groups.get(ref_val, [])
+                            parent_ref_val = parent.get(child_ref_key)
+                            parent[sub_key] = groups.get(parent_ref_val, [])
+                        else:
+                            parent[sub_key] = data_to_set
                     else:
                         parent[sub_key] = data_to_set
 
