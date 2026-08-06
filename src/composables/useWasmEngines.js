@@ -150,17 +150,18 @@ def _is_kv_header(first_row):
     b = str(first_row[1]).strip().lower() if first_row[1] not in (None,'') else ''
     return (a in ('clau','key') and b in ('valor','value'))
 
-def _detect_kind(rows):
+def _detect_kind(rows, raw_name=""):
     if not rows:
-        return 'empty'
+        return 'tabular'
+    if '.' in raw_name:
+        return 'tabular'
     if _is_kv_header(rows[0]):
         return 'kv_header'
     
     first = rows[0]
     headers = [v for v in first if v not in (None, '')]
-    if len(headers) >= 3 and all(isinstance(v, str) for v in headers) and len(set(headers)) == len(headers):
-        if len(rows) >= 2 and any(v not in (None,'') for v in rows[1]):
-            return 'tabular'
+    if len(headers) >= 2 and all(isinstance(v, str) for v in headers) and len(set(headers)) == len(headers):
+        return 'tabular'
     return 'kv'
 
 def _parse_kv(rows, start_row=0):
@@ -176,7 +177,9 @@ def _parse_kv(rows, start_row=0):
     return out
 
 def _parse_table(rows):
-    headers = [sanitize_id(h) for h in rows[0]]
+    if not rows:
+        return []
+    headers = [sanitize_id(h) for h in rows[0] if h not in (None, '')]
     out = []
     for rr in rows[1:]:
         if all(v in (None, '') for v in rr):
@@ -191,14 +194,18 @@ def _parse_table(rows):
 
 def _parse_sheet(ws, date_format='iso'):
     rows = _read_rows(ws, date_format)
-    kind = _detect_kind(rows)
+    kind = _detect_kind(rows, ws.title)
+    headers = []
+    if rows:
+        headers = [sanitize_id(h) for h in rows[0] if h not in (None, '')]
+        
     if kind == 'kv_header':
-        return 'kv', _parse_kv(rows, start_row=1)
+        return 'kv', _parse_kv(rows, start_row=1), headers
     if kind == 'kv':
-        return 'kv', _parse_kv(rows, start_row=0)
+        return 'kv', _parse_kv(rows, start_row=0), headers
     if kind == 'tabular':
-        return 'tabular', _parse_table(rows)
-    return kind, None
+        return 'tabular', _parse_table(rows), headers
+    return kind, [], headers
 
 def _cast_numeric_strings(obj):
     if isinstance(obj, dict):
@@ -322,10 +329,11 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
 
     sorted_raw_names = sorted(parsed.keys(), key=_sheet_depth)
     
+    root = {}
     hierarchy_schema = {}
 
     for raw_name in sorted_raw_names:
-        kind, data = parsed[raw_name]
+        kind, data, headers = parsed[raw_name]
         stripped = raw_name
         if has_prefixed_sheets:
             for pfx in valid_prefixes:
@@ -337,7 +345,10 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
         path_str = '.'.join(parts)
         
         fields = []
-        if isinstance(data, list) and data:
+        if headers:
+            ref_k = headers[0] if len(parts) > 1 else None
+            fields = [h for h in headers if h != ref_k]
+        elif isinstance(data, list) and data:
             ref_k = next(iter(data[0].keys())) if len(parts) > 1 else None
             fields = [k for k in data[0].keys() if k != ref_k]
         elif isinstance(data, dict):
@@ -379,7 +390,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                             parent[sub_key] = data_to_set
                             continue
                         
-                        child_ref_key = next(iter(data_to_set[0].keys())) if data_to_set else None
+                        child_ref_key = headers[0] if headers else (next(iter(data_to_set[0].keys())) if data_to_set else None)
                         
                         if child_ref_key and child_ref_key in parent:
                             groups = defaultdict(list)
