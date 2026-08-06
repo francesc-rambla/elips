@@ -34,6 +34,53 @@ const getSheetType = (sheetData) => {
   return Array.isArray(sheetData) ? 'tabular' : 'kv';
 };
 
+const scrollToTargetDataPath = (path) => {
+  if (!path || !store.excelJsonData) return;
+
+  const clean = String(path).replace(/^#?(dades|doc)\./, '').replace(/\[(\d+)\]/g, '.$1');
+  const parts = clean.split('.');
+  if (parts.length === 0) return;
+
+  const sheetName = parts[0];
+  if (!(sheetName in store.excelJsonData)) return;
+
+  if (viewMode.value === 'compact') {
+    selectedCompactSheet.value = sheetName;
+  }
+  openSheets.value[sheetName] = true;
+
+  nextTick(() => {
+    let targetEl = document.querySelector(`[data-path="${clean}"]`);
+    if (!targetEl) {
+      const safeId = 'data-field-' + parts.join('-');
+      targetEl = document.getElementById(safeId);
+    }
+    if (!targetEl && parts.length >= 2) {
+      const rowId = `data-row-${sheetName}-${parts[1]}`;
+      targetEl = document.getElementById(rowId) || document.querySelector(`[data-sheet="${sheetName}"]`);
+    }
+
+    if (targetEl) {
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (typeof targetEl.focus === 'function') {
+        targetEl.focus();
+      }
+      targetEl.classList.remove('highlight-glow');
+      void targetEl.offsetWidth;
+      targetEl.classList.add('highlight-glow');
+      setTimeout(() => {
+        targetEl.classList.remove('highlight-glow');
+      }, 2500);
+    }
+  });
+};
+
+watch(() => store.targetDataPath, (newPath) => {
+  if (newPath) {
+    scrollToTargetDataPath(newPath);
+  }
+}, { immediate: true });
+
 const getRowsCount = (sheetData) => {
   return Array.isArray(sheetData) ? sheetData.length : Object.keys(sheetData).length;
 };
@@ -612,6 +659,7 @@ onUnmounted(() => {
         v-for="(sheetData, name) in store.excelJsonData" 
         v-show="name !== 'editor_metadata' && (viewMode === 'complete' || name === selectedCompactSheet)"
         :key="name" 
+        :data-sheet="name"
         class="accordion-item"
         :class="{ open: viewMode === 'compact' || openSheets[name], 'compact-card': viewMode === 'compact' }"
       >
@@ -676,7 +724,7 @@ onUnmounted(() => {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(row, idx) in sheetData.slice(0, visibleRowsCount[name])" :key="idx">
+                  <tr v-for="(row, idx) in sheetData.slice(0, visibleRowsCount[name])" :key="idx" :id="'data-row-' + name + '-' + idx">
                     <td v-for="col in Object.keys(sheetData[0])" :key="col" style="padding: 4px;">
                       <span v-if="typeof row[col] === 'object' && row[col] !== null" style="font-size:0.75rem; color:var(--text-muted)">
                         [Complex]
@@ -687,6 +735,8 @@ onUnmounted(() => {
                           <!-- Multiple select -->
                           <div 
                             v-if="getElementMetadata(name, col)?.multiple"
+                            :id="'data-field-' + name + '-' + idx + '-' + col"
+                            :data-path="name + '.' + idx + '.' + col"
                             style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 32px; padding: 4px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 300px; max-height: 80px; overflow-y: auto;"
                             @click="openMultiSelectModal(name, false, idx, col, getElementMetadata(name, col))"
                             title="Fes clic per modificar la selecció"
@@ -706,6 +756,8 @@ onUnmounted(() => {
                           <!-- Single select -->
                           <select 
                             v-else
+                            :id="'data-field-' + name + '-' + idx + '-' + col"
+                            :data-path="name + '.' + idx + '.' + col"
                             v-model="store.excelJsonData[name][idx][col]"
                             class="data-input"
                             style="flex-grow: 1; height: 32px;"
@@ -724,6 +776,8 @@ onUnmounted(() => {
                         <!-- Date Type -->
                         <input 
                           v-else-if="getElementType(name, col) === 'Date'"
+                          :id="'data-field-' + name + '-' + idx + '-' + col"
+                          :data-path="name + '.' + idx + '.' + col"
                           type="date"
                           v-model="store.excelJsonData[name][idx][col]"
                           class="data-input"
@@ -733,6 +787,8 @@ onUnmounted(() => {
                         <!-- Number Type -->
                         <input 
                           v-else-if="getElementType(name, col) === 'Number'"
+                          :id="'data-field-' + name + '-' + idx + '-' + col"
+                          :data-path="name + '.' + idx + '.' + col"
                           type="number"
                           step="any"
                           v-model="store.excelJsonData[name][idx][col]"
@@ -743,6 +799,8 @@ onUnmounted(() => {
                         <!-- Boolean Type -->
                         <select 
                           v-else-if="getElementType(name, col) === 'Boolean'"
+                          :id="'data-field-' + name + '-' + idx + '-' + col"
+                          :data-path="name + '.' + idx + '.' + col"
                           v-model="store.excelJsonData[name][idx][col]"
                           class="data-input"
                           style="flex-grow: 1; height: 32px;"
@@ -755,6 +813,8 @@ onUnmounted(() => {
                         <!-- Text Type (default) -->
                         <textarea 
                           v-else-if="viewMode === 'compact' || (typeof row[col] === 'string' && row[col].length > 40)"
+                          :id="'data-field-' + name + '-' + idx + '-' + col"
+                          :data-path="name + '.' + idx + '.' + col"
                           v-model="store.excelJsonData[name][idx][col]"
                           class="data-input"
                           :rows="viewMode === 'compact' ? 3 : undefined"
@@ -763,6 +823,8 @@ onUnmounted(() => {
                         ></textarea>
                         <input 
                           v-else
+                          :id="'data-field-' + name + '-' + idx + '-' + col"
+                          :data-path="name + '.' + idx + '.' + col"
                           type="text"
                           v-model="store.excelJsonData[name][idx][col]"
                           class="data-input"
@@ -835,6 +897,8 @@ onUnmounted(() => {
                         <!-- Multiple select -->
                         <div 
                           v-if="getElementMetadata(name, key)?.multiple"
+                          :id="'data-field-' + name + '-' + key"
+                          :data-path="name + '.' + key"
                           style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 32px; padding: 4px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 300px; max-height: 80px; overflow-y: auto;"
                           @click="openMultiSelectModal(name, true, key, null, getElementMetadata(name, key))"
                           title="Fes clic per modificar la selecció"
@@ -854,6 +918,8 @@ onUnmounted(() => {
                         <!-- Single select -->
                         <select 
                           v-else
+                          :id="'data-field-' + name + '-' + key"
+                          :data-path="name + '.' + key"
                           v-model="store.excelJsonData[name][key]"
                           class="data-input"
                           style="flex-grow: 1; height: 32px;"
@@ -872,6 +938,8 @@ onUnmounted(() => {
                       <!-- Date Type -->
                       <input 
                         v-else-if="getElementType(name, key) === 'Date'"
+                        :id="'data-field-' + name + '-' + key"
+                        :data-path="name + '.' + key"
                         type="date"
                         v-model="store.excelJsonData[name][key]"
                         class="data-input"
@@ -881,6 +949,8 @@ onUnmounted(() => {
                       <!-- Number Type -->
                       <input 
                         v-else-if="getElementType(name, key) === 'Number'"
+                        :id="'data-field-' + name + '-' + key"
+                        :data-path="name + '.' + key"
                         type="number"
                         step="any"
                         v-model="store.excelJsonData[name][key]"
@@ -891,6 +961,8 @@ onUnmounted(() => {
                       <!-- Boolean Type -->
                       <select 
                         v-else-if="getElementType(name, key) === 'Boolean'"
+                        :id="'data-field-' + name + '-' + key"
+                        :data-path="name + '.' + key"
                         v-model="store.excelJsonData[name][key]"
                         class="data-input"
                         style="flex-grow: 1; height: 32px;"
@@ -903,6 +975,8 @@ onUnmounted(() => {
                       <!-- Text Type (default) -->
                       <textarea 
                         v-else-if="viewMode === 'compact' || (typeof val === 'string' && val.length > 40)"
+                        :id="'data-field-' + name + '-' + key"
+                        :data-path="name + '.' + key"
                         v-model="store.excelJsonData[name][key]"
                         class="data-input"
                         :rows="viewMode === 'compact' ? 3 : undefined"
@@ -911,6 +985,8 @@ onUnmounted(() => {
                       ></textarea>
                       <input 
                         v-else
+                        :id="'data-field-' + name + '-' + key"
+                        :data-path="name + '.' + key"
                         type="text"
                         v-model="store.excelJsonData[name][key]"
                         class="data-input"

@@ -892,7 +892,8 @@ const generateDocuments = async () => {
     // 1. Jinja2 Compile
     store.addLog("Processant codi Jinja2 en dues passades...", "info");
     const payload = await renderMarkdown(store.templateText);
-    store.renderedMarkdown = payload.markdown;
+    store.renderedMarkdown = payload.htmlMarkdown || payload.markdown;
+    store.cleanMarkdown = payload.markdown;
     store.issues = payload.issues || [];
     
     if (store.issues.length > 0) {
@@ -901,7 +902,7 @@ const generateDocuments = async () => {
       store.addLog("La plantilla s'ha renderitzat completament sense errors de claus buides.", "success");
     }
 
-    // 2. Compile DOCX via Pandoc
+    // 2. Compile DOCX via Pandoc (utilitzant el markdown net sense enllaços intern HTML)
     store.addLog("Preparant document Word...", "info");
     let refBuf = null;
     if (store.refDocFile) {
@@ -914,7 +915,7 @@ const generateDocuments = async () => {
       } catch (_) {}
     }
     
-    const docxBlob = await compileDocx(store.renderedMarkdown, refBuf, {});
+    const docxBlob = await compileDocx(store.cleanMarkdown || store.renderedMarkdown, refBuf, {});
     
     // Create Download Blobs
     if (dlDocxUrl.value) URL.revokeObjectURL(dlDocxUrl.value);
@@ -923,7 +924,7 @@ const generateDocuments = async () => {
     
     dlDocxUrl.value = URL.createObjectURL(docxBlob);
     
-    const mdBlob = new Blob([store.renderedMarkdown], { type: 'text/markdown' });
+    const mdBlob = new Blob([store.cleanMarkdown || store.renderedMarkdown], { type: 'text/markdown' });
     dlMdUrl.value = URL.createObjectURL(mdBlob);
     
     const jsonBlob = new Blob([JSON.stringify(store.excelJsonData, null, 2)], { type: 'application/json' });

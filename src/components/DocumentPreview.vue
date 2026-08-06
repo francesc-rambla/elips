@@ -41,10 +41,22 @@ const htmlContent = computed(() => {
   }
 });
 
+const handlePreviewClick = (e) => {
+  const link = e.target.closest('a');
+  if (link) {
+    const href = link.getAttribute('href') || link.hash;
+    if (href && (href.startsWith('#dades.') || href.startsWith('#doc.') || href.startsWith('dades.') || href.startsWith('doc.'))) {
+      e.preventDefault();
+      store.navigateToDataPath(href);
+    }
+  }
+};
+
 const copyMd = () => {
-  if (!store.renderedMarkdown) return;
+  const text = store.cleanMarkdown || store.renderedMarkdown;
+  if (!text) return;
   const el = document.createElement('textarea');
-  el.value = store.renderedMarkdown;
+  el.value = text;
   document.body.appendChild(el);
   el.select();
   document.execCommand('copy');
@@ -59,10 +71,10 @@ const copyMd = () => {
     <div class="preview-pane">
       <div class="preview-header">
         <span>Document Formatat</span>
-        <span style="font-size: 0.75rem; color: var(--color-success)">Previsualització HTML</span>
+        <span style="font-size: 0.75rem; color: var(--color-success)">Previsualització HTML (Interactiva)</span>
       </div>
       
-      <div class="preview-body markdown-preview" id="previewHtml">
+      <div class="preview-body markdown-preview" id="previewHtml" @click="handlePreviewClick">
         <div v-if="!isGenerated" style="text-align:center; padding:5rem 1rem; color:var(--text-muted)">
           <p>No hi ha cap document generat encara.</p>
           <p style="font-size:0.8rem; margin-top:0.5rem">Fes clic al botó "Genera Documents" al panell esquerre.</p>
@@ -80,7 +92,7 @@ const copyMd = () => {
           class="btn-icon-only" 
           style="width:26px; height:26px;" 
           @click="copyMd"
-          title="Copia tot el text"
+          title="Copia tot el text net"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
         </button>
@@ -88,7 +100,7 @@ const copyMd = () => {
       <textarea 
         class="raw-textarea" 
         readonly 
-        :value="store.renderedMarkdown"
+        :value="store.cleanMarkdown || store.renderedMarkdown"
         placeholder="El markdown generat apareixerà aquí..."
       ></textarea>
     </div>

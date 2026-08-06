@@ -33,6 +33,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     })(),
     renderedMarkdown: '',
+    cleanMarkdown: '',
+    targetDataPath: null,
     
     // UI state
     enginesReady: false,
@@ -112,6 +114,14 @@ export const useWorkspaceStore = defineStore('workspace', {
         const pName = localStorage.getItem('currentProjectName') || 'Default';
         localStorage.setItem(`${pName}:activeTab`, tab);
       }
+    },
+
+    navigateToDataPath(path) {
+      if (!path) return;
+      const cleanPath = String(path).replace(/^#?(dades|doc)\./, '').replace(/\[(\d+)\]/g, '.$1');
+      this.targetDataPath = cleanPath;
+      this.setActiveTab('data');
+      this.addLog(`Navegant als dades de l'Excel: ${cleanPath}`, 'info');
     },
     
     toggleMaximize() {

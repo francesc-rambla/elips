@@ -311,6 +311,160 @@ def _wrap_safe(val, path):
         return [_wrap_safe(item, f"{path}[{idx}]") for idx, item in enumerate(val)]
     return val
 
+class TrackedValue:
+    def __init__(self, val, path, enable_links=True):
+        self.val = val
+        self._path = path
+        self.enable_links = enable_links
+
+    def __str__(self):
+        if self.val is None:
+            return ''
+        s = str(self.val)
+        if self.enable_links and self._path:
+            return f'<a href="#dades.{self._path}" class="data-link" data-path="{self._path}">{s}</a>'
+        return s
+
+    def __repr__(self):
+        return str(self)
+
+    def __html__(self):
+        return str(self)
+
+    def __bool__(self):
+        return bool(self.val)
+
+    def __len__(self):
+        if hasattr(self.val, '__len__'):
+            return len(self.val)
+        return 0
+
+    def __int__(self):
+        return int(self.val)
+
+    def __float__(self):
+        return float(self.val)
+
+    def __hash__(self):
+        return hash(self.val)
+
+    def __eq__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        return self.val == o
+
+    def __ne__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        return self.val != o
+
+    def __lt__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        return self.val < o
+
+    def __le__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        return self.val <= o
+
+    def __gt__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        return self.val > o
+
+    def __ge__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        return self.val >= o
+
+    def __add__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        res = self.val + o
+        return TrackedValue(res, self._path, self.enable_links)
+
+    def __radd__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        res = o + self.val
+        return TrackedValue(res, self._path, self.enable_links)
+
+    def __sub__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        res = self.val - o
+        return TrackedValue(res, self._path, self.enable_links)
+
+    def __rsub__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        res = o - self.val
+        return TrackedValue(res, self._path, self.enable_links)
+
+    def __mul__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        res = self.val * o
+        return TrackedValue(res, self._path, self.enable_links)
+
+    def __rmul__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        res = o * self.val
+        return TrackedValue(res, self._path, self.enable_links)
+
+    def __truediv__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        res = self.val / o
+        return TrackedValue(res, self._path, self.enable_links)
+
+    def __rtruediv__(self, other):
+        o = other.val if isinstance(other, TrackedValue) else other
+        res = o / self.val
+        return TrackedValue(res, self._path, self.enable_links)
+
+class TrackedDict(dict):
+    def __init__(self, d, path, enable_links=True):
+        super().__init__()
+        self._path = path
+        self.enable_links = enable_links
+        for k, v in d.items():
+            sub_path = f"{path}.{k}" if path else k
+            self[k] = _wrap_tracked(v, sub_path, enable_links)
+
+    def __getitem__(self, key):
+        if key not in self:
+            p = f"{self._path}.{key}" if self._path else str(key)
+            return Placeholder(p)
+        return super().__getitem__(key)
+
+    def __getattr__(self, name):
+        if name.startswith('_') or name in ('get', 'keys', 'items', 'values'):
+            raise AttributeError(name)
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name)
+
+    def get(self, key, default=None):
+        if key not in self:
+            p = f"{self._path}.{key}" if self._path else str(key)
+            return Placeholder(p)
+        return super().get(key, default)
+
+class TrackedList(list):
+    def __init__(self, lst, path, enable_links=True):
+        super().__init__()
+        self._path = path
+        self.enable_links = enable_links
+        for idx, item in enumerate(lst):
+            sub_path = f"{path}.{idx}"
+            self.append(_wrap_tracked(item, sub_path, enable_links))
+
+def _wrap_tracked(val, path='', enable_links=True):
+    if isinstance(val, dict):
+        if isinstance(val, TrackedDict):
+            return val
+        return TrackedDict(val, path, enable_links)
+    elif isinstance(val, list):
+        if isinstance(val, TrackedList):
+            return val
+        return TrackedList(val, path, enable_links)
+    elif isinstance(val, (SafeDict, Placeholder)):
+        return val
+    elif isinstance(val, TrackedValue):
+        return val
+    return TrackedValue(val, path, enable_links)
+
 class SafeDict(dict):
     def __init__(self, d, path):
         super().__init__()
@@ -946,15 +1100,23 @@ def english_date_to_words(d):
     months = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
     return f"{english_ordinal_words(d.day)} of {months[d.month]}, {english_number_to_words(d.year)}"
 
+def _wrap_res(res, orig_path, enable_links):
+    if orig_path:
+        return TrackedValue(res, orig_path, enable_links)
+    return res
+
 @pass_context
 def filter_coin(context, value, currency_symbol=None):
+    orig_path = getattr(value, '_path', None)
+    enable_links = getattr(value, 'enable_links', True)
+    val_raw = value.val if isinstance(value, TrackedValue) else value
     locale_code = get_locale_from_context(context)
-    if value in (None, ''):
-        return ''
+    if val_raw in (None, ''):
+        return _wrap_res('', orig_path, enable_links)
     try:
-        val = float(value)
+        val = float(val_raw)
     except (ValueError, TypeError):
-        return value
+        return _wrap_res(val_raw, orig_path, enable_links)
     dec_sep = ','
     thousands_sep = '.'
     curr_before = False
@@ -985,20 +1147,24 @@ def filter_coin(context, value, currency_symbol=None):
     formatted_int = (('-' if is_neg else '') + thousands_sep.join(thousands_list))
     formatted_num = f"{formatted_int}{dec_sep}{decimal_part}"
     if curr_before:
-        return f"{currency_symbol}{formatted_num}"
+        res = f"{currency_symbol}{formatted_num}"
     else:
-        return f"{formatted_num}{currency_symbol}"
+        res = f"{formatted_num}{currency_symbol}"
+    return _wrap_res(res, orig_path, enable_links)
 
 @pass_context
 def filter_number(context, value, precision=2):
+    orig_path = getattr(value, '_path', None)
+    enable_links = getattr(value, 'enable_links', True)
+    val_raw = value.val if isinstance(value, TrackedValue) else value
     locale_code = get_locale_from_context(context)
-    if value in (None, ''):
-        return ''
+    if val_raw in (None, ''):
+        return _wrap_res('', orig_path, enable_links)
     try:
-        val = float(value)
+        val = float(val_raw)
         precision = int(precision)
     except (ValueError, TypeError):
-        return value
+        return _wrap_res(val_raw, orig_path, enable_links)
     dec_sep = ','
     thousands_sep = '.'
     locale_lower = locale_code.lower()
@@ -1019,79 +1185,92 @@ def filter_number(context, value, precision=2):
     thousands_list.insert(0, integer_part)
     formatted_int = (('-' if is_neg else '') + thousands_sep.join(thousands_list))
     if precision > 0:
-        return f"{formatted_int}{dec_sep}{decimal_part}"
+        res = f"{formatted_int}{dec_sep}{decimal_part}"
     else:
-        return formatted_int
+        res = formatted_int
+    return _wrap_res(res, orig_path, enable_links)
 
 @pass_context
 def filter_words(context, value, mode=None):
+    orig_path = getattr(value, '_path', None)
+    enable_links = getattr(value, 'enable_links', True)
+    val_raw = value.val if isinstance(value, TrackedValue) else value
     locale_code = get_locale_from_context(context)
     locale_lower = locale_code.lower()
     d = None
-    if isinstance(value, (datetime, date)):
-        d = value
-    elif isinstance(value, str):
+    if isinstance(val_raw, (datetime, date)):
+        d = val_raw
+    elif isinstance(val_raw, str):
         for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S'):
             try:
-                d = datetime.strptime(value.strip(), fmt).date()
+                d = datetime.strptime(val_raw.strip(), fmt).date()
                 break
             except ValueError:
                 pass
     if d is not None:
         if 'es_es' in locale_lower:
-            return spanish_date_to_words(d)
+            res = spanish_date_to_words(d)
         elif 'en_us' in locale_lower or 'en_gb' in locale_lower:
-            return english_date_to_words(d)
+            res = english_date_to_words(d)
         else:
-            return catalan_date_to_words(d)
+            res = catalan_date_to_words(d)
+        return _wrap_res(res, orig_path, enable_links)
     try:
-        val = float(value)
+        val = float(val_raw)
     except (ValueError, TypeError):
-        return value
+        return _wrap_res(val_raw, orig_path, enable_links)
     if mode is None:
         mode = 'coin'
     if mode == 'coin':
         if 'es_es' in locale_lower:
-            return spanish_currency_to_words(val)
+            res = spanish_currency_to_words(val)
         elif 'en_us' in locale_lower or 'en_gb' in locale_lower:
-            return english_currency_to_words(val)
+            res = english_currency_to_words(val)
         else:
-            return catalan_currency_to_words(val)
+            res = catalan_currency_to_words(val)
     else:
         integer_part = int(val)
         decimal_part = int(round((val - integer_part) * 100))
         if 'es_es' in locale_lower:
             int_str = spanish_number_to_words(integer_part)
             if decimal_part > 0:
-                return f"{int_str} con {spanish_number_to_words(decimal_part)}"
-            return int_str
+                res = f"{int_str} con {spanish_number_to_words(decimal_part)}"
+            else:
+                res = int_str
         elif 'en_us' in locale_lower or 'en_gb' in locale_lower:
             int_str = english_number_to_words(integer_part)
             if decimal_part > 0:
-                return f"{int_str} point {english_number_to_words(decimal_part)}"
-            return int_str
+                res = f"{int_str} point {english_number_to_words(decimal_part)}"
+            else:
+                res = int_str
         else:
             int_str = catalan_number_to_words(integer_part)
             if decimal_part > 0:
-                return f"{int_str} amb {catalan_number_to_words(decimal_part)}"
-            return int_str
+                res = f"{int_str} amb {catalan_number_to_words(decimal_part)}"
+            else:
+                res = int_str
+    return _wrap_res(res, orig_path, enable_links)
 
 def filter_prefix(value, fallback, elided):
-    s = str(value or '').strip()
+    orig_path = getattr(value, '_path', None)
+    enable_links = getattr(value, 'enable_links', True)
+    val_raw = value.val if isinstance(value, TrackedValue) else value
+    s = str(val_raw or '').strip()
     if not s:
-        return s
+        return _wrap_res(s, orig_path, enable_links)
     
     import re
     is_elision = bool(re.match(r"^(?:[aeiouàéèíóòúüïAEIOUÀÉÈÍÓÒÚÜÏ]|[hH][aeiouàéèíóòúüïAEIOUÀÉÈÍÓÒÚÜÏ])", s))
     pfx = elided if is_elision else fallback
     
     if pfx.endswith("'") or pfx.endswith("’"):
-        return f"{pfx}{s}"
+        res = f"{pfx}{s}"
     else:
         if pfx.endswith(" "):
-            return f"{pfx}{s}"
+            res = f"{pfx}{s}"
         else:
-            return f"{pfx} {s}"
+            res = f"{pfx} {s}"
+    return _wrap_res(res, orig_path, enable_links)
 
 def render_json_text(excel_path, date_format='iso', strict=False):
     doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
@@ -1121,30 +1300,52 @@ def _filter_empty_rows(data):
 def render_md_two_pass_with_report(excel_path, template_path, date_format='iso', strict=False):
     raw_doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
     doc = _filter_empty_rows(raw_doc)
-    ctx = _wrap_safe(doc, 'doc')
-    if 'doc' not in ctx:
-        ctx['doc'] = ctx
-    env = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
-    env.filters['coin'] = filter_coin
-    env.filters['number'] = filter_number
-    env.filters['words'] = filter_words
-    env.filters['prefix'] = filter_prefix
-    env.globals['TRUE'] = True
-    env.globals['FALSE'] = False
-    env.globals['true'] = True
-    env.globals['false'] = False
 
     with open(template_path, 'r', encoding='utf-8') as f:
         tpl_src = f.read()
 
-    print("--- RAW TEMPLATE SENT TO JINJA2 ---")
-    print(tpl_src)
-    print("-----------------------------------")
+    # Pass 1: Clean Context without HTML links (for Pandoc / Word export)
+    clean_ctx = _wrap_safe(doc, 'doc')
+    if 'doc' not in clean_ctx:
+        clean_ctx['doc'] = clean_ctx
 
-    out1, issues1 = render_with_recovery(env, tpl_src, ctx, 'primera')
-    out2, issues2 = render_with_recovery(env, out1, ctx, 'segona')
+    env_clean = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
+    env_clean.filters['coin'] = filter_coin
+    env_clean.filters['number'] = filter_number
+    env_clean.filters['words'] = filter_words
+    env_clean.filters['prefix'] = filter_prefix
+    env_clean.globals['TRUE'] = True
+    env_clean.globals['FALSE'] = False
+    env_clean.globals['true'] = True
+    env_clean.globals['false'] = False
+
+    out1_clean, issues1 = render_with_recovery(env_clean, tpl_src, clean_ctx, 'primera')
+    out2_clean, issues2 = render_with_recovery(env_clean, out1_clean, clean_ctx, 'segona')
     all_issues = issues1 + issues2
-    return json.dumps({'markdown': out2, 'issues': all_issues}, ensure_ascii=False)
+
+    # Pass 2: Tracked Context with HTML links (for HTML preview)
+    html_ctx = _wrap_tracked(doc, '', enable_links=True)
+    if 'doc' not in html_ctx:
+        html_ctx['doc'] = html_ctx
+
+    env_html = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
+    env_html.filters['coin'] = filter_coin
+    env_html.filters['number'] = filter_number
+    env_html.filters['words'] = filter_words
+    env_html.filters['prefix'] = filter_prefix
+    env_html.globals['TRUE'] = True
+    env_html.globals['FALSE'] = False
+    env_html.globals['true'] = True
+    env_html.globals['false'] = False
+
+    out1_html, _ = render_with_recovery(env_html, tpl_src, html_ctx, 'primera_html')
+    out2_html, _ = render_with_recovery(env_html, out1_html, html_ctx, 'segona_html')
+
+    return json.dumps({
+        'markdown': out2_clean,
+        'htmlMarkdown': out2_html,
+        'issues': all_issues
+    }, ensure_ascii=False)
       `;
       await _pyodide.runPythonAsync(pyCode);
       store.addLog("Motor de dades Python vinculat correctament a Pyodide.", 'success');
