@@ -62,54 +62,70 @@ const isNonEmptySchema = (s) => {
   return hasFields || hasChildren;
 };
 
-const findSchemaInTree = (targetPath, dict) => {
-  if (!dict || !targetPath) return null;
+const universalFindSchema = (targetPath, dict) => {
+  if (!dict || !targetPath) return { fields: [], children: {} };
   
-  const parts = String(targetPath).replace(/\.\d+\b/g, '').split('.').filter(Boolean);
+  const cleanP = String(targetPath).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
+  
+  // 1. Direct Flat Key Lookup (e.g. dict["pres.parts"])
+  if (dict[cleanP] && isNonEmptySchema(dict[cleanP])) {
+    return dict[cleanP];
+  }
+  
+  // 2. Direct Tree Path Traversal (e.g. dict["pres"].children["parts"])
+  const parts = cleanP.split('.').filter(Boolean);
   let curr = dict;
-  let found = null;
+  let foundTree = null;
   
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i];
-    if (curr && typeof curr === 'object' && curr[p]) {
-      found = curr[p];
-      curr = curr[p].children;
-    } else {
-      found = null;
-      break;
+    if (curr && typeof curr === 'object') {
+      const node = curr[p] || (curr.children && typeof curr.children === 'object' && !Array.isArray(curr.children) ? curr.children[p] : null);
+      if (node) {
+        foundTree = node;
+        curr = node.children;
+      } else {
+        foundTree = null;
+        break;
+      }
     }
   }
-  if (isNonEmptySchema(found)) {
-    return found;
+  if (isNonEmptySchema(foundTree)) {
+    return foundTree;
   }
   
-  const searchKey = parts[parts.length - 1];
-  let fallbackFound = null;
+  // 3. Search by key suffix (e.g. sKey === "pres.parts" or sKey.endsWith(".parts")) in flat dict
+  const lastKey = parts[parts.length - 1];
+  for (const [sKey, sVal] of Object.entries(dict)) {
+    if ((sKey === cleanP || sKey === lastKey || sKey.endsWith(`.${lastKey}`)) && isNonEmptySchema(sVal)) {
+      return sVal;
+    }
+  }
   
-  const dfs = (nodeDict) => {
-    if (!nodeDict || typeof nodeDict !== 'object') return null;
-    for (const [k, val] of Object.entries(nodeDict)) {
-      if (k === searchKey && val && typeof val === 'object') {
-        if (isNonEmptySchema(val)) {
-          return val;
-        }
-        fallbackFound = val;
+  // 4. Deep DFS in recursive tree dict
+  const dfs = (nodeObj) => {
+    if (!nodeObj || typeof nodeObj !== 'object') return null;
+    for (const [k, v] of Object.entries(nodeObj)) {
+      if ((k === lastKey || k === cleanP) && isNonEmptySchema(v)) {
+        return v;
       }
-      if (val && val.children) {
-        const sub = dfs(val.children);
+      if (v && v.children && typeof v.children === 'object' && !Array.isArray(v.children)) {
+        const sub = dfs(v.children);
         if (sub) return sub;
       }
     }
     return null;
   };
   
-  const result = dfs(dict);
-  return result || fallbackFound || (found && typeof found === 'object' ? found : null);
+  const dfsResult = dfs(dict);
+  if (dfsResult) return dfsResult;
+  
+  return { fields: [], children: {} };
 };
 
 const getTopLevelChildSchemas = (sheetName, sheetData) => {
   const dict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
-  const rootS = findSchemaInTree(sheetName, dict) || { fields: [], children: {} };
+  const rootS = universalFindSchema(sheetName, dict);
   const children = rootS.children;
   const res = {};
   
@@ -117,16 +133,16 @@ const getTopLevelChildSchemas = (sheetName, sheetData) => {
     children.forEach(cKey => {
       if (typeof cKey === 'string') {
         const fullKey = `${sheetName}.${cKey}`;
-        res[cKey] = findSchemaInTree(fullKey, dict) || { fields: [], children: {} };
+        res[cKey] = universalFindSchema(fullKey, dict);
       }
     });
   } else if (children && typeof children === 'object') {
     Object.entries(children).forEach(([cKey, cVal]) => {
-      if (cVal && typeof cVal === 'object' && (cVal.fields?.length > 0 || (cVal.children && Object.keys(cVal.children).length > 0))) {
+      if (isNonEmptySchema(cVal)) {
         res[cKey] = cVal;
       } else {
         const fullKey = `${sheetName}.${cKey}`;
-        res[cKey] = findSchemaInTree(fullKey, dict) || { fields: [], children: {} };
+        res[cKey] = universalFindSchema(fullKey, dict);
       }
     });
   }
@@ -134,7 +150,7 @@ const getTopLevelChildSchemas = (sheetName, sheetData) => {
   if (sheetData && typeof sheetData === 'object' && !Array.isArray(sheetData)) {
     Object.keys(sheetData).forEach(k => {
       if (k !== '_hierarchy_schema' && !isPrimitive(sheetData[k]) && !(k in res)) {
-        res[k] = findSchemaInTree(`${sheetName}.${k}`, dict) || { fields: [], children: {} };
+        res[k] = universalFindSchema(`${sheetName}.${k}`, dict);
       }
     });
   }
