@@ -55,20 +55,48 @@ const isRootSheet = (name) => {
   return !name.includes('.');
 };
 
-const resolveSchemaFromDict = (key, dict) => {
-  if (!dict || !key) return { fields: [], children: {} };
-  if (dict[key]) return dict[key];
-  for (const [sKey, sVal] of Object.entries(dict)) {
-    if (sKey === key || sKey.endsWith(`.${key}`)) {
-      return sVal;
+const findSchemaInTree = (targetPath, dict) => {
+  if (!dict || !targetPath) return null;
+  
+  const parts = String(targetPath).replace(/\.\d+\b/g, '').split('.').filter(Boolean);
+  let curr = dict;
+  let found = null;
+  
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (curr && typeof curr === 'object' && curr[p]) {
+      found = curr[p];
+      curr = curr[p].children;
+    } else {
+      found = null;
+      break;
     }
   }
-  return { fields: [], children: {} };
+  if (found && (found.fields || found.children)) {
+    return found;
+  }
+  
+  const searchKey = parts[parts.length - 1];
+  const dfs = (nodeDict) => {
+    if (!nodeDict || typeof nodeDict !== 'object') return null;
+    for (const [k, val] of Object.entries(nodeDict)) {
+      if (k === searchKey && val && typeof val === 'object' && (val.fields || val.children)) {
+        return val;
+      }
+      if (val && val.children) {
+        const sub = dfs(val.children);
+        if (sub) return sub;
+      }
+    }
+    return null;
+  };
+  
+  return dfs(dict);
 };
 
 const getTopLevelChildSchemas = (sheetName, sheetData) => {
   const dict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
-  const rootS = dict[sheetName] || { fields: [], children: {} };
+  const rootS = findSchemaInTree(sheetName, dict) || { fields: [], children: {} };
   const children = rootS.children;
   const res = {};
   
@@ -76,7 +104,7 @@ const getTopLevelChildSchemas = (sheetName, sheetData) => {
     children.forEach(cKey => {
       if (typeof cKey === 'string') {
         const fullKey = `${sheetName}.${cKey}`;
-        res[cKey] = resolveSchemaFromDict(fullKey, dict);
+        res[cKey] = findSchemaInTree(fullKey, dict) || { fields: [], children: {} };
       }
     });
   } else if (children && typeof children === 'object') {
@@ -85,7 +113,7 @@ const getTopLevelChildSchemas = (sheetName, sheetData) => {
         res[cKey] = cVal;
       } else {
         const fullKey = `${sheetName}.${cKey}`;
-        res[cKey] = resolveSchemaFromDict(fullKey, dict);
+        res[cKey] = findSchemaInTree(fullKey, dict) || { fields: [], children: {} };
       }
     });
   }
@@ -93,7 +121,7 @@ const getTopLevelChildSchemas = (sheetName, sheetData) => {
   if (sheetData && typeof sheetData === 'object' && !Array.isArray(sheetData)) {
     Object.keys(sheetData).forEach(k => {
       if (k !== '_hierarchy_schema' && !isPrimitive(sheetData[k]) && !(k in res)) {
-        res[k] = resolveSchemaFromDict(`${sheetName}.${k}`, dict);
+        res[k] = findSchemaInTree(`${sheetName}.${k}`, dict) || { fields: [], children: {} };
       }
     });
   }
