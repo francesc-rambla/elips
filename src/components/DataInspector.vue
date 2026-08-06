@@ -55,19 +55,45 @@ const isRootSheet = (name) => {
   return !name.includes('.');
 };
 
-const getRootSchema = (sheetName) => {
-  const dict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
-  return dict[sheetName] || { fields: [], children: {} };
+const resolveSchemaFromDict = (key, dict) => {
+  if (!dict || !key) return { fields: [], children: {} };
+  if (dict[key]) return dict[key];
+  for (const [sKey, sVal] of Object.entries(dict)) {
+    if (sKey === key || sKey.endsWith(`.${key}`)) {
+      return sVal;
+    }
+  }
+  return { fields: [], children: {} };
 };
 
 const getTopLevelChildSchemas = (sheetName, sheetData) => {
-  const rootS = getRootSchema(sheetName);
-  const res = { ...(rootS.children || {}) };
+  const dict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
+  const rootS = dict[sheetName] || { fields: [], children: {} };
+  const children = rootS.children;
+  const res = {};
+  
+  if (Array.isArray(children)) {
+    children.forEach(cKey => {
+      if (typeof cKey === 'string') {
+        const fullKey = `${sheetName}.${cKey}`;
+        res[cKey] = resolveSchemaFromDict(fullKey, dict);
+      }
+    });
+  } else if (children && typeof children === 'object') {
+    Object.entries(children).forEach(([cKey, cVal]) => {
+      if (cVal && typeof cVal === 'object' && (cVal.fields?.length > 0 || (cVal.children && Object.keys(cVal.children).length > 0))) {
+        res[cKey] = cVal;
+      } else {
+        const fullKey = `${sheetName}.${cKey}`;
+        res[cKey] = resolveSchemaFromDict(fullKey, dict);
+      }
+    });
+  }
   
   if (sheetData && typeof sheetData === 'object' && !Array.isArray(sheetData)) {
     Object.keys(sheetData).forEach(k => {
       if (k !== '_hierarchy_schema' && !isPrimitive(sheetData[k]) && !(k in res)) {
-        res[k] = { fields: [], children: {} };
+        res[k] = resolveSchemaFromDict(`${sheetName}.${k}`, dict);
       }
     });
   }

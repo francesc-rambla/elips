@@ -37,55 +37,47 @@ const fullPath = computed(() => {
   return props.parentPath ? `${props.parentPath}.${props.arrayKey}` : props.arrayKey;
 });
 
-const nodeSchema = computed(() => {
-  if (props.schema && (props.schema.fields?.length > 0 || (props.schema.children && Object.keys(props.schema.children).length > 0))) {
-    return props.schema;
-  }
-  const schemaDict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
-  const effPath = cleanPath(props.schemaPath || fullPath.value);
-  if (effPath && schemaDict[effPath]) {
-    return schemaDict[effPath];
-  }
-  if (props.arrayKey) {
-    for (const [sKey, sVal] of Object.entries(schemaDict)) {
-      if (sKey === props.arrayKey || sKey.endsWith(`.${props.arrayKey}`)) {
-        return sVal;
-      }
+const resolveSchemaFromDict = (key, dict) => {
+  if (!dict || !key) return { fields: [], children: {} };
+  if (dict[key]) return dict[key];
+  for (const [sKey, sVal] of Object.entries(dict)) {
+    if (sKey === key || sKey.endsWith(`.${key}`)) {
+      return sVal;
     }
   }
   return { fields: [], children: {} };
+};
+
+const nodeSchema = computed(() => {
+  const schemaDict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
+  if (props.schema && (props.schema.fields?.length > 0 || (props.schema.children && (Array.isArray(props.schema.children) ? props.schema.children.length > 0 : Object.keys(props.schema.children).length > 0)))) {
+    return props.schema;
+  }
+  const effPath = cleanPath(props.schemaPath || fullPath.value);
+  return resolveSchemaFromDict(effPath || props.arrayKey, schemaDict);
 });
 
 const childSchemas = computed(() => {
   const children = nodeSchema.value.children;
   const res = {};
   const schemaDict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
+  const currentPath = cleanPath(props.schemaPath || fullPath.value);
   
-  if (children && typeof children === 'object' && !Array.isArray(children)) {
-    Object.entries(children).forEach(([cKey, cVal]) => {
-      if (cVal && (cVal.fields?.length > 0 || (cVal.children && Object.keys(cVal.children).length > 0))) {
-        res[cKey] = cVal;
-      } else {
-        let found = null;
-        for (const [sKey, sVal] of Object.entries(schemaDict)) {
-          if (sKey === cKey || sKey.endsWith(`.${cKey}`)) {
-            found = sVal;
-            break;
-          }
-        }
-        res[cKey] = found || { fields: [], children: {} };
+  if (Array.isArray(children)) {
+    children.forEach(cKey => {
+      if (typeof cKey === 'string') {
+        const fullKey = currentPath ? `${currentPath}.${cKey}` : cKey;
+        res[cKey] = resolveSchemaFromDict(fullKey, schemaDict);
       }
     });
-  } else if (Array.isArray(children)) {
-    children.forEach(cKey => {
-      let found = null;
-      for (const [sKey, sVal] of Object.entries(schemaDict)) {
-        if (sKey === cKey || sKey.endsWith(`.${cKey}`)) {
-          found = sVal;
-          break;
-        }
+  } else if (children && typeof children === 'object') {
+    Object.entries(children).forEach(([cKey, cVal]) => {
+      if (cVal && typeof cVal === 'object' && (cVal.fields?.length > 0 || (cVal.children && (Array.isArray(cVal.children) ? cVal.children.length > 0 : Object.keys(cVal.children).length > 0)))) {
+        res[cKey] = cVal;
+      } else {
+        const fullKey = currentPath ? `${currentPath}.${cKey}` : cKey;
+        res[cKey] = resolveSchemaFromDict(fullKey, schemaDict);
       }
-      res[cKey] = found || { fields: [], children: {} };
     });
   }
   return res;
