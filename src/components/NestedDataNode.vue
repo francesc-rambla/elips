@@ -19,12 +19,21 @@ const props = defineProps({
 
 const store = useWorkspaceStore();
 
+const cleanSchemaPath = (p) => {
+  if (!p) return '';
+  return String(p).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
+};
+
 const fullPath = computed(() => {
   return props.parentPath ? `${props.parentPath}.${props.arrayKey}` : props.arrayKey;
 });
 
+const schemaLookupPath = computed(() => {
+  return cleanSchemaPath(fullPath.value);
+});
+
 const nodeSchema = computed(() => {
-  return store.hierarchySchema?.[fullPath.value] || { fields: [], children: [] };
+  return store.hierarchySchema?.[schemaLookupPath.value] || { fields: [], children: [] };
 });
 
 const childKeys = computed(() => {

@@ -346,11 +346,13 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
         
         ref_k = headers[0] if (headers and len(parts) > 1) else (next(iter(data[0].keys())) if (isinstance(data, list) and data and len(parts) > 1) else None)
         fields = []
-        if headers:
-            fields = [h for h in headers if h != ref_k]
-        elif isinstance(data, list) and data:
-            fields = [k for k in data[0].keys() if k != ref_k]
+        if kind == 'tabular':
+            if headers:
+                fields = [h for h in headers if h != ref_k]
+            elif isinstance(data, list) and data:
+                fields = [k for k in data[0].keys() if k != ref_k]
         elif isinstance(data, dict):
+            ref_k = None
             fields = [k for k, v in data.items() if not isinstance(v, (list, dict))]
             
         if path_str not in hierarchy_schema:
