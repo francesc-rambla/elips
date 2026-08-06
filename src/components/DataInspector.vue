@@ -1057,6 +1057,7 @@ onUnmounted(() => {
               <NestedDataNode 
                 :parentObj="sheetData"
                 :arrayKey="subArrayKey"
+                :schemaPath="`${name}.${subArrayKey}`"
                 :parentPath="name"
               />
             </template>

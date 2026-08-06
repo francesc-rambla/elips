@@ -11,6 +11,10 @@ const props = defineProps({
     type: String,
     required: true
   },
+  schemaPath: {
+    type: String,
+    default: ''
+  },
   parentPath: {
     type: String,
     default: ''
@@ -19,7 +23,7 @@ const props = defineProps({
 
 const store = useWorkspaceStore();
 
-const cleanSchemaPath = (p) => {
+const cleanPath = (p) => {
   if (!p) return '';
   return String(p).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
 };
@@ -28,12 +32,15 @@ const fullPath = computed(() => {
   return props.parentPath ? `${props.parentPath}.${props.arrayKey}` : props.arrayKey;
 });
 
-const schemaLookupPath = computed(() => {
-  return cleanSchemaPath(fullPath.value);
+const effectiveSchemaPath = computed(() => {
+  if (props.schemaPath) {
+    return cleanPath(props.schemaPath);
+  }
+  return cleanPath(fullPath.value);
 });
 
 const nodeSchema = computed(() => {
-  return store.hierarchySchema?.[schemaLookupPath.value] || { fields: [], children: [] };
+  return store.hierarchySchema?.[effectiveSchemaPath.value] || { fields: [], children: [] };
 });
 
 const childKeys = computed(() => {
@@ -255,6 +262,7 @@ const getItemPath = (idx, fieldKey) => {
             <NestedDataNode 
               :parentObj="item"
               :arrayKey="cKey"
+              :schemaPath="`${effectiveSchemaPath}.${cKey}`"
               :parentPath="getItemPath(idx, '')"
             />
           </template>
