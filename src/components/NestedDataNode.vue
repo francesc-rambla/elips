@@ -142,19 +142,6 @@ const getItemPath = (idx, fieldKey) => {
   return fieldKey !== '' ? `${fullPath.value}.${idx}.${fieldKey}` : `${fullPath.value}.${idx}`;
 };
 
-watch(() => [props.parentObj, props.arrayKey, childKeys.value], () => {
-  if (items.value && Array.isArray(items.value)) {
-    items.value.forEach(item => {
-      if (item && typeof item === 'object') {
-        childKeys.value.forEach(cKey => {
-          if (!item[cKey] || !Array.isArray(item[cKey])) {
-            item[cKey] = [];
-          }
-        });
-      }
-    });
-  }
-}, { immediate: true, deep: true });
 </script>
 
 <template>
