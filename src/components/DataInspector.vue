@@ -74,12 +74,19 @@ const universalFindSchema = (targetPath, dict) => {
   
   const cleanP = String(targetPath).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
   
-  // 1. Direct Flat Key Lookup (e.g. dict["pres.parts"])
+  // 1. Direct match by node's data_path property
+  for (const [k, val] of Object.entries(dict)) {
+    if (val && typeof val === 'object' && val.data_path === cleanP && isNonEmptySchema(val)) {
+      return val;
+    }
+  }
+
+  // 2. Direct Flat Key Lookup (e.g. dict["pres.parts"])
   if (dict[cleanP] && isNonEmptySchema(dict[cleanP])) {
     return dict[cleanP];
   }
   
-  // 2. Direct Tree Path Traversal (e.g. dict["pres"].children["parts"])
+  // 3. Direct Tree Path Traversal (e.g. dict["pres"].children["parts"])
   const parts = cleanP.split('.').filter(Boolean);
   let curr = dict;
   let foundTree = null;
@@ -101,19 +108,19 @@ const universalFindSchema = (targetPath, dict) => {
     return foundTree;
   }
   
-  // 3. Search by key suffix (e.g. sKey === "pres.parts" or sKey.endsWith(".parts")) in flat dict
+  // 4. Search by key suffix or data_path in flat dict
   const lastKey = parts[parts.length - 1];
   for (const [sKey, sVal] of Object.entries(dict)) {
-    if ((sKey === cleanP || sKey === lastKey || sKey.endsWith(`.${lastKey}`)) && isNonEmptySchema(sVal)) {
+    if ((sKey === cleanP || sKey === lastKey || sKey.endsWith(`.${lastKey}`) || sVal?.data_path === cleanP || sVal?.data_path?.endsWith(`.${lastKey}`)) && isNonEmptySchema(sVal)) {
       return sVal;
     }
   }
   
-  // 4. Deep DFS in recursive tree dict
+  // 5. Deep DFS in recursive tree dict matching data_path or node key
   const dfs = (nodeObj) => {
     if (!nodeObj || typeof nodeObj !== 'object') return null;
     for (const [k, v] of Object.entries(nodeObj)) {
-      if ((k === lastKey || k === cleanP) && isNonEmptySchema(v)) {
+      if ((k === lastKey || k === cleanP || v?.data_path === cleanP) && isNonEmptySchema(v)) {
         return v;
       }
       if (v && v.children && typeof v.children === 'object' && !Array.isArray(v.children)) {
