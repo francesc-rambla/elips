@@ -106,9 +106,12 @@ def render_with_recovery(env, template_src, ctx, pass_label, max_fixes=1000):
                 ctx[keypath] = _placeholder(keypath)
             continue
     raise UndefinedError(f"Massa variables indefinides; s'han corregit {len(issues)} variables sense èxit.")
-def sanitize_id(s):
+def sanitize_id(s, allow_dots=False):
     s = '' if s is None else str(s)
     s = s.replace(' ', '_')
+    if allow_dots and '.' in s:
+        parts = [sanitize_id(p, allow_dots=False) for p in s.split('.')]
+        return '.'.join(parts)
     s = re.sub(r'[^A-Za-z0-9_]', '_', s)
     s = re.sub(r'_+', '_', s).strip('_')
     if not s:
