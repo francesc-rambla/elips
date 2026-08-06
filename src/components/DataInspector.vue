@@ -124,7 +124,7 @@ const universalFindSchema = (targetPath, dict) => {
 };
 
 const getTopLevelChildSchemas = (sheetName, sheetData) => {
-  const dict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
+  const dict = store.hierarchySchema || {};
   const rootS = universalFindSchema(sheetName, dict);
   const children = rootS.children;
   const res = {};
@@ -764,10 +764,8 @@ const loadMockData = () => {
             }
           ]
         }
-      ],
-      "_hierarchy_schema": mockTreeSchema
-    },
-    "_hierarchy_schema": mockTreeSchema
+      ]
+    }
   };
   
   store.hierarchySchema = mockTreeSchema;

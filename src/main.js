@@ -18,7 +18,7 @@ window.__pinia = pinia;
 window.dumpStore = () => {
   console.group('📌 estat de Pinia Store (workspace)');
   console.log('📊 excelJsonData:', JSON.parse(JSON.stringify(store.excelJsonData)));
-  console.log('📐 hierarchySchema:', JSON.parse(JSON.stringify(store.hierarchySchema || store.excelJsonData?._hierarchy_schema || {})));
+  console.log('📐 hierarchySchema:', JSON.parse(JSON.stringify(store.hierarchySchema || {})));
   console.groupEnd();
   return store.excelJsonData;
 };

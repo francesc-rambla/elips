@@ -417,8 +417,10 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     else:
                         parent[sub_key] = data_to_set
 
-    root['_hierarchy_schema'] = hierarchy_schema
-    return root
+    return {
+        'data': root,
+        'hierarchy_schema': hierarchy_schema
+    }
 
 def update_excel_from_json(excel_path, json_str, out_excel_path):
     wb = load_workbook(excel_path)
@@ -1678,18 +1680,41 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
       }
     });
 
-    const cleanedJsonStr = JSON.stringify(parsed);
+    let parsedData = {};
+    let parsedSchema = {};
+
+    if (parsed && typeof parsed === 'object') {
+      if (parsed.data && parsed.hierarchy_schema) {
+        parsedData = parsed.data;
+        parsedSchema = parsed.hierarchy_schema;
+      } else {
+        parsedData = parsed;
+        if (parsedData._hierarchy_schema) {
+          parsedSchema = parsedData._hierarchy_schema;
+          delete parsedData._hierarchy_schema;
+        }
+      }
+    }
+
+    if (parsedData && parsedData._hierarchy_schema) {
+      delete parsedData._hierarchy_schema;
+    }
+
+    store.excelJsonData = parsedData;
+    store.hierarchySchema = parsedSchema;
+
+    const cleanedJsonStr = JSON.stringify(parsedData);
     
     // Save to in.json in Pyodide FS as well
     _pyodide.FS.writeFile('/work/in.json', new TextEncoder().encode(cleanedJsonStr));
     
     // Log structure details clearly to app log terminal
-    if (parsed._hierarchy_schema) {
-      store.addLog(`Esquema jeràrquic del llibre Excel (_hierarchy_schema):\n${JSON.stringify(parsed._hierarchy_schema, null, 2)}`, 'info');
+    if (parsedSchema && Object.keys(parsedSchema).length > 0) {
+      store.addLog(`Esquema jeràrquic del llibre Excel (hierarchySchema):\n${JSON.stringify(parsedSchema, null, 2)}`, 'info');
     }
-    store.addLog(`Arbre JSON de dades carregat des de l'Excel:\n${JSON.stringify(parsed, null, 2)}`, 'info');
+    store.addLog(`Arbre JSON de dades carregat des de l'Excel:\n${JSON.stringify(parsedData, null, 2)}`, 'info');
     
-    return parsed;
+    return parsedData;
   };
 
   const renderMarkdown = async (templateText) => {

@@ -448,10 +448,15 @@ watch(() => store.excelJsonData, (newVal) => {
       store.editorMetadata = newVal.editor_metadata;
     }
     if (newVal._hierarchy_schema) {
-      store.hierarchySchema = newVal._hierarchy_schema;
-      const pName = localStorage.getItem('currentProjectName') || 'Default';
-      localStorage.setItem(`${pName}:hierarchySchema`, JSON.stringify(newVal._hierarchy_schema));
+      delete newVal._hierarchy_schema;
     }
+  }
+}, { immediate: true, deep: true });
+
+watch(() => store.hierarchySchema, (newSchema) => {
+  if (newSchema && typeof newSchema === 'object' && Object.keys(newSchema).length > 0) {
+    const pName = localStorage.getItem('currentProjectName') || 'Default';
+    localStorage.setItem(`${pName}:hierarchySchema`, JSON.stringify(newSchema));
   }
 }, { immediate: true, deep: true });
 

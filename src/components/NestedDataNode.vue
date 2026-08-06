@@ -106,7 +106,7 @@ const universalFindSchema = (targetPath, dict) => {
 };
 
 const nodeSchema = computed(() => {
-  const schemaDict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
+  const schemaDict = store.hierarchySchema || {};
   if (isNonEmptySchema(props.schema)) {
     return props.schema;
   }
@@ -117,7 +117,7 @@ const nodeSchema = computed(() => {
 const childSchemas = computed(() => {
   const children = nodeSchema.value.children;
   const res = {};
-  const schemaDict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
+  const schemaDict = store.hierarchySchema || {};
   const currentPath = cleanPath(props.schemaPath || fullPath.value);
   
   if (Array.isArray(children)) {
@@ -297,7 +297,7 @@ const getItemPath = (idx, fieldKey) => {
         resolvedNodeFields: nodeSchema.fields,
         resolvedChildKeys: childKeys,
         isLeafLevel: isLeafLevel,
-        availableSchemaDictKeys: Object.keys(store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {})
+        availableSchemaDictKeys: Object.keys(store.hierarchySchema || {})
       }, null, 2) }}</pre>
     </div>
 
