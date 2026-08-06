@@ -37,7 +37,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     targetDataPath: null,
     hierarchySchema: (() => {
       try {
-        return JSON.parse(localStorage.getItem('hierarchySchema') || '{}');
+        const pName = localStorage.getItem('currentProjectName') || 'Default';
+        return JSON.parse(localStorage.getItem(`${pName}:hierarchySchema`) || localStorage.getItem('hierarchySchema') || '{}');
       } catch (e) {
         return {};
       }

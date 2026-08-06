@@ -453,7 +453,7 @@ watch(() => store.excelJsonData, (newVal) => {
       localStorage.setItem(`${pName}:hierarchySchema`, JSON.stringify(newVal._hierarchy_schema));
     }
   }
-}, { immediate: true });
+}, { immediate: true, deep: true });
 
 // Convert Base64 data URL back to a File object
 const dataURLtoFile = (dataurl, filename) => {

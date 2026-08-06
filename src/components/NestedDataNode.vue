@@ -40,7 +40,19 @@ const effectiveSchemaPath = computed(() => {
 });
 
 const nodeSchema = computed(() => {
-  return store.hierarchySchema?.[effectiveSchemaPath.value] || { fields: [], children: [] };
+  const schemaDict = store.excelJsonData?._hierarchy_schema || store.hierarchySchema || {};
+  if (effectiveSchemaPath.value && schemaDict[effectiveSchemaPath.value]) {
+    return schemaDict[effectiveSchemaPath.value];
+  }
+  // Smart Fallback: search schemaDict for any key ending with .<arrayKey> or matching <arrayKey>
+  if (props.arrayKey) {
+    for (const [sKey, sVal] of Object.entries(schemaDict)) {
+      if (sKey === props.arrayKey || sKey.endsWith(`.${props.arrayKey}`)) {
+        return sVal;
+      }
+    }
+  }
+  return { fields: [], children: [] };
 });
 
 const childKeys = computed(() => {
@@ -104,7 +116,7 @@ const getLeafTableHeaders = computed(() => {
   if (items.value.length > 0 && typeof items.value[0] === 'object') {
     return Object.keys(items.value[0]).filter(k => k !== '_hierarchy_schema' && isPrimitive(items.value[0][k]));
   }
-  return ['id', 'nom'];
+  return ['valor'];
 });
 
 const addNestedItem = () => {
@@ -127,8 +139,7 @@ const addNestedItem = () => {
       }
     });
   } else {
-    newRow['id'] = `item_${list.length + 1}`;
-    newRow['nom'] = '';
+    newRow['valor'] = '';
   }
 
   // Initialize child sub-arrays for intermediate nodes
