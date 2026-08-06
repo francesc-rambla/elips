@@ -37,6 +37,13 @@ const fullPath = computed(() => {
   return props.parentPath ? `${props.parentPath}.${props.arrayKey}` : props.arrayKey;
 });
 
+const isNonEmptySchema = (s) => {
+  if (!s || typeof s !== 'object') return false;
+  const hasFields = Array.isArray(s.fields) && s.fields.length > 0;
+  const hasChildren = s.children && (Array.isArray(s.children) ? s.children.length > 0 : Object.keys(s.children).length > 0);
+  return hasFields || hasChildren;
+};
+
 const findSchemaInTree = (targetPath, dict) => {
   if (!dict || !targetPath) return null;
   
@@ -54,16 +61,21 @@ const findSchemaInTree = (targetPath, dict) => {
       break;
     }
   }
-  if (found && (found.fields || found.children)) {
+  if (isNonEmptySchema(found)) {
     return found;
   }
   
   const searchKey = parts[parts.length - 1];
+  let fallbackFound = null;
+  
   const dfs = (nodeDict) => {
     if (!nodeDict || typeof nodeDict !== 'object') return null;
     for (const [k, val] of Object.entries(nodeDict)) {
-      if (k === searchKey && val && typeof val === 'object' && (val.fields || val.children)) {
-        return val;
+      if (k === searchKey && val && typeof val === 'object') {
+        if (isNonEmptySchema(val)) {
+          return val;
+        }
+        fallbackFound = val;
       }
       if (val && val.children) {
         const sub = dfs(val.children);
@@ -73,7 +85,8 @@ const findSchemaInTree = (targetPath, dict) => {
     return null;
   };
   
-  return dfs(dict);
+  const result = dfs(dict);
+  return result || fallbackFound || (found && typeof found === 'object' ? found : null);
 };
 
 const nodeSchema = computed(() => {
