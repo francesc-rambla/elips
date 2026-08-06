@@ -373,7 +373,14 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
             curr_schema_dict = curr_schema_dict[part]['children']
         
         if len(parts) == 1:
-            root[parts[0]] = data if data is not None else {}
+            if parts[0] not in root:
+                root[parts[0]] = data if data is not None else {}
+            else:
+                if isinstance(data, dict) and isinstance(root[parts[0]], dict):
+                    for k, v in data.items():
+                        root[parts[0]][k] = v
+                else:
+                    root[parts[0]] = data if data is not None else {}
         else:
             parent_parts = parts[:-1]
             sub_key = parts[-1]
