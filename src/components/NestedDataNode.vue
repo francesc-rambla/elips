@@ -175,6 +175,10 @@ const items = computed(() => {
   return props.parentObj[props.arrayKey];
 });
 
+const isPrimitive = (val) => {
+  return !Array.isArray(val) && (typeof val !== 'object' || val === null);
+};
+
 const effectiveFields = computed(() => {
   const schemaFields = nodeSchema.value.fields || [];
   if (schemaFields.length > 0) {

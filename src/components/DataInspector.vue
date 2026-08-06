@@ -238,7 +238,9 @@ watch(() => store.targetDataPath, (newPath) => {
 }, { immediate: true });
 
 const getRowsCount = (sheetData) => {
-  return Array.isArray(sheetData) ? sheetData.length : Object.keys(sheetData).length;
+  if (!sheetData || typeof sheetData !== 'object') return 0;
+  if (Array.isArray(sheetData)) return sheetData.length;
+  return Object.keys(getKvPrimitiveEntries(sheetData)).length;
 };
 
 const addKvKey = (sheetName) => {
