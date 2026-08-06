@@ -355,15 +355,18 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
         curr_schema_dict = hierarchy_schema
         for idx, part in enumerate(parts):
             is_last = (idx == len(parts) - 1)
+            sub_path_str = '.'.join(parts[:idx+1])
             if part not in curr_schema_dict:
                 curr_schema_dict[part] = {
                     'sheet': raw_name if is_last else '',
+                    'data_path': sub_path_str,
                     'kind': kind if is_last else 'tabular',
                     'ref_key': ref_k if is_last else None,
                     'fields': fields if is_last else [],
                     'children': {}
                 }
             else:
+                curr_schema_dict[part]['data_path'] = sub_path_str
                 if is_last:
                     curr_schema_dict[part]['sheet'] = raw_name
                     curr_schema_dict[part]['kind'] = kind

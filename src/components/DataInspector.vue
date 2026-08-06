@@ -725,24 +725,28 @@ const loadMockData = () => {
   const mockTreeSchema = {
     "pres": {
       "sheet": "OUT_pres",
+      "data_path": "pres",
       "kind": "kv",
       "ref_key": null,
       "fields": ["pressupost", "import", "tipus_iva", "iva"],
       "children": {
         "parts": {
           "sheet": "OUT_pres.parts",
+          "data_path": "pres.parts",
           "kind": "tabular",
           "ref_key": null,
           "fields": ["id_partida", "partida", "import", "lot"],
           "children": {
             "activitats": {
               "sheet": "OUT_pres.parts.activitats",
+              "data_path": "pres.parts.activitats",
               "kind": "tabular",
               "ref_key": "id_partida",
               "fields": ["id_activitat", "descripcio_activitat", "import"],
               "children": {
                 "cost": {
                   "sheet": "OUT_pres.parts.activitats.cost",
+                  "data_path": "pres.parts.activitats.cost",
                   "kind": "tabular",
                   "ref_key": "id_activitat",
                   "fields": ["element", "unitats", "preu_unitari", "import"],
