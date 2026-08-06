@@ -17,15 +17,22 @@ const isExcelLoaded = computed(() => !!store.excelJsonData);
 const viewMode = ref('complete'); // 'complete' or 'compact'
 const selectedCompactSheet = ref('');
 
-// Auto-initialize selectedCompactSheet to the first sheet when data loads
+// Auto-initialize selectedCompactSheet and open root sheets when data loads
 watch(() => store.excelJsonData, (newVal) => {
   if (newVal) {
-    const keys = Object.keys(newVal).filter(k => k !== 'editor_metadata');
-    if (keys.length > 0 && !selectedCompactSheet.value) {
-      selectedCompactSheet.value = keys[0];
+    const keys = Object.keys(newVal).filter(k => k !== 'editor_metadata' && k !== '_hierarchy_schema');
+    if (keys.length > 0) {
+      if (!selectedCompactSheet.value) {
+        selectedCompactSheet.value = keys[0];
+      }
+      keys.forEach(k => {
+        if (openSheets.value[k] === undefined) {
+          openSheets.value[k] = true;
+        }
+      });
     }
   }
-}, { immediate: true });
+}, { immediate: true, deep: true });
 
 const toggleSheet = (name) => {
   openSheets.value[name] = !openSheets.value[name];
@@ -126,9 +133,10 @@ const universalFindSchema = (targetPath, dict) => {
 const getTopLevelChildSchemas = (sheetName, sheetData) => {
   const dict = store.hierarchySchema || {};
   const rootS = universalFindSchema(sheetName, dict);
-  const children = rootS.children;
+  const children = rootS ? rootS.children : {};
   const res = {};
   
+  // 1. Child schemas defined in hierarchySchema
   if (Array.isArray(children)) {
     children.forEach(cKey => {
       if (typeof cKey === 'string') {
@@ -147,6 +155,7 @@ const getTopLevelChildSchemas = (sheetName, sheetData) => {
     });
   }
   
+  // 2. Non-primitive array keys present on sheetData itself (e.g. sheetData.parts)
   if (sheetData && typeof sheetData === 'object' && !Array.isArray(sheetData)) {
     Object.keys(sheetData).forEach(k => {
       if (k !== '_hierarchy_schema' && !isPrimitive(sheetData[k]) && !(k in res)) {
@@ -154,6 +163,23 @@ const getTopLevelChildSchemas = (sheetName, sheetData) => {
       }
     });
   }
+  
+  // 3. Fallback: Search dict for any keys starting with sheetName (e.g. pres.parts)
+  for (const sKey of Object.keys(dict)) {
+    if (sKey === sheetName && dict[sKey]?.children) {
+      Object.keys(dict[sKey].children).forEach(cK => {
+        if (!(cK in res)) {
+          res[cK] = universalFindSchema(`${sheetName}.${cK}`, dict);
+        }
+      });
+    } else if (sKey.startsWith(`${sheetName}.`)) {
+      const subK = sKey.slice(sheetName.length + 1).split('.')[0];
+      if (subK && !(subK in res)) {
+        res[subK] = universalFindSchema(`${sheetName}.${subK}`, dict);
+      }
+    }
+  }
+
   return res;
 };
 
