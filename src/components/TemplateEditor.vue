@@ -320,6 +320,121 @@ const availableArrays = computed(() => {
   return Array.from(setList);
 });
 
+const sidebarTree = computed(() => {
+  if (!store.excelJsonData) return [];
+  const result = [];
+
+  for (const [sheetName, sheetData] of Object.entries(store.excelJsonData)) {
+    if (isInternalMetadataKey(sheetName)) continue;
+
+    if (Array.isArray(sheetData)) {
+      const sample = sheetData.length > 0 ? sheetData[0] : {};
+      const fields = [];
+      const subArrays = [];
+
+      if (sample && typeof sample === 'object' && sample !== null) {
+        Object.entries(sample).forEach(([k, v]) => {
+          if (isInternalMetadataKey(k)) return;
+          if (Array.isArray(v)) {
+            const childSample = v.length > 0 ? v[0] : {};
+            const childFields = [];
+            if (childSample && typeof childSample === 'object' && childSample !== null) {
+              Object.keys(childSample).forEach(ck => {
+                if (!isInternalMetadataKey(ck) && !Array.isArray(childSample[ck])) {
+                  childFields.push(ck);
+                }
+              });
+            }
+            subArrays.push({
+              key: k,
+              fullPath: `${sheetName}.${k}`,
+              iteratorName: k.replace(/s$/, '').replace(/es$/, '') || 'item',
+              fields: childFields,
+              subArrays: []
+            });
+          } else {
+            fields.push(k);
+          }
+        });
+      }
+
+      result.push({
+        name: sheetName,
+        kind: 'array',
+        path: sheetName,
+        iteratorName: 'item',
+        fields,
+        subArrays
+      });
+    } else if (typeof sheetData === 'object' && sheetData !== null) {
+      const fields = [];
+      const subArrays = [];
+
+      const walkObject = (obj, pathPrefix) => {
+        Object.entries(obj).forEach(([k, v]) => {
+          if (isInternalMetadataKey(k)) return;
+          const fullPath = pathPrefix ? `${pathPrefix}.${k}` : `${sheetName}.${k}`;
+
+          if (Array.isArray(v)) {
+            const sample = v.length > 0 ? v[0] : {};
+            const childFields = [];
+            const childSubArrays = [];
+
+            if (sample && typeof sample === 'object' && sample !== null) {
+              Object.entries(sample).forEach(([subK, subV]) => {
+                if (isInternalMetadataKey(subK)) return;
+                if (Array.isArray(subV)) {
+                  const grandSample = subV.length > 0 ? subV[0] : {};
+                  const grandFields = [];
+                  if (grandSample && typeof grandSample === 'object' && grandSample !== null) {
+                    Object.keys(grandSample).forEach(gk => {
+                      if (!isInternalMetadataKey(gk) && !Array.isArray(grandSample[gk])) {
+                        grandFields.push(gk);
+                      }
+                    });
+                  }
+                  childSubArrays.push({
+                    key: subK,
+                    fullPath: `${fullPath}.${subK}`,
+                    iteratorName: subK.replace(/s$/, '').replace(/es$/, '') || 'subItem',
+                    fields: grandFields,
+                    subArrays: []
+                  });
+                } else {
+                  childFields.push(subK);
+                }
+              });
+            }
+
+            subArrays.push({
+              key: k,
+              fullPath,
+              iteratorName: k.replace(/s$/, '').replace(/es$/, '') || 'item',
+              fields: childFields,
+              subArrays: childSubArrays
+            });
+          } else if (typeof v === 'object' && v !== null) {
+            walkObject(v, fullPath);
+          } else {
+            fields.push({ key: k, fullPath });
+          }
+        });
+      };
+
+      walkObject(sheetData, '');
+
+      result.push({
+        name: sheetName,
+        kind: 'kv',
+        fields,
+        subArrays
+      });
+    }
+  }
+
+  return result;
+});
+
 // Detect numeric column in Excel to set default alignment
 const isNumericColumn = (arrayName, colKey) => {
   const arr = resolvePath(store.excelJsonData, arrayName);
@@ -2803,49 +2918,82 @@ onUnmounted(() => {
         Carrega un Excel per generar la llista de variables disponibles.
       </div>
       <div v-else style="display:flex; flex-direction:column; gap:0.6rem; flex: 1; overflow-y: auto; min-height: 0;">
-        <div v-for="(item, rootKey) in store.excelJsonData" :key="rootKey" style="margin-bottom:0.25rem;">
+        <div v-for="node in sidebarTree" :key="node.name" style="margin-bottom:0.5rem;">
           <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); margin-bottom: 0.25rem; border-bottom: 1px solid var(--border-color); padding-bottom: 2px;">
-            {{ rootKey }}
+            {{ node.name }}
           </div>
           
-          <template v-if="Array.isArray(item)">
-            <template v-if="item.length > 0">
-              <div 
-                v-for="subKey in Object.keys(item[0])" 
-                v-show="subKey !== rootKey"
-                :key="subKey" 
-                class="variable-item present"
-                @click="sidebarCopyInsert(`{{ item.${subKey} }}`)"
-                title="Clica per copiar i inserir variable"
-              >
-                <span>{{ subKey }}</span>
-                <span class="variable-badge present">Columna</span>
-              </div>
-              
-              <div 
-                class="variable-item present"
-                style="background-color: var(--color-primary-light);"
-                @click="sidebarCopyInsert(`{% for item in ${rootKey} %}\n- {{ item.${Object.keys(item[0])[0]} }}\n{% endfor %}`)"
-                title="Clica per copiar i inserir bucle"
-              >
-                <span>Itera {{ rootKey }}</span>
-                <span class="variable-badge present" style="background-color:var(--color-primary-light)">Bucle</span>
-              </div>
-            </template>
-          </template>
-          
-          <template v-else>
+          <!-- Top-level Primitive Keys -->
+          <div 
+            v-for="f in node.fields" 
+            :key="typeof f === 'string' ? f : f.fullPath" 
+            class="variable-item present"
+            @click="sidebarCopyInsert(`{{ ${typeof f === 'string' ? node.name + '.' + f : f.fullPath} }}`)"
+            title="Clica per copiar i inserir variable"
+          >
+            <span>{{ typeof f === 'string' ? f : f.key }}</span>
+            <span class="variable-badge present">Clau</span>
+          </div>
+
+          <!-- Sub-Arrays (e.g. parts) -->
+          <div v-for="sub in node.subArrays" :key="sub.key" style="margin-top: 0.4rem; padding-left: 0.4rem; border-left: 2px solid var(--color-primary-light);">
+            <div style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary); margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
+              <span>📁 {{ sub.key }}</span>
+            </div>
+
+            <!-- Loop shortcut button -->
             <div 
-              v-for="(val, k) in item" 
-              :key="k" 
               class="variable-item present"
-              @click="sidebarCopyInsert(`{{ ${rootKey}.${k} }}`)"
+              style="background-color: var(--color-primary-light);"
+              @click="sidebarCopyInsert(`{% for ${sub.iteratorName} in ${sub.fullPath} %}\n- {{ ${sub.iteratorName}.${sub.fields[0] || 'val'} }}\n{% endfor %}`)"
+              title="Clica per copiar i inserir bucle Jinja"
+            >
+              <span>Itera {{ sub.key }}</span>
+              <span class="variable-badge present" style="background-color:var(--color-primary-light)">Bucle</span>
+            </div>
+
+            <!-- Primitive Fields of sub-array item (e.g. part.partida) -->
+            <div 
+              v-for="col in sub.fields" 
+              :key="col" 
+              class="variable-item present"
+              @click="sidebarCopyInsert(activeLoopContext && activeLoopContext.iterator ? `{{ ${activeLoopContext.iterator}.${col} }}` : `{{ ${sub.iteratorName}.${col} }}`)"
               title="Clica per copiar i inserir variable"
             >
-              <span>{{ k }}</span>
-              <span class="variable-badge present">Clau</span>
+              <span>{{ col }}</span>
+              <span class="variable-badge present">Camp</span>
             </div>
-          </template>
+
+            <!-- Child Sub-Arrays (e.g. activitats under parts) -->
+            <div v-for="childSub in sub.subArrays" :key="childSub.key" style="margin-top: 0.4rem; padding-left: 0.4rem; border-left: 2px solid var(--color-success-light, #dcfce7);">
+              <div style="font-size: 0.72rem; font-weight: 700; color: var(--color-success, #16a34a); margin-bottom: 4px;">
+                📂 {{ childSub.key }}
+              </div>
+
+              <!-- Inner loop shortcut button -->
+              <div 
+                class="variable-item present"
+                style="background-color: #dcfce7;"
+                @click="sidebarCopyInsert(`{% for ${childSub.iteratorName} in ${sub.iteratorName}.${childSub.key} %}\n- {{ ${childSub.iteratorName}.${childSub.fields[0] || 'val'} }}\n{% endfor %}`)"
+                title="Clica per copiar i inserir bucle d'activitats"
+              >
+                <span>Itera {{ sub.iteratorName }}.{{ childSub.key }}</span>
+                <span class="variable-badge present" style="background-color:#bbf7d0; color:#15803d;">Bucle Aniuat</span>
+              </div>
+
+              <!-- Fields of inner sub-array item (e.g. activitat.descripcio_activitat) -->
+              <div 
+                v-for="childCol in childSub.fields" 
+                :key="childCol" 
+                class="variable-item present"
+                @click="sidebarCopyInsert(`{{ ${childSub.iteratorName}.${childCol} }}`)"
+                title="Clica per copiar i inserir camp d'activitat"
+              >
+                <span>{{ childCol }}</span>
+                <span class="variable-badge present">Camp Activitat</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
