@@ -152,7 +152,7 @@ def _is_kv_header(first_row):
 
 def _detect_kind(rows, raw_name=""):
     if not rows:
-        return 'tabular'
+        return 'tabular' if '.' in raw_name else 'kv'
     if '.' in raw_name:
         return 'tabular'
     if _is_kv_header(rows[0]):
@@ -160,7 +160,7 @@ def _detect_kind(rows, raw_name=""):
     
     first = rows[0]
     headers = [v for v in first if v not in (None, '')]
-    if len(headers) >= 2 and all(isinstance(v, str) for v in headers) and len(set(headers)) == len(headers):
+    if len(headers) >= 3 and all(isinstance(v, str) for v in headers) and len(set(headers)) == len(headers):
         return 'tabular'
     return 'kv'
 
@@ -288,7 +288,7 @@ def _extract_flat_rows_for_sheet(data, raw_sheet_name, has_prefixed_sheets, vali
                 if isinstance(child, dict):
                     row = {}
                     if p_ref_key and p_ref_val is not None:
-                        row[p_ref_key] = p_ref_val
+                        row[p_ref_key] = child.get(p_ref_key, p_ref_val)
                     for k, v in child.items():
                         if not isinstance(v, (list, dict)):
                             row[k] = v
@@ -344,19 +344,19 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
         parts = [sanitize_id(p) for p in stripped.split('.')]
         path_str = '.'.join(parts)
         
+        ref_k = headers[0] if (headers and len(parts) > 1) else (next(iter(data[0].keys())) if (isinstance(data, list) and data and len(parts) > 1) else None)
         fields = []
         if headers:
-            ref_k = headers[0] if len(parts) > 1 else None
             fields = [h for h in headers if h != ref_k]
         elif isinstance(data, list) and data:
-            ref_k = next(iter(data[0].keys())) if len(parts) > 1 else None
             fields = [k for k in data[0].keys() if k != ref_k]
         elif isinstance(data, dict):
             fields = [k for k, v in data.items() if not isinstance(v, (list, dict))]
             
         if path_str not in hierarchy_schema:
-            hierarchy_schema[path_str] = {'fields': fields, 'children': []}
+            hierarchy_schema[path_str] = {'ref_key': ref_k, 'fields': fields, 'children': []}
         else:
+            hierarchy_schema[path_str]['ref_key'] = ref_k
             if fields:
                 hierarchy_schema[path_str]['fields'] = fields
             
@@ -364,7 +364,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
             parent_path_str = '.'.join(parts[:-1])
             sub_key = parts[-1]
             if parent_path_str not in hierarchy_schema:
-                hierarchy_schema[parent_path_str] = {'fields': [], 'children': []}
+                hierarchy_schema[parent_path_str] = {'ref_key': None, 'fields': [], 'children': []}
             if sub_key not in hierarchy_schema[parent_path_str]['children']:
                 hierarchy_schema[parent_path_str]['children'].append(sub_key)
         
@@ -396,8 +396,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                             groups = defaultdict(list)
                             for child_row in data_to_set:
                                 ref_val = child_row.get(child_ref_key)
-                                clean_child = {k: v for k, v in child_row.items() if k != child_ref_key}
-                                groups[ref_val].append(clean_child)
+                                groups[ref_val].append(child_row)
                                 
                             parent_ref_val = parent.get(child_ref_key)
                             parent[sub_key] = groups.get(parent_ref_val, [])
