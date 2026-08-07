@@ -736,11 +736,11 @@ const getItemPath = (idx, fieldKey) => {
                   <button 
                     type="button"
                     class="btn-icon-only"
-                    style="height: 28px; width: 28px; min-width: 28px; font-size: 0.8rem; padding: 0; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                    style="height: 28px; width: 28px; min-width: 28px; font-size: 0.8rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
                     title="Edició complexa en Markdown + Jinja2"
                     @click="openCellEditor(row, h)"
                   >
-                    📝
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                   </button>
                 </div>
               </td>
@@ -833,16 +833,16 @@ const getItemPath = (idx, fieldKey) => {
             <thead>
               <tr style="background: var(--bg-tertiary);">
                 <th style="width: 220px; padding: 6px 10px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 600; font-size: 0.78rem;">Clau / Camp</th>
-                <th style="padding: 6px 10px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 600; font-size: 0.78rem;">Valor</th>
+                <th style="padding: 6px 10px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 600; font-size: 0.78rem;">Valor de Formulari</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(val, fKey) in getPrimitiveFields(item)" :key="fKey">
-                <td style="vertical-align: middle; padding: 6px 10px; border-bottom: 1px solid var(--border-color); width: 220px;">
-                  <code style="font-weight: 600; font-size: 0.8rem; color: var(--text-primary);">{{ fKey }}</code>
+                <td style="vertical-align: middle; padding: 6px 10px; border-bottom: 1px solid var(--border-color);">
+                  <code style="font-weight: 600; font-size: 0.8rem;">{{ fKey }}</code>
                 </td>
                 <td style="padding: 4px 6px; border-bottom: 1px solid var(--border-color);">
-                  <div style="display: flex; gap: 4px; align-items: stretch; width: 100%;">
+                  <div style="display: flex; gap: 4px; align-items: center; width: 100%;">
                     <!-- Select Type -->
                     <template v-if="getElementType(fKey) === 'Select'">
                       <!-- Multiple select -->
@@ -850,17 +850,17 @@ const getItemPath = (idx, fieldKey) => {
                         v-if="getElementMetadata(fKey)?.multiple"
                         :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
                         :data-path="getItemPath(idx, fKey)"
-                        style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 32px; padding: 4px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 100%; max-height: 80px; overflow-y: auto;"
+                        style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 32px; padding: 4px 8px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 100%; max-height: 80px; overflow-y: auto;"
                         @click="openMultiSelectModal(item, fKey, getElementMetadata(fKey))"
                         title="Fes clic per modificar la selecció"
                       >
-                        <span v-if="getSelectedPills(item[fKey], getElementMetadata(fKey)).length === 0" style="color: var(--text-muted); font-size: 0.8rem; padding: 0 4px;">
+                        <span v-if="getSelectedPills(item[fKey], getElementMetadata(fKey)).length === 0" style="color: var(--text-muted); font-size: 0.8rem;">
                           [Tria opcions]
                         </span>
                         <span 
                           v-for="pill in getSelectedPills(item[fKey], getElementMetadata(fKey))" 
                           :key="pill.value" 
-                          style="background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; font-weight: 500; display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                          style="background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; font-weight: 500; display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
                           :title="pill.label"
                         >
                           {{ pill.label }}
@@ -937,11 +937,11 @@ const getItemPath = (idx, fieldKey) => {
                     <button 
                       type="button"
                       class="btn-icon-only"
-                      style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                      style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
                       title="Edició complexa en Markdown + Jinja2"
                       @click="openCellEditor(item, fKey)"
                     >
-                      📝
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                     </button>
                   </div>
                 </td>
