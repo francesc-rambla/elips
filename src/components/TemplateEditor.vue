@@ -180,24 +180,78 @@ const resolvePath = (obj, path, currentStack = null) => {
   return null;
 };
 
+// Recursive helper: Find array in excelJsonData by key name regardless of depth
+const findAnyArrayByName = (obj, targetName) => {
+  if (!obj || typeof obj !== 'object' || !targetName) return null;
+  const cleanTarget = targetName.split('.').pop().toLowerCase();
+  
+  const search = (item) => {
+    if (!item || typeof item !== 'object') return null;
+    if (Array.isArray(item)) {
+      for (const el of item) {
+        const found = search(el);
+        if (found) return found;
+      }
+      return null;
+    }
+    
+    for (const [k, v] of Object.entries(item)) {
+      if (isInternalMetadataKey(k)) continue;
+      if (k.toLowerCase() === cleanTarget && Array.isArray(v) && v.length > 0) {
+        return v;
+      }
+      if (typeof v === 'object' && v !== null) {
+        const found = search(v);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  
+  return search(obj);
+};
+
 // Helper: Extract primitive column keys for an array path
 const resolveColumnsForArray = (rawPath, iterator, currentStack) => {
-  const arr = resolvePath(store.excelJsonData, rawPath, currentStack);
+  const arr = resolvePath(store.excelJsonData, rawPath, currentStack) || findAnyArrayByName(store.excelJsonData, rawPath);
   if (arr && Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
-    return Object.entries(arr[0])
+    const cols = Object.entries(arr[0])
       .filter(([k, v]) => !isInternalMetadataKey(k) && !Array.isArray(v))
       .map(([k]) => k);
+    if (cols.length > 0) return cols;
   }
   
   // Metadata fallback
   const lastKey = rawPath.split('.').pop();
-  if (store.editorMetadata && Array.isArray(store.editorMetadata)) {
-    const fields = store.editorMetadata.filter(m => m.group === lastKey || m.group === rawPath).map(m => m.element);
+  const allMeta = [
+    ...(store.editorMetadata || []),
+    ...(store.excelJsonData?.editor_metadata || [])
+  ];
+  
+  if (allMeta.length > 0) {
+    const fields = allMeta
+      .filter(m => m && (m.group === lastKey || m.group === rawPath || m.group?.toLowerCase() === lastKey.toLowerCase()))
+      .map(m => m.element)
+      .filter(Boolean);
     if (fields.length > 0) return Array.from(new Set(fields));
   }
-  if (store.excelJsonData?.editor_metadata && Array.isArray(store.excelJsonData.editor_metadata)) {
-    const fields = store.excelJsonData.editor_metadata.filter(m => m.group === lastKey || m.group === rawPath).map(m => m.element);
-    if (fields.length > 0) return Array.from(new Set(fields));
+
+  // Template inspection fallback
+  const iterPrefix = `${iterator}.`;
+  const templateVars = new Set();
+  const rawText = editorText.value || '';
+  const matches = rawText.matchAll(/\{\{\s*([a-zA-Z0-9_\.]+)/g);
+  for (const m of matches) {
+    const vPath = m[1].trim();
+    if (vPath.startsWith(iterPrefix)) {
+      const colName = vPath.slice(iterPrefix.length).split('.')[0].split('|')[0].trim();
+      if (colName && !isInternalMetadataKey(colName)) {
+        templateVars.add(colName);
+      }
+    }
+  }
+  if (templateVars.size > 0) {
+    return Array.from(templateVars);
   }
 
   return [];
@@ -260,7 +314,9 @@ const getActiveLoopStack = (targetNode = null) => {
     // Code Mode stack parser based on cursor position in textareaRef
     if (textareaRef.value) {
       const pos = textareaRef.value.selectionStart || 0;
-      const codeBefore = editorText.value.substring(0, pos);
+      const nextNewline = editorText.value.indexOf('\n', pos);
+      const endOfLinePos = nextNewline !== -1 ? nextNewline : editorText.value.length;
+      const codeBefore = editorText.value.substring(0, endOfLinePos);
       
       const regex = /\{%\s*(for\s+([a-zA-Z0-9_\.]+)\s+in\s+([^%\}]+)|endfor)\s*%\}/g;
       let m;
@@ -1172,60 +1228,42 @@ const sidebarInsertLoop = (subKey, fullPath, iteratorName, fields) => {
 
 // Sidebar copy insert variable / block handler
 const sidebarCopyInsert = (expr) => {
-  if (expr.includes('{%') || expr.includes('\n')) {
-    // Block statement (e.g. Jinja FOR loop block)
-    if (activeEditorTab.value === 'visual') {
-      restoreSelection();
-      const html = compileMarkdownToHtml(expr);
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = html;
-      
-      const frag = document.createDocumentFragment();
-      while (tempDiv.firstChild) {
-        frag.appendChild(tempDiv.firstChild);
-      }
-      
-      if (savedRange) {
-        savedRange.deleteContents();
-        savedRange.insertNode(frag);
-      } else if (canvasRef.value) {
-        canvasRef.value.appendChild(frag);
-      }
-      syncVisualToCode();
-    } else {
-      if (textareaRef.value) {
-        const txt = textareaRef.value;
-        const start = txt.selectionStart || 0;
-        const end = txt.selectionEnd || 0;
-        editorText.value = editorText.value.substring(0, start) + expr + editorText.value.substring(end);
-        setTimeout(() => {
-          txt.focus();
-          txt.selectionStart = txt.selectionEnd = start + expr.length;
-        }, 50);
-      }
-    }
-    return;
-  }
+  const isBlock = expr.includes('{%') || expr.includes('\n');
+  const insertContent = isBlock ? `\n\n${expr.trim()}\n\n` : (expr.startsWith('{{') ? expr : `{{ ${expr} }}`);
 
-  // Single variable chip
-  if (activeEditorTab.value === 'visual') {
-    let clean = expr.replace(/^\{\{\s*/, '').replace(/\s*\}\}$/, '').trim();
-    const parts = clean.split('|');
-    modalExpr.value = parts[0].trim();
-    modalFilter.value = parts.slice(1).join('|').trim();
-    
-    applyVariable();
-  } else {
+  if (activeEditorTab.value === 'code') {
     if (textareaRef.value) {
       const txt = textareaRef.value;
       const start = txt.selectionStart || 0;
       const end = txt.selectionEnd || 0;
-      editorText.value = editorText.value.substring(0, start) + expr + editorText.value.substring(end);
+      editorText.value = editorText.value.substring(0, start) + insertContent + editorText.value.substring(end);
       setTimeout(() => {
         txt.focus();
-        txt.selectionStart = txt.selectionEnd = start + expr.length;
+        txt.selectionStart = txt.selectionEnd = start + insertContent.length;
+        updateActiveLoopContext();
       }, 50);
     }
+  } else {
+    // Visual Mode:
+    // Update Markdown source of truth at caret offset and recompile visual canvas
+    saveSelection();
+    let charOffset = 0;
+    if (canvasRef.value) {
+      charOffset = getCaretCharacterOffsetWithin(canvasRef.value);
+      const currentMd = convertHtmlToMarkdown(canvasRef.value);
+      editorText.value = currentMd;
+    }
+    
+    const currentText = editorText.value || '';
+    const safeOffset = Math.min(charOffset, currentText.length);
+    editorText.value = currentText.substring(0, safeOffset) + insertContent + currentText.substring(safeOffset);
+    
+    // Compile markdown back to visual HTML DOM canvas
+    syncCodeToVisual();
+    
+    nextTick(() => {
+      updateActiveLoopContext();
+    });
   }
 };
 
