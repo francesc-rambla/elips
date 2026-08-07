@@ -821,7 +821,13 @@ onMounted(() => {
     getShowJsonView: () => showJsonView.value,
     exportExcel: () => exportExcel(),
     isExcelLoaded: () => isExcelLoaded.value,
-    savingExcel: () => savingExcel.value
+    savingExcel: () => savingExcel.value,
+    getSelectedCompactSheet: () => selectedCompactSheet.value,
+    setSelectedCompactSheet: (name) => { selectedCompactSheet.value = name; },
+    getRootSheetNames: () => {
+      if (!store.excelJsonData) return [];
+      return Object.keys(store.excelJsonData).filter(n => isRootSheet(n));
+    }
   };
 });
 </script>
@@ -840,28 +846,7 @@ onMounted(() => {
 
     <!-- Spreadsheet Accordion Inspector -->
     <div v-else-if="!showJsonView" class="sheets-accordion">
-      <!-- Compact View Sheet Selector -->
-      <div v-if="viewMode === 'compact'" style="background-color: var(--bg-secondary); padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 1.25rem; display: flex; align-items: center; gap: 1rem; box-shadow: inset 0 1px 2px rgba(0,0,0,0.02);">
-        <label for="compactSheetSelector" style="font-weight: 700; font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; margin: 0; white-space: nowrap; display: flex; align-items: center; gap: 6px;">
-          📊 Conjunt de dades actiu:
-        </label>
-        <select 
-          id="compactSheetSelector" 
-          v-model="selectedCompactSheet"
-          class="data-input" 
-          style="flex-grow: 1; height: 38px; font-size: 0.85rem; padding: 4px 10px;"
-        >
-          <option 
-            v-for="(sheetData, name) in store.excelJsonData" 
-            v-show="isRootSheet(name)"
-            :key="name" 
-            :value="name"
-          >
-            {{ name }} ({{ getSheetType(sheetData) === 'tabular' ? 'Taula' : 'Clau-Valor' }})
-          </option>
-        </select>
-      </div>
-
+      
       <div 
         v-for="(sheetData, name) in store.excelJsonData" 
         v-show="isRootSheet(name) && (viewMode === 'complete' || name === selectedCompactSheet)"

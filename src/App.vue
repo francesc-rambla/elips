@@ -1199,6 +1199,28 @@ const generateDocuments = async () => {
           <div class="ribbon-group-label">VISTA</div>
         </div>
 
+        <!-- Group: Conjunt de Dades Actiu (Mode Compacte) -->
+        <div v-if="store.dataActions?.getViewMode && store.dataActions.getViewMode() === 'compact'" class="ribbon-group-card">
+          <div class="ribbon-group-body" style="display: flex; align-items: center; justify-content: center; height: 100%; min-width: 170px;">
+            <select 
+              :value="store.dataActions?.getSelectedCompactSheet && store.dataActions.getSelectedCompactSheet()"
+              @change="store.dataActions?.setSelectedCompactSheet && store.dataActions.setSelectedCompactSheet($event.target.value)"
+              class="data-input" 
+              style="height: 28px; font-size: 0.75rem; padding: 2px 6px; width: 100%; border-color: var(--color-primary); background: var(--bg-primary); color: var(--text-primary); border-radius: 4px;"
+              title="Selecciona el conjunt de dades actiu per editar en mode compacte"
+            >
+              <option 
+                v-for="sheetName in (store.dataActions?.getRootSheetNames ? store.dataActions.getRootSheetNames() : [])" 
+                :key="sheetName" 
+                :value="sheetName"
+              >
+                {{ sheetName }}
+              </option>
+            </select>
+          </div>
+          <div class="ribbon-group-label">CONJUNT ACTIU</div>
+        </div>
+
         <!-- Group: Dades -->
         <div class="ribbon-group-card">
           <div class="ribbon-group-body" style="display: grid; grid-template-rows: repeat(2, 28px); grid-auto-flow: column; gap: 4px;">
