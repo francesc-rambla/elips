@@ -26,7 +26,6 @@ const props = defineProps({
 });
 
 const store = useWorkspaceStore();
-const showDebug = ref(false);
 
 const cleanPath = (p) => {
   if (!p) return '';
@@ -56,12 +55,12 @@ const universalFindSchema = (targetPath, dict) => {
     }
   }
 
-  // 2. Direct Flat Key Lookup (e.g. dict["pres.parts"])
+  // 2. Direct Flat Key Lookup
   if (dict[cleanP] && isNonEmptySchema(dict[cleanP])) {
     return dict[cleanP];
   }
   
-  // 3. Direct Tree Path Traversal (e.g. dict["pres"].children["parts"])
+  // 3. Direct Tree Path Traversal
   const parts = cleanP.split('.').filter(Boolean);
   let curr = dict;
   let foundTree = null;
@@ -83,7 +82,7 @@ const universalFindSchema = (targetPath, dict) => {
     return foundTree;
   }
   
-  // 4. Search by key suffix or data_path in flat dict
+  // 4. Search by key suffix or data_path
   const lastKey = parts[parts.length - 1];
   for (const [sKey, sVal] of Object.entries(dict)) {
     if ((sKey === cleanP || sKey === lastKey || sKey.endsWith(`.${lastKey}`) || sVal?.data_path === cleanP || sVal?.data_path?.endsWith(`.${lastKey}`)) && isNonEmptySchema(sVal)) {
@@ -91,7 +90,7 @@ const universalFindSchema = (targetPath, dict) => {
     }
   }
   
-  // 5. Deep DFS in recursive tree dict matching data_path or node key
+  // 5. Deep DFS
   const dfs = (nodeObj) => {
     if (!nodeObj || typeof nodeObj !== 'object') return null;
     for (const [k, v] of Object.entries(nodeObj)) {
@@ -194,14 +193,12 @@ const getPrimitiveFields = (item) => {
   if (!item || typeof item !== 'object') return {};
   const res = {};
   
-  // First include fields from effectiveFields
   effectiveFields.value.forEach(f => {
     if (f !== '_hierarchy_schema') {
       res[f] = item[f] !== undefined ? item[f] : '';
     }
   });
 
-  // Then add any other primitive fields present on item
   Object.keys(item).forEach(k => {
     if (k !== '_hierarchy_schema' && isPrimitive(item[k]) && !(k in res)) {
       res[k] = item[k];
@@ -214,6 +211,214 @@ const getLeafTableHeaders = computed(() => {
   return effectiveFields.value.length > 0 ? effectiveFields.value : ['valor'];
 });
 
+// Metadata & Custom Data Type Config Helpers
+const getElementMetadata = (elementName) => {
+  if (!store.editorMetadata) return null;
+  return store.editorMetadata.find(m => m.group === props.arrayKey && m.element === elementName) || null;
+};
+
+const getElementType = (elementName) => {
+  const meta = getElementMetadata(elementName);
+  return meta ? meta.type : 'Text';
+};
+
+const resolveSelectOptions = (meta) => {
+  if (!meta || meta.type !== 'Select') return [];
+  if (meta.sourceType === 'dynamic' && meta.vectorPath) {
+    const list = store.excelJsonData?.[meta.vectorPath];
+    if (Array.isArray(list)) {
+      return list.filter(item => {
+        if (item && typeof item === 'object') {
+          return !Object.values(item).every(val => 
+            val === 0 || val === 0.0 || val === '' || val === null || val === undefined || val === false
+          );
+        }
+        return item !== 0 && item !== 0.0 && item !== '' && item !== null && item !== undefined && item !== false;
+      }).map(item => {
+        if (item && typeof item === 'object') {
+          const valKey = meta.valueField || Object.keys(item)[0] || '';
+          const lblKey = meta.displayField || Object.keys(item)[0] || '';
+          return {
+            value: item[valKey] !== undefined ? item[valKey] : '',
+            label: item[lblKey] !== undefined ? String(item[lblKey]) : ''
+          };
+        } else {
+          return {
+            value: item !== undefined ? item : '',
+            label: item !== undefined ? String(item) : ''
+          };
+        }
+      }).filter(opt => opt.value !== '');
+    }
+    return [];
+  } else {
+    const opts = Array.isArray(meta.options) ? meta.options : [];
+    return opts.map(o => ({ value: o, label: o }));
+  }
+};
+
+const isOptionChecked = (cellValue, optionValue) => {
+  if (cellValue === undefined || cellValue === null || cellValue === '') return false;
+  if (Array.isArray(cellValue)) {
+    return cellValue.includes(optionValue);
+  }
+  const parts = String(cellValue).split(',').map(x => x.trim());
+  return parts.includes(String(optionValue));
+};
+
+const toggleOptionValue = (item, fieldKey, optionValue, isChecked) => {
+  let currentVal = item[fieldKey];
+  let currentList = [];
+  if (currentVal !== undefined && currentVal !== null && currentVal !== '') {
+    if (Array.isArray(currentVal)) {
+      currentList = [...currentVal];
+    } else {
+      currentList = String(currentVal).split(',').map(x => x.trim()).filter(x => x);
+    }
+  }
+  
+  const optStr = String(optionValue);
+  if (isChecked) {
+    if (!currentList.includes(optStr)) {
+      currentList.push(optStr);
+    }
+  } else {
+    currentList = currentList.filter(x => x !== optStr);
+  }
+  
+  item[fieldKey] = Array.isArray(currentVal) ? currentList : currentList.join(', ');
+};
+
+const isMultiSelectModalOpen = ref(false);
+const activeMultiSelectCell = ref(null);
+
+const openMultiSelectModal = (item, fieldKey, meta) => {
+  activeMultiSelectCell.value = { item, fieldKey, meta };
+  isMultiSelectModalOpen.value = true;
+};
+
+const getSelectedPills = (cellValue, meta) => {
+  if (cellValue === undefined || cellValue === null || cellValue === '') return [];
+  let currentList = [];
+  if (Array.isArray(cellValue)) {
+    currentList = cellValue.map(String);
+  } else {
+    currentList = String(cellValue).split(',').map(x => x.trim()).filter(x => x);
+  }
+  
+  const allOpts = resolveSelectOptions(meta);
+  return currentList.map(val => {
+    const match = allOpts.find(opt => String(opt.value) === val);
+    return {
+      value: val,
+      label: match ? match.label : val
+    };
+  });
+};
+
+const isCellModalOpen = ref(false);
+const activeCellInfo = ref(null);
+const cellTextValue = ref('');
+
+const openCellEditor = (item, fieldKey) => {
+  activeCellInfo.value = { item, fieldKey };
+  cellTextValue.value = String(item[fieldKey] || '');
+  isCellModalOpen.value = true;
+};
+
+const saveCellEditor = () => {
+  if (activeCellInfo.value) {
+    const { item, fieldKey } = activeCellInfo.value;
+    item[fieldKey] = cellTextValue.value;
+  }
+  isCellModalOpen.value = false;
+  store.addLog("Camp actualitzat correctament.", "success");
+};
+
+// Group Config Modal for arrayKey
+const isConfigModalOpen = ref(false);
+const groupConfigList = ref([]);
+
+const getAvailableTables = () => {
+  return Object.keys(store.excelJsonData || {}).filter(name => {
+    if (name === 'editor_metadata' || name === '_hierarchy_schema') return false;
+    const data = store.excelJsonData[name];
+    return Array.isArray(data) && data.length > 0 && typeof data[0] === 'object';
+  });
+};
+
+const getTableColumns = (sheetName) => {
+  if (!sheetName || !store.excelJsonData || !store.excelJsonData[sheetName]) return [];
+  const data = store.excelJsonData[sheetName];
+  if (Array.isArray(data) && data.length > 0) {
+    return Object.keys(data[0]);
+  }
+  return [];
+};
+
+const onVectorPathChange = (configItem) => {
+  const cols = getTableColumns(configItem.vectorPath);
+  if (cols.length > 0) {
+    configItem.displayField = cols[0];
+    configItem.valueField = cols[0];
+  } else {
+    configItem.displayField = '';
+    configItem.valueField = '';
+  }
+};
+
+const openGroupConfig = () => {
+  const elements = effectiveFields.value;
+  groupConfigList.value = elements.map(el => {
+    const meta = getElementMetadata(el) || { type: 'Text' };
+    return {
+      element: el,
+      type: meta.type || 'Text',
+      sourceType: meta.sourceType || 'static',
+      optionsRaw: Array.isArray(meta.options) ? meta.options.join(', ') : (typeof meta.options === 'string' ? meta.options : ''),
+      vectorPath: meta.vectorPath || '',
+      displayField: meta.displayField || '',
+      valueField: meta.valueField || '',
+      multiple: !!meta.multiple,
+      width: meta.width || ''
+    };
+  });
+  isConfigModalOpen.value = true;
+};
+
+const saveGroupConfig = () => {
+  store.editorMetadata = store.editorMetadata.filter(m => m.group !== props.arrayKey);
+  groupConfigList.value.forEach(item => {
+    const meta = {
+      group: props.arrayKey,
+      element: item.element,
+      type: item.type
+    };
+    if (item.type === 'Select') {
+      meta.sourceType = item.sourceType;
+      meta.multiple = !!item.multiple;
+      if (item.sourceType === 'dynamic') {
+        meta.vectorPath = item.vectorPath;
+        meta.displayField = item.displayField;
+        meta.valueField = item.valueField;
+      } else {
+        meta.options = item.optionsRaw.split(',').map(x => x.trim()).filter(x => x);
+      }
+    }
+    if (item.width) {
+      meta.width = item.width;
+    }
+    store.editorMetadata.push(meta);
+  });
+  
+  if (store.excelJsonData) {
+    store.excelJsonData.editor_metadata = store.editorMetadata;
+  }
+  
+  isConfigModalOpen.value = false;
+  store.addLog(`Configuració de tipus de dades per al grup '${props.arrayKey}' desada correctament.`, 'success');
+};
+
 const addNestedItem = () => {
   if (!Array.isArray(props.parentObj[props.arrayKey])) {
     props.parentObj[props.arrayKey] = [];
@@ -221,23 +426,15 @@ const addNestedItem = () => {
   const list = props.parentObj[props.arrayKey];
   const newRow = {};
   
-  // Populate primitive fields from schema or sample
-  const fields = nodeSchema.value.fields || [];
+  const fields = effectiveFields.value;
   if (fields.length > 0) {
     fields.forEach(f => {
       newRow[f] = '';
-    });
-  } else if (list.length > 0) {
-    Object.keys(list[0]).forEach(k => {
-      if (isPrimitive(list[0][k])) {
-        newRow[k] = '';
-      }
     });
   } else {
     newRow['valor'] = '';
   }
 
-  // Initialize child sub-arrays for intermediate nodes
   childKeys.value.forEach(cKey => {
     newRow[cKey] = [];
   });
@@ -258,7 +455,6 @@ const duplicateNestedItem = (idx) => {
   
   const clone = JSON.parse(JSON.stringify(original));
   
-  // Append _copia to ID if primary key is present
   const pKey = effectiveFields.value[0] || Object.keys(clone).find(k => k.startsWith('id_') || k.endsWith('_id') || k === 'id');
   if (pKey && typeof clone[pKey] === 'string' && clone[pKey].trim() !== '') {
     clone[pKey] = `${clone[pKey]}_copia`;
@@ -388,11 +584,11 @@ const getItemPath = (idx, fieldKey) => {
         <button 
           type="button"
           class="btn btn-secondary" 
-          style="padding: 0.25rem 0.5rem; font-size: 0.72rem; display: flex; align-items: center; gap: 4px;"
-          @click="showDebug = !showDebug"
-          :title="showDebug ? 'Amaga diagnòstic jeràrquic' : 'Mostra diagnòstic jeràrquic'"
+          style="width: auto; padding: 2px 8px; font-size: 0.7rem; border-radius: 4px; display: flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
+          @click.stop="openGroupConfig"
+          title="Configura tipus de dades per a aquest grup"
         >
-          🔍 {{ showDebug ? 'Amaga Debug' : 'Debug Esquema' }}
+          ⚙️ Configura
         </button>
         <button 
           type="button"
@@ -405,30 +601,12 @@ const getItemPath = (idx, fieldKey) => {
       </div>
     </div>
 
-    <!-- Collapsible Debug Inspector -->
-    <div v-if="showDebug" style="margin-bottom: 0.75rem; padding: 0.5rem; background: #1e1e1e; color: #4ec9b0; border-radius: 4px; font-family: monospace; font-size: 0.72rem; overflow-x: auto;">
-      <div style="color: #ce9178; font-weight: bold; margin-bottom: 4px;">🔍 Traça de Paràmetres ({{ arrayKey }}):</div>
-      <pre style="margin: 0; white-space: pre-wrap;">{{ JSON.stringify({
-        arrayKey,
-        parentPath: props.parentPath,
-        schemaPathProp: props.schemaPath,
-        calculatedFullPath: fullPath,
-        cleanedSchemaPath: cleanPath(props.schemaPath || fullPath),
-        receivedPropSchema: props.schema,
-        resolvedNodeSchema: nodeSchema,
-        resolvedNodeFields: nodeSchema.fields,
-        resolvedChildKeys: childKeys,
-        isLeafLevel: isLeafLevel,
-        availableSchemaDictKeys: Object.keys(store.hierarchySchema || {})
-      }, null, 2) }}</pre>
-    </div>
-
     <!-- Empty State -->
     <div v-if="items.length === 0" style="padding: 0.75rem; font-size: 0.8rem; color: var(--text-muted); font-style: italic; background: rgba(0,0,0,0.02); border-radius: 4px; text-align: center;">
       Sense registres a <strong style="color: var(--text-primary);">{{ arrayKey }}</strong>. Feu clic a <strong>"➕ Afegeix {{ arrayKey }}"</strong> per afegir un element.
     </div>
 
-    <!-- LEAF LEVEL: Render as Compact Tabular Table -->
+    <!-- LEAF LEVEL: Render as Compact Tabular Table with Rich Controls -->
     <template v-else-if="isLeafLevel">
       <div style="overflow-x: auto; max-width: 100%;">
         <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
@@ -443,14 +621,106 @@ const getItemPath = (idx, fieldKey) => {
           <tbody>
             <tr v-for="(row, rIdx) in items" :key="rIdx">
               <td v-for="h in getLeafTableHeaders" :key="h" style="padding: 4px 6px; border-bottom: 1px solid var(--border-color);">
-                <input 
-                  type="text" 
-                  v-model="row[h]" 
-                  class="data-input" 
-                  style="width: 100%; height: 28px; font-size: 0.78rem; padding: 2px 6px;"
-                  :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
-                  :data-path="getItemPath(rIdx, h)"
-                />
+                <div style="display: flex; gap: 4px; align-items: stretch; width: 100%;">
+                  <!-- Select Type -->
+                  <template v-if="getElementType(h) === 'Select'">
+                    <div 
+                      v-if="getElementMetadata(h)?.multiple"
+                      :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
+                      :data-path="getItemPath(rIdx, h)"
+                      style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 28px; padding: 2px 4px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 250px; max-height: 70px; overflow-y: auto;"
+                      @click="openMultiSelectModal(row, h, getElementMetadata(h))"
+                      title="Fes clic per modificar la selecció"
+                    >
+                      <span v-if="getSelectedPills(row[h], getElementMetadata(h)).length === 0" style="color: var(--text-muted); font-size: 0.75rem; padding: 0 2px;">
+                        [Tria opcions]
+                      </span>
+                      <span 
+                        v-for="pill in getSelectedPills(row[h], getElementMetadata(h))" 
+                        :key="pill.value" 
+                        style="background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); font-size: 0.72rem; padding: 1px 5px; border-radius: 4px; font-weight: 500;"
+                        :title="pill.label"
+                      >
+                        {{ pill.label }}
+                      </span>
+                    </div>
+                    <select 
+                      v-else
+                      :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
+                      :data-path="getItemPath(rIdx, h)"
+                      v-model="row[h]"
+                      class="data-input"
+                      style="flex-grow: 1; height: 28px; font-size: 0.78rem;"
+                    >
+                      <option value="">[Buit / Sense valor]</option>
+                      <option 
+                        v-for="opt in resolveSelectOptions(getElementMetadata(h))" 
+                        :key="opt.value" 
+                        :value="opt.value"
+                      >
+                        {{ opt.label }}
+                      </option>
+                    </select>
+                  </template>
+
+                  <!-- Date Type -->
+                  <input 
+                    v-else-if="getElementType(h) === 'Date'"
+                    :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
+                    :data-path="getItemPath(rIdx, h)"
+                    type="date"
+                    v-model="row[h]"
+                    class="data-input"
+                    style="flex-grow: 1; height: 28px; font-size: 0.78rem;"
+                  >
+
+                  <!-- Number Type -->
+                  <input 
+                    v-else-if="getElementType(h) === 'Number'"
+                    :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
+                    :data-path="getItemPath(rIdx, h)"
+                    type="number"
+                    step="any"
+                    v-model="row[h]"
+                    class="data-input"
+                    style="flex-grow: 1; height: 28px; font-size: 0.78rem;"
+                  >
+
+                  <!-- Boolean Type -->
+                  <select 
+                    v-else-if="getElementType(h) === 'Boolean'"
+                    :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
+                    :data-path="getItemPath(rIdx, h)"
+                    v-model="row[h]"
+                    class="data-input"
+                    style="flex-grow: 1; height: 28px; font-size: 0.78rem;"
+                  >
+                    <option value="">[Buit / Sense valor]</option>
+                    <option :value="true">Cert (True)</option>
+                    <option :value="false">Fals (False)</option>
+                  </select>
+
+                  <!-- Text Type (default) -->
+                  <input 
+                    v-else
+                    :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
+                    :data-path="getItemPath(rIdx, h)"
+                    type="text"
+                    v-model="row[h]"
+                    class="data-input"
+                    style="flex-grow: 1; height: 28px; font-size: 0.78rem; padding: 2px 6px;"
+                  />
+
+                  <button 
+                    type="button"
+                    class="btn-icon-only"
+                    style="height: 28px; width: 28px; min-width: 28px; font-size: 0.8rem; padding: 0; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                    title="Edició complexa en Markdown + Jinja2"
+                    @click="openCellEditor(row, h)"
+                  >
+                    📝
+                  </button>
+                </div>
               </td>
               <td style="padding: 4px 6px; border-bottom: 1px solid var(--border-color); text-align: center;">
                 <div style="display: flex; align-items: center; justify-content: center; gap: 4px;">
@@ -489,7 +759,7 @@ const getItemPath = (idx, fieldKey) => {
       </div>
     </template>
 
-    <!-- INTERMEDIATE LEVEL: Render as Form Cards with Sub-Hierarchies -->
+    <!-- INTERMEDIATE LEVEL: Render as Form Cards with Rich Key-Value Inputs & Sub-Hierarchies -->
     <template v-else>
       <div style="display: flex; flex-direction: column; gap: 0.75rem;">
         <div 
@@ -534,18 +804,113 @@ const getItemPath = (idx, fieldKey) => {
             </div>
           </div>
 
-          <!-- Primitive Fields Form Grid (Key-Value style) -->
-          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.5rem; margin-bottom: 0.5rem;">
+          <!-- Primitive Fields Key-Value Form Grid with Rich Data Types -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem; margin-bottom: 0.75rem;">
             <div v-for="(val, fKey) in getPrimitiveFields(item)" :key="fKey" style="display: flex; flex-direction: column; gap: 2px;">
-              <label style="font-size: 0.7rem; font-weight: 600; color: var(--text-muted); margin: 0;">{{ fKey }}</label>
-              <input 
-                type="text" 
-                v-model="item[fKey]" 
-                class="data-input" 
-                style="height: 30px; font-size: 0.8rem; padding: 2px 8px;"
-                :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
-                :data-path="getItemPath(idx, fKey)"
-              />
+              <label style="font-size: 0.72rem; font-weight: 600; color: var(--text-muted); margin: 0;">{{ fKey }}</label>
+              
+              <div style="display: flex; gap: 4px; align-items: stretch; width: 100%;">
+                <!-- Select Type -->
+                <template v-if="getElementType(fKey) === 'Select'">
+                  <!-- Multiple select -->
+                  <div 
+                    v-if="getElementMetadata(fKey)?.multiple"
+                    :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                    :data-path="getItemPath(idx, fKey)"
+                    style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 32px; padding: 4px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 100%; max-height: 80px; overflow-y: auto;"
+                    @click="openMultiSelectModal(item, fKey, getElementMetadata(fKey))"
+                    title="Fes clic per modificar la selecció"
+                  >
+                    <span v-if="getSelectedPills(item[fKey], getElementMetadata(fKey)).length === 0" style="color: var(--text-muted); font-size: 0.8rem; padding: 0 4px;">
+                      [Tria opcions]
+                    </span>
+                    <span 
+                      v-for="pill in getSelectedPills(item[fKey], getElementMetadata(fKey))" 
+                      :key="pill.value" 
+                      style="background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; font-weight: 500; display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                      :title="pill.label"
+                    >
+                      {{ pill.label }}
+                    </span>
+                  </div>
+                  <!-- Single select -->
+                  <select 
+                    v-else
+                    :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                    :data-path="getItemPath(idx, fKey)"
+                    v-model="item[fKey]"
+                    class="data-input"
+                    style="flex-grow: 1; height: 32px;"
+                  >
+                    <option value="">[Buit / Sense valor]</option>
+                    <option 
+                      v-for="opt in resolveSelectOptions(getElementMetadata(fKey))" 
+                      :key="opt.value" 
+                      :value="opt.value"
+                    >
+                      {{ opt.label }}
+                    </option>
+                  </select>
+                </template>
+                
+                <!-- Date Type -->
+                <input 
+                  v-else-if="getElementType(fKey) === 'Date'"
+                  :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                  :data-path="getItemPath(idx, fKey)"
+                  type="date"
+                  v-model="item[fKey]"
+                  class="data-input"
+                  style="flex-grow: 1; height: 32px;"
+                >
+                
+                <!-- Number Type -->
+                <input 
+                  v-else-if="getElementType(fKey) === 'Number'"
+                  :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                  :data-path="getItemPath(idx, fKey)"
+                  type="number"
+                  step="any"
+                  v-model="item[fKey]"
+                  class="data-input"
+                  style="flex-grow: 1; height: 32px;"
+                >
+                
+                <!-- Boolean Type -->
+                <select 
+                  v-else-if="getElementType(fKey) === 'Boolean'"
+                  :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                  :data-path="getItemPath(idx, fKey)"
+                  v-model="item[fKey]"
+                  class="data-input"
+                  style="flex-grow: 1; height: 32px;"
+                >
+                  <option value="">[Buit / Sense valor]</option>
+                  <option :value="true">Cert (True)</option>
+                  <option :value="false">Fals (False)</option>
+                </select>
+                
+                <!-- Text Type (default) -->
+                <input 
+                  v-else
+                  :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                  :data-path="getItemPath(idx, fKey)"
+                  type="text"
+                  v-model="item[fKey]"
+                  class="data-input"
+                  style="flex-grow: 1; height: 32px;"
+                >
+                
+                <button 
+                  type="button"
+                  class="btn-icon-only"
+                  style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                  title="Edició complexa en Markdown + Jinja2"
+                  @click="openCellEditor(item, fKey)"
+                >
+                  📝
+                </button>
+              </div>
             </div>
           </div>
 
@@ -561,6 +926,167 @@ const getItemPath = (idx, fieldKey) => {
         </div>
       </div>
     </template>
+
+    <!-- Group Config Modal -->
+    <div class="modal-overlay" v-if="isConfigModalOpen" style="display: flex; z-index: 1050;">
+      <div class="modal-content" style="max-width: 800px; width: 90%; max-height: 85vh; display: flex; flex-direction: column;">
+        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+          <h3 style="border: none; padding-bottom: 0; margin: 0; font-size: 1.1rem;">
+            ⚙️ Configuració de tipus de dades per al grup: <strong style="color: var(--color-primary);">{{ arrayKey }}</strong>
+          </h3>
+          <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isConfigModalOpen = false">&times;</button>
+        </div>
+        
+        <div class="modal-body" style="flex-grow: 1; overflow-y: auto; padding: 1rem 0;">
+          <table class="inspector-table" style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="background: var(--bg-tertiary);">
+                <th style="padding: 8px; text-align: left;">Element / Camp</th>
+                <th style="padding: 8px; text-align: left; width: 140px;">Tipus de Dada</th>
+                <th style="padding: 8px; text-align: left;">Font d'Opcions (Select)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in groupConfigList" :key="item.element">
+                <td style="padding: 6px 8px; vertical-align: top;">
+                  <code style="font-weight: bold; font-size: 0.85rem;">{{ item.element }}</code>
+                </td>
+                <td style="padding: 6px 8px; vertical-align: top;">
+                  <select v-model="item.type" class="data-input" style="padding: 4px 8px; height: 32px; font-size: 0.8rem;">
+                    <option value="Text">Text</option>
+                    <option value="Select">Select (Llista)</option>
+                    <option value="Date">Data</option>
+                    <option value="Number">Nombre</option>
+                    <option value="Boolean">Booleà</option>
+                  </select>
+                </td>
+                <td style="padding: 6px 8px; vertical-align: top;">
+                  <template v-if="item.type === 'Select'">
+                    <div style="display: flex; gap: 12px; margin-bottom: 6px;">
+                      <label style="display: flex; align-items: center; gap: 4px; font-size: 0.8rem; cursor: pointer;">
+                        <input type="radio" value="static" v-model="item.sourceType"> Estàtica (Manual)
+                      </label>
+                      <label style="display: flex; align-items: center; gap: 4px; font-size: 0.8rem; cursor: pointer;">
+                        <input type="radio" value="dynamic" v-model="item.sourceType"> Dinàmica (Taula)
+                      </label>
+                    </div>
+                    
+                    <div v-if="item.sourceType === 'static'">
+                      <input 
+                        type="text" 
+                        v-model="item.optionsRaw" 
+                        class="data-input" 
+                        placeholder="opcio1, opcio2, opcio3"
+                        style="padding: 4px 8px; height: 32px; font-size: 0.8rem;"
+                      >
+                    </div>
+                    
+                    <div v-else style="display: flex; flex-direction: column; gap: 4px;">
+                      <select v-model="item.vectorPath" class="data-input" style="padding: 2px 6px; height: 28px; font-size: 0.8rem;" @change="onVectorPathChange(item)">
+                        <option value="">-- Tria una taula --</option>
+                        <option v-for="tName in getAvailableTables()" :key="tName" :value="tName">
+                          {{ tName }}
+                        </option>
+                      </select>
+                      
+                      <div v-if="item.vectorPath && getTableColumns(item.vectorPath).length > 0" style="display: flex; gap: 4px;">
+                        <select v-model="item.displayField" class="data-input" style="padding: 2px 6px; height: 28px; font-size: 0.75rem; flex: 1;" title="Camp visual">
+                          <option value="">-- Camp visual --</option>
+                          <option v-for="col in getTableColumns(item.vectorPath)" :key="col" :value="col">{{ col }}</option>
+                        </select>
+                        <select v-model="item.valueField" class="data-input" style="padding: 2px 6px; height: 28px; font-size: 0.75rem; flex: 1;" title="Camp a desar">
+                          <option value="">-- Camp a desar --</option>
+                          <option v-for="col in getTableColumns(item.vectorPath)" :key="col" :value="col">{{ col }}</option>
+                        </select>
+                      </div>
+                    </div>
+                    
+                    <label style="display: flex; align-items: center; gap: 6px; margin-top: 6px; cursor: pointer; font-size: 0.8rem; color: var(--text-primary);">
+                      <input type="checkbox" v-model="item.multiple">
+                      <span>Selecció múltiple</span>
+                    </label>
+                  </template>
+                  <template v-else>
+                    <span style="color: var(--text-muted); font-size: 0.8rem;">No aplicable</span>
+                  </template>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        
+        <div class="modal-footer" style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem; display: flex; justify-content: flex-end; gap: 8px;">
+          <button type="button" class="btn btn-secondary" style="width: auto;" @click="isConfigModalOpen = false">Cancel·la</button>
+          <button type="button" class="btn btn-primary" style="width: auto;" @click="saveGroupConfig">Aplica</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cell Text / Markdown + Jinja2 Editor Modal -->
+    <div class="modal-overlay" v-if="isCellModalOpen" style="display: flex; z-index: 1100;">
+      <div class="modal-content" style="max-width: 650px; width: 90%;">
+        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+          <h3 style="border: none; padding-bottom: 0; margin: 0; font-size: 1.1rem;">
+            📝 Edició complexa del camp: {{ activeCellInfo?.fieldKey }}
+          </h3>
+          <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isCellModalOpen = false">&times;</button>
+        </div>
+        
+        <div class="modal-body" style="padding: 1rem 0;">
+          <textarea 
+            v-model="cellTextValue" 
+            class="data-input" 
+            rows="10" 
+            style="width: 100%; font-family: monospace; font-size: 0.85rem; padding: 8px; resize: vertical;"
+            placeholder="Introdueix text o codi Jinja2..."
+          ></textarea>
+        </div>
+        
+        <div class="modal-footer" style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem; display: flex; justify-content: flex-end; gap: 8px;">
+          <button type="button" class="btn btn-secondary" style="width: auto;" @click="isCellModalOpen = false">Cancel·la</button>
+          <button type="button" class="btn btn-primary" style="width: auto;" @click="saveCellEditor">Desa Canvis</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dynamic Multi-Select Options Modal -->
+    <div class="modal-overlay" v-if="isMultiSelectModalOpen" style="display: flex; z-index: 1100;">
+      <div class="modal-content" style="max-width: 450px; width: 90%; max-height: 70vh; display: flex; flex-direction: column;">
+        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+          <h3 style="border: none; padding-bottom: 0; margin: 0; font-size: 1.05rem;">
+            Tria opcions per a: {{ activeMultiSelectCell?.fieldKey }}
+          </h3>
+          <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isMultiSelectModalOpen = false">&times;</button>
+        </div>
+        
+        <div class="modal-body" style="flex-grow: 1; overflow-y: auto; padding: 1rem 0;">
+          <div style="display: flex; flex-direction: column; gap: 8px; padding: 0 0.5rem;">
+            <label 
+              v-for="opt in resolveSelectOptions(activeMultiSelectCell?.meta)" 
+              :key="opt.value" 
+              style="display: flex; align-items: center; gap: 10px; font-size: 0.88rem; cursor: pointer; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-secondary); user-select: none;"
+            >
+              <input 
+                type="checkbox" 
+                :value="opt.value" 
+                :checked="isOptionChecked(activeMultiSelectCell?.item[activeMultiSelectCell?.fieldKey], opt.value)"
+                @change="toggleOptionValue(activeMultiSelectCell?.item, activeMultiSelectCell?.fieldKey, opt.value, $event.target.checked)"
+                style="width: 18px; height: 18px; cursor: pointer;"
+              >
+              <span style="color: var(--text-primary); font-weight: 500;">{{ opt.label }}</span>
+            </label>
+            
+            <div v-if="resolveSelectOptions(activeMultiSelectCell?.meta).length === 0" style="color: var(--text-muted); text-align: center; padding: 2rem 0; font-size: 0.85rem;">
+              No hi ha opcions actives. Comprova que la font d'opcions estigui configurada.
+            </div>
+          </div>
+        </div>
+        
+        <div class="modal-footer" style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem; display: flex; justify-content: flex-end;">
+          <button type="button" class="btn btn-primary" style="width: auto;" @click="isMultiSelectModalOpen = false">Fet</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Modal for Moving Item to Another Parent -->
     <div class="modal-overlay" :style="{ display: isMoveModalOpen ? 'flex' : 'none' }">
