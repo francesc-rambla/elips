@@ -114,13 +114,17 @@ const resolvePath = (obj, path) => {
   if (!obj || !path) return null;
   
   let effectivePath = path;
-  if (activeLoopContext.value && activeLoopContext.value.iterator) {
-    const iter = activeLoopContext.value.iterator;
-    if (effectivePath === iter) {
-      effectivePath = activeLoopContext.value.arrayPath;
-    } else if (effectivePath.startsWith(`${iter}.`)) {
-      const sub = effectivePath.slice(iter.length + 1);
-      effectivePath = `${activeLoopContext.value.arrayPath}.${sub}`;
+  if (activeLoopStack.value && activeLoopStack.value.length > 0) {
+    for (const loopCtx of activeLoopStack.value) {
+      const iter = loopCtx.iterator;
+      if (effectivePath === iter) {
+        effectivePath = loopCtx.arrayPath;
+        break;
+      } else if (effectivePath.startsWith(`${iter}.`)) {
+        const sub = effectivePath.slice(iter.length + 1);
+        effectivePath = `${loopCtx.arrayPath}.${sub}`;
+        break;
+      }
     }
   }
 
@@ -165,37 +169,37 @@ const getActiveLoopStack = (targetNode = null) => {
     
     while (node && canvasRef.value && node !== canvasRef.value) {
       const el = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
-      if (el && el.classList) {
+      if (el) {
         let condStr = '';
-        if (el.classList.contains('j-content') && el.parentNode && el.parentNode.classList && el.parentNode.classList.contains('jinja-block')) {
-          const parent = el.parentNode;
-          const type = parent.getAttribute('data-type');
-          if (type === 'for') {
-            const condTextNode = parent.querySelector('.j-cond-text');
-            if (condTextNode) condStr = condTextNode.getAttribute('data-cond') || '';
-          }
-        } else if (el.classList.contains('j-inline-block') && el.getAttribute('data-type') === 'for') {
+        
+        if (el.getAttribute && el.getAttribute('data-type') === 'for') {
           condStr = el.getAttribute('data-cond') || '';
-        } else if (el.getAttribute('data-jinja-for')) {
+          if (!condStr) {
+            const condTextNode = el.querySelector('.j-cond-text');
+            if (condTextNode) condStr = condTextNode.getAttribute('data-cond') || condTextNode.textContent || '';
+          }
+        } else if (el.getAttribute && el.getAttribute('data-jinja-for')) {
           condStr = el.getAttribute('data-jinja-for') || '';
         }
         
         if (condStr) {
-          const match = condStr.match(/(\w+)\s+in\s+([\w\.\_]+)/);
+          const match = condStr.match(/(\w+)\s+in\s+([^%\}\n]+)/);
           if (match) {
             const iterator = match[1].trim();
-            const arrayPath = match[2].trim();
+            const rawPath = match[2].trim().split('|')[0].trim();
             
             if (!stack.some(s => s.iterator === iterator)) {
               let columns = [];
-              const arr = resolvePath(store.excelJsonData, arrayPath);
+              const arr = resolvePath(store.excelJsonData, rawPath);
               if (arr && Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
-                columns = Object.keys(arr[0]).filter(k => !isInternalMetadataKey(k));
+                columns = Object.entries(arr[0])
+                  .filter(([k, v]) => !isInternalMetadataKey(k) && !Array.isArray(v))
+                  .map(([k]) => k);
               }
               
               stack.push({
                 iterator,
-                arrayPath,
+                arrayPath: rawPath,
                 columns
               });
             }
@@ -210,12 +214,14 @@ const getActiveLoopStack = (targetNode = null) => {
       const pos = textareaRef.value.selectionStart || 0;
       const codeBefore = editorText.value.substring(0, pos);
       
-      const regex = /\{%\s*(for\s+(\w+)\s+in\s+([\w\.\_]+)|endfor)\s*%\}/g;
+      const regex = /\{%\s*(for\s+([a-zA-Z0-9_]+)\s+in\s+([^%\}]+)|endfor)\s*%\}/g;
       let m;
       const forStack = [];
       while ((m = regex.exec(codeBefore)) !== null) {
         if (m[1].startsWith('for')) {
-          forStack.push({ iterator: m[2], arrayPath: m[3] });
+          const iter = m[2].trim();
+          const rawPath = m[3].trim().split('|')[0].trim();
+          forStack.push({ iterator: iter, arrayPath: rawPath });
         } else if (m[1] === 'endfor') {
           forStack.pop();
         }
@@ -226,7 +232,9 @@ const getActiveLoopStack = (targetNode = null) => {
         let columns = [];
         const arr = resolvePath(store.excelJsonData, item.arrayPath);
         if (arr && Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
-          columns = Object.keys(arr[0]).filter(k => !isInternalMetadataKey(k));
+          columns = Object.entries(arr[0])
+            .filter(([k, v]) => !isInternalMetadataKey(k) && !Array.isArray(v))
+            .map(([k]) => k);
         }
         stack.push({
           iterator: item.iterator,
@@ -2895,6 +2903,28 @@ const restoreCaretState = () => {
   });
 };
 
+const onCanvasFocus = () => {
+  saveSelection();
+  updateActiveLoopContext();
+};
+
+const onCanvasKeyUp = () => {
+  saveSelection();
+  updateActiveLoopContext();
+};
+
+watch(() => activeEditorTab.value, () => {
+  nextTick(() => {
+    updateActiveLoopContext();
+  });
+});
+
+watch(() => editorText.value, () => {
+  if (activeEditorTab.value === 'code') {
+    updateActiveLoopContext();
+  }
+});
+
 onMounted(() => {
   window.__openPandocMetadataModal = openMetadataModal;
   store.editorActions = {
@@ -2915,8 +2945,10 @@ onMounted(() => {
   document.addEventListener('selectionchange', () => {
     saveSelection();
     saveCaretState();
+    updateActiveLoopContext();
   });
   restoreCaretState();
+  updateActiveLoopContext();
 });
 
 onUnmounted(() => {
@@ -2947,7 +2979,7 @@ onUnmounted(() => {
           @blur="saveSelection"
           @click="onCanvasClick"
           @mouseup="onCanvasMouseUp"
-          @focus="saveSelection"
+          @focus="onCanvasFocus"
         ></div>
 
         <!-- Code Raw Editor Textarea -->
@@ -2957,6 +2989,12 @@ onUnmounted(() => {
           class="editor-textarea" 
           v-model="editorText" 
           placeholder="Escriu o edita la teva plantilla Jinja2 en Markdown aquí..."
+          @click="updateActiveLoopContext"
+          @keyup="updateActiveLoopContext"
+          @keydown="updateActiveLoopContext"
+          @select="updateActiveLoopContext"
+          @focus="updateActiveLoopContext"
+          @input="updateActiveLoopContext"
         ></textarea>
       </div>
 
