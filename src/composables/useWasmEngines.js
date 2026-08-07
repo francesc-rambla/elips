@@ -420,16 +420,19 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     else:
                         parent[sub_key] = data_to_set
 
-    # Auto-link sub-tables to parent objects if not explicitly linked by dotted sheet name
-    kv_dicts = [k for k, v in root.items() if isinstance(v, dict)]
-    tabular_lists = [k for k, v in root.items() if isinstance(v, list)]
-
-    if len(kv_dicts) == 1 and len(tabular_lists) > 0:
-        parent_dict_key = kv_dicts[0]
-        parent_dict = root[parent_dict_key]
-        for t_key in tabular_lists:
-            if t_key not in parent_dict:
-                parent_dict[t_key] = root[t_key]
+    # Auto-link sub-tables to parent objects and recursively throughout the tree
+    for k, v in list(root.items()):
+        if isinstance(v, dict):
+            for sub_k, sub_v in list(root.items()):
+                if sub_k != k and isinstance(sub_v, list):
+                    if sub_k not in v:
+                        v[sub_k] = sub_v
+                    for item in sub_v:
+                        if isinstance(item, dict):
+                            for sub2_k, sub2_v in list(root.items()):
+                                if sub2_k not in (k, sub_k) and isinstance(sub2_v, list):
+                                    if sub2_k not in item:
+                                        item[sub2_k] = sub2_v
 
     return {
         'data': root,
@@ -828,9 +831,12 @@ def _ensure_path(ctx, path):
         cur = cur[p]
     return cur, parts[-1]
 
-def render_with_recovery(env, template_src, ctx, pass_label, max_fixes=1000):
+def render_with_recovery(env, template_src, ctx, pass_label, max_fixes=50):
     issues = []
     current_src = template_src
+    last_keypath = None
+    repeat_count = 0
+    
     for _ in range(max_fixes):
         try:
             out = env.from_string(current_src).render(**ctx)
@@ -841,6 +847,14 @@ def render_with_recovery(env, template_src, ctx, pass_label, max_fixes=1000):
             keypath = _parse_missing(e, line_text)
             keypath = '.'.join(sanitize_id(p) for p in str(keypath).split('.'))
             
+            if keypath == last_keypath:
+                repeat_count += 1
+                if repeat_count > 3:
+                    break
+            else:
+                last_keypath = keypath
+                repeat_count = 0
+
             issues.append({
                 'pass': pass_label,
                 'line': lineno,
@@ -855,7 +869,16 @@ def render_with_recovery(env, template_src, ctx, pass_label, max_fixes=1000):
             else:
                 ctx[keypath] = _placeholder(keypath)
             continue
-    raise UndefinedError(f"Massa variables indefinides; s'han corregit {len(issues)} variables sense èxit.")
+
+    # Fallback to non-strict environment if recovery loop gets stuck
+    env_lax = Environment(undefined=DebugUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
+    env_lax.filters.update(env.filters)
+    env_lax.globals.update(env.globals)
+    try:
+        out = env_lax.from_string(current_src).render(**ctx)
+        return out, issues
+    except Exception:
+        return current_src, issues
 
 REF_REGEX = re.compile(r"^=[+]?(?:'([^']+)'|([A-Za-z0-9_]+))!([A-Za-z0-9$]+)$")
 
