@@ -91,6 +91,7 @@ let activeEditNode = null;
 let activeBlockForNewBranch = null; // Pointer to block when adding a new ELIF branch
 
 const activeLoopContext = ref(null); // { iterator, arrayPath, columns }
+const activeLoopStack = ref([]); // Stack of active loop contexts [{ iterator, arrayPath, columns }] ordered by depth (innermost first)
 
 const linesCount = computed(() => {
   return editorText.value.split('\n').length;
