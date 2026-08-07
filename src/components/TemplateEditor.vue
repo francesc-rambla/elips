@@ -2811,8 +2811,9 @@ onUnmounted(() => {
       
       <!-- Contextual loop variables banner (High Priority loop helper) -->
       <div v-if="activeLoopContext" style="background-color: var(--color-primary-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-focus); margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;">
-        <div style="font-size: 0.7rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase;">
-          📌 Dins del bucle actiu:
+        <div style="font-size: 0.7rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase; display: flex; align-items: center; gap: 4px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a1 1 0 0 0 0-2H8a1 1 0 0 0 0 2h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+          <span>Dins del bucle actiu:</span>
         </div>
         <code style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: bold; color: var(--text-primary);">
           for {{ activeLoopContext.iterator }} in {{ activeLoopContext.arrayPath }}
@@ -2856,7 +2857,10 @@ onUnmounted(() => {
           <!-- Sub-Arrays (e.g. parts) -->
           <div v-for="sub in node.subArrays" :key="sub.key" style="margin-top: 0.4rem; padding-left: 0.4rem; border-left: 2px solid var(--color-primary-light);">
             <div style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary); margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
-              <span>📁 {{ sub.key }}</span>
+              <span style="display: inline-flex; align-items: center; gap: 4px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                {{ sub.key }}
+              </span>
             </div>
 
             <!-- Loop shortcut button -->
@@ -2884,8 +2888,9 @@ onUnmounted(() => {
 
             <!-- Child Sub-Arrays (e.g. activitats under parts) -->
             <div v-for="childSub in sub.subArrays" :key="childSub.key" style="margin-top: 0.4rem; padding-left: 0.4rem; border-left: 2px solid var(--color-success-light, #dcfce7);">
-              <div style="font-size: 0.72rem; font-weight: 700; color: var(--color-success, #16a34a); margin-bottom: 4px;">
-                📂 {{ childSub.key }}
+              <div style="font-size: 0.72rem; font-weight: 700; color: var(--color-success, #16a34a); margin-bottom: 4px; display: inline-flex; align-items: center; gap: 4px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                {{ childSub.key }}
               </div>
 
               <!-- Inner loop shortcut button -->

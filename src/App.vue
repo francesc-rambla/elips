@@ -1370,8 +1370,9 @@ const generateDocuments = async () => {
       
       <!-- GRUP 1: Projecte / Fitxer (Esquerra) -->
       <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;">
-        <button class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; font-weight: 700; display: inline-flex; align-items: center; gap: 3px;" @click="openProjectsModal" title="Gestiona Projectes (Projecte actual: {{ currentProjectName }})">
-          📂 <span style="font-family: monospace; font-size: 0.78rem;">{{ currentProjectName }}</span>
+        <button class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" @click="openProjectsModal" title="Gestiona Projectes (Projecte actual: {{ currentProjectName }})">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span style="font-family: monospace; font-size: 0.78rem;">{{ currentProjectName }}</span>
         </button>
 
         <span style="color: var(--text-muted); font-size: 0.75rem;">/</span>
@@ -1388,49 +1389,49 @@ const generateDocuments = async () => {
           </option>
         </select>
         
-        <button class="btn btn-secondary" style="padding: 2px 5px; font-size: 0.72rem; height: 26px;" @click="createNewDocument" title="Crea un nou document en aquest projecte">
-          ➕
+        <button class="btn btn-secondary" style="padding: 2px 5px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center;" @click="createNewDocument" title="Crea un nou document en aquest projecte">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
 
         <button 
           v-if="activeDocName !== 'Document Principal'" 
           class="btn btn-secondary text-danger" 
-          style="padding: 2px 5px; font-size: 0.72rem; height: 26px; border-color: rgba(239, 68, 68, 0.2); background: transparent;" 
+          style="padding: 2px 5px; font-size: 0.72rem; height: 26px; border-color: rgba(239, 68, 68, 0.2); background: transparent; display: inline-flex; align-items: center;" 
           @click="deleteDocument(activeDocName)"
           title="Elimina el document actual"
         >
-          🗑️
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
         </button>
 
         <button 
           class="btn btn-primary" 
-          :style="saveStatus === 'modified' ? 'padding: 2px 7px; font-size: 0.72rem; height: 26px; font-weight: 700; background: #d97706; color: white; border: none;' : 'padding: 2px 7px; font-size: 0.72rem; height: 26px; font-weight: 600; border: none; background: var(--color-primary);'" 
+          :style="saveStatus === 'modified' ? 'padding: 2px 7px; font-size: 0.72rem; height: 26px; font-weight: 700; background: #d97706; color: white; border: none; display: inline-flex; align-items: center;' : 'padding: 2px 7px; font-size: 0.72rem; height: 26px; font-weight: 600; border: none; background: var(--color-primary); display: inline-flex; align-items: center;'" 
           @click="manualSave" 
           title="Desa el document (Ctrl+S)"
         >
-          💾
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
         </button>
 
         <span 
           v-if="saveStatus === 'saved'" 
-          style="display: inline-flex; align-items: center; font-size: 0.7rem; font-weight: 600; color: var(--color-success); background: var(--color-success-light); padding: 1px 6px; border-radius: 10px; border: 1px solid var(--color-success);"
+          style="display: inline-flex; align-items: center; font-size: 0.68rem; font-weight: 600; color: var(--color-success); background: var(--color-success-light); padding: 1px 5px; border-radius: 8px; border: 1px solid var(--color-success);"
           title="Desat"
         >
-          🟢
+          Desat
         </span>
         <span 
           v-else-if="saveStatus === 'modified'" 
-          style="display: inline-flex; align-items: center; font-size: 0.7rem; font-weight: 600; color: #b45309; background: #fef3c7; padding: 1px 6px; border-radius: 10px; border: 1px solid #f59e0b;"
+          style="display: inline-flex; align-items: center; font-size: 0.68rem; font-weight: 600; color: #b45309; background: #fef3c7; padding: 1px 5px; border-radius: 8px; border: 1px solid #f59e0b;"
           title="Modificat"
         >
-          🟠
+          Modificat
         </span>
         <span 
           v-else-if="saveStatus === 'saving'" 
-          style="display: inline-flex; align-items: center; font-size: 0.7rem; font-weight: 600; color: var(--color-primary); background: var(--color-primary-light); padding: 1px 6px; border-radius: 10px; border: 1px solid var(--color-primary);" 
+          style="display: inline-flex; align-items: center; font-size: 0.68rem; font-weight: 600; color: var(--color-primary); background: var(--color-primary-light); padding: 1px 5px; border-radius: 8px; border: 1px solid var(--color-primary);" 
           class="loading-pulse"
         >
-          🔵
+          Desant...
         </span>
       </div>
 
@@ -1443,31 +1444,31 @@ const generateDocuments = async () => {
         <template v-if="store.activeTab === 'template'">
           <button 
             class="btn-secondary" 
-            style="padding: 2px 6px; font-size: 0.72rem; height: 26px;"
+            style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center;"
             :class="{ 'btn-primary': store.editorActions?.getActiveTab && store.editorActions.getActiveTab() === 'visual' }"
             @click="store.editorActions?.switchEditorTab && store.editorActions.switchEditorTab('visual')"
             title="Editor Visual (WYSIWYG)"
           >
-            👁️
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
 
           <button 
             class="btn-secondary" 
-            style="padding: 2px 6px; font-size: 0.72rem; height: 26px;"
+            style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center;"
             :class="{ 'btn-primary': store.editorActions?.getActiveTab && store.editorActions.getActiveTab() === 'code' }"
             @click="store.editorActions?.switchEditorTab && store.editorActions.switchEditorTab('code')"
             title="Codi Markdown + Jinja2"
           >
-            📄
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
           </button>
 
           <button 
             class="btn-secondary" 
-            style="padding: 2px 6px; font-size: 0.72rem; height: 26px;"
+            style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center;"
             @click="store.editorActions?.openMetadataModal && store.editorActions.openMetadataModal()"
             title="Metadades Pandoc (Títol, autor, data, índex...)"
           >
-            🏷️
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
           </button>
 
           <template v-if="!store.editorActions?.getActiveTab || store.editorActions.getActiveTab() === 'visual'">
@@ -1486,9 +1487,9 @@ const generateDocuments = async () => {
             <button class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; font-style: italic;" @click="store.editorActions?.formatDoc && store.editorActions.formatDoc('italic')" title="Cursiva (Ctrl+I)"><i>I</i></button>
             <button class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px;" @click="store.editorActions?.insertList && store.editorActions.insertList('unordered')" title="Llista de punts">•</button>
             <button class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px;" @click="store.editorActions?.insertList && store.editorActions.insertList('ordered')" title="Llista numerada">1.</button>
-            <button class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px;" @click="store.editorActions?.openTableModal && store.editorActions.openTableModal()" title="Insereix taula dinàmica o manual">📊</button>
-            <button class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('for')" title="Insereix bucle FOR">🔁</button>
-            <button class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('if')" title="Insereix condicional IF">🔀</button>
+            <button class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center;" @click="store.editorActions?.openTableModal && store.editorActions.openTableModal()" title="Insereix taula dinàmica o manual"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg></button>
+            <button class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('for')" title="Insereix bucle FOR"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg></button>
+            <button class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('if')" title="Insereix condicional IF"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></button>
           </template>
 
           <button 
@@ -1498,7 +1499,7 @@ const generateDocuments = async () => {
             @click="store.editorActions?.emitGenerate && store.editorActions.emitGenerate()"
             title="Genera els documents finals a partir d'aquesta plantilla"
           >
-            ⚡
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
           </button>
         </template>
 
@@ -1509,19 +1510,19 @@ const generateDocuments = async () => {
               class="btn-segment" 
               :class="{ active: !store.dataActions?.getViewMode || store.dataActions.getViewMode() === 'complete' }"
               @click="store.dataActions?.setViewMode && store.dataActions.setViewMode('complete')"
-              style="padding: 2px 6px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px;"
+              style="padding: 2px 6px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; display: inline-flex; align-items: center;"
               title="Vista completa per fulls"
             >
-              📋
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
             </button>
             <button 
               class="btn-segment" 
               :class="{ active: store.dataActions?.getViewMode && store.dataActions.getViewMode() === 'compact' }"
               @click="store.dataActions?.setViewMode && store.dataActions.setViewMode('compact')"
-              style="padding: 2px 6px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px;"
+              style="padding: 2px 6px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; display: inline-flex; align-items: center;"
               title="Vista compacta de fulls"
             >
-              🔍
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
             </button>
           </div>
 
@@ -1536,17 +1537,17 @@ const generateDocuments = async () => {
 
           <button 
             class="btn btn-primary" 
-            style="padding: 2px 7px; font-size: 0.72rem; height: 26px; font-weight: 600; background-color: var(--color-success); border-color: var(--color-success);"
+            style="padding: 2px 7px; font-size: 0.72rem; height: 26px; font-weight: 600; background-color: var(--color-success); border-color: var(--color-success); display: inline-flex; align-items: center;"
             @click="store.dataActions?.exportExcel && store.dataActions.exportExcel()"
             title="Desa els canvis i descarrega el fitxer Excel d'entrada actualitzat"
           >
-            📥
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </button>
         </template>
 
         <template v-else-if="store.activeTab === 'upload'">
-          <button class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px;" @click="loadDemo" :disabled="loadingDemo" title="Carrega fitxers de demostració per provar l'aplicació">
-            ✨
+          <button class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center;" @click="loadDemo" :disabled="loadingDemo" title="Carrega fitxers de demostració per provar l'aplicació">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3z"/></svg>
           </button>
         </template>
       </div>
@@ -1563,14 +1564,14 @@ const generateDocuments = async () => {
           style="width: 175px; height: 26px; font-size: 0.78rem; font-weight: 700; padding: 1px 4px; background: var(--bg-tertiary); color: var(--color-primary); border-color: var(--color-primary);"
           title="Canvia de pestanya de treball"
         >
-          <option value="upload">1. 📁 Carregar Fitxers</option>
-          <option value="data">2. 📊 Dades (Excel)</option>
-          <option value="template">3. 📝 Plantilla (Jinja2)</option>
-          <option value="preview">4. 👁️ Previsualització</option>
+          <option value="upload">1. Fitxers</option>
+          <option value="data">2. Dades (Excel)</option>
+          <option value="template">3. Plantilla (Jinja2)</option>
+          <option value="preview">4. Previsualització</option>
         </select>
 
-        <button class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px;" @click="downloadAllProjectFiles" title="Descarrega tots els fitxers originals del projecte (ZIP)">
-          📥
+        <button class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center;" @click="downloadAllProjectFiles" title="Descarrega tots els fitxers originals del projecte (ZIP)">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
 
         <!-- Terminal Drawer Toggle -->
@@ -1944,8 +1945,9 @@ const generateDocuments = async () => {
 
     <!-- Ultra-Compact Minimal Footer -->
     <footer style="text-align: left; padding: 2px 0.75rem; font-size: 0.65rem; color: var(--text-muted); border-top: 1px solid var(--border-color); background: var(--bg-secondary); margin-top: auto; display: flex; align-items: center; justify-content: flex-start; flex-shrink: 0; min-height: 20px; height: 20px; box-sizing: border-box;">
-      <span style="font-family: monospace; font-weight: 600; color: var(--text-muted); font-size: 0.65rem;" title="Codi de compilació d'elips">
-        🏷️ {{ buildCode }}
+      <span style="font-family: monospace; font-weight: 600; color: var(--text-muted); font-size: 0.65rem; display: inline-flex; align-items: center; gap: 4px;" title="Codi de compilació d'elips">
+        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        <span>{{ buildCode }}</span>
       </span>
     </footer>
   </div>

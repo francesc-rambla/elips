@@ -587,12 +587,13 @@ const getItemPath = (idx, fieldKey) => {
     <!-- Section Header -->
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; flex-wrap: wrap; gap: 8px;">
       <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-        <h5 style="margin: 0; font-size: 0.85rem; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-          <span>📂 Sub-taula: <strong style="color: var(--color-primary);">{{ arrayKey }}</strong></span>
+        <h5 style="margin: 0; font-size: 0.85rem; font-weight: 700; color: var(--text-primary); display: inline-flex; align-items: center; gap: 6px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span>Sub-taula: <strong style="color: var(--color-primary);">{{ arrayKey }}</strong></span>
           <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">({{ items.length }} registres)</span>
         </h5>
         <span v-if="isLeafLevel" style="font-size: 0.68rem; padding: 2px 6px; background: rgba(0,0,0,0.06); border-radius: 4px; font-weight: 500;">
-          📜 Fulla (Vista Tabular)
+          Fulla (Vista Tabular)
         </span>
         <span v-else style="font-size: 0.68rem; padding: 2px 6px; background: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-radius: 4px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;">
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Intermedi (Vista Formularia KV: {{ groupLayout }})
