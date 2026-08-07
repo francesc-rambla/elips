@@ -1393,8 +1393,19 @@ const applyVariable = () => {
 
 // Helper for inserting loop blocks cleanly
 const sidebarInsertLoop = (subKey, fullPath, iteratorName, fields) => {
-  const firstField = (fields && fields.length > 0) ? fields[0] : 'val';
-  const blockCode = `{% for ${iteratorName} in ${fullPath} %}\n- {{ ${iteratorName}.${firstField} }}\n{% endfor %}`;
+  let effectiveFields = fields || [];
+  if (effectiveFields.length === 0) {
+    effectiveFields = resolveColumnsForArray(fullPath, iteratorName, activeLoopStack.value);
+  }
+  
+  let blockCode = '';
+  if (effectiveFields && effectiveFields.length > 0) {
+    const firstField = effectiveFields[0];
+    blockCode = `{% for ${iteratorName} in ${fullPath} %}\n- {{ ${iteratorName}.${firstField} }}\n{% endfor %}`;
+  } else {
+    blockCode = `{% for ${iteratorName} in ${fullPath} %}\n\n{% endfor %}`;
+  }
+  
   sidebarCopyInsert(blockCode);
 };
 
