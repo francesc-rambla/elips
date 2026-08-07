@@ -1444,7 +1444,11 @@ const sidebarCopyInsert = (expr) => {
     // Compile markdown back to visual HTML DOM canvas
     syncCodeToVisual();
     
+    const newCaretPos = safeOffset + insertContent.length;
     nextTick(() => {
+      if (canvasRef.value) {
+        setCaretCharacterOffsetWithin(canvasRef.value, newCaretPos);
+      }
       updateActiveLoopContext();
     });
   }
@@ -3086,16 +3090,31 @@ const handleGlobalKeyDown = (e) => {
 // Helper to get character offset inside contenteditable
 const getCaretCharacterOffsetWithin = (element) => {
   let caretOffset = 0;
+  let targetRange = null;
   const sel = window.getSelection();
+  
   if (sel && sel.rangeCount > 0) {
-    const range = sel.getRangeAt(0);
-    if (element.contains(range.commonAncestorContainer)) {
-      const preCaretRange = range.cloneRange();
-      preCaretRange.selectNodeContents(element);
-      preCaretRange.setEnd(range.endContainer, range.endOffset);
-      caretOffset = preCaretRange.toString().length;
+    const r = sel.getRangeAt(0);
+    if (element && element.contains(r.commonAncestorContainer)) {
+      targetRange = r;
     }
   }
+  
+  if (!targetRange && savedRange && element && element.contains(savedRange.commonAncestorContainer)) {
+    targetRange = savedRange;
+  }
+  
+  if (targetRange && element) {
+    try {
+      const preCaretRange = targetRange.cloneRange();
+      preCaretRange.selectNodeContents(element);
+      preCaretRange.setEnd(targetRange.endContainer, targetRange.endOffset);
+      caretOffset = preCaretRange.toString().length;
+    } catch (err) {
+      console.warn("Could not calculate caret offset", err);
+    }
+  }
+  
   return caretOffset;
 };
 
