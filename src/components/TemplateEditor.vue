@@ -211,14 +211,115 @@ const findAnyArrayByName = (obj, targetName) => {
   return search(obj);
 };
 
+const isNonEmptySchema = (s) => {
+  if (!s || typeof s !== 'object') return false;
+  const hasFields = Array.isArray(s.fields) && s.fields.length > 0;
+  const hasChildren = s.children && (Array.isArray(s.children) ? s.children.length > 0 : Object.keys(s.children).length > 0);
+  return hasFields || hasChildren;
+};
+
+const universalFindSchema = (targetPath, dict) => {
+  if (!dict || !targetPath) return { fields: [], children: {} };
+  
+  const cleanP = String(targetPath).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
+  
+  for (const [k, val] of Object.entries(dict)) {
+    if (val && typeof val === 'object' && val.data_path === cleanP && isNonEmptySchema(val)) {
+      return val;
+    }
+  }
+
+  if (dict[cleanP] && isNonEmptySchema(dict[cleanP])) {
+    return dict[cleanP];
+  }
+  
+  const parts = cleanP.split('.').filter(Boolean);
+  let curr = dict;
+  let foundTree = null;
+  
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (curr && typeof curr === 'object') {
+      const node = curr[p] || (curr.children && typeof curr.children === 'object' && !Array.isArray(curr.children) ? curr.children[p] : null);
+      if (node) {
+        foundTree = node;
+        curr = node.children;
+      } else {
+        foundTree = null;
+        break;
+      }
+    }
+  }
+  if (isNonEmptySchema(foundTree)) {
+    return foundTree;
+  }
+  
+  const lastKey = parts[parts.length - 1];
+  for (const [sKey, sVal] of Object.entries(dict)) {
+    if ((sKey === cleanP || sKey === lastKey || sKey.endsWith(`.${lastKey}`) || sVal?.data_path === cleanP || sVal?.data_path?.endsWith(`.${lastKey}`)) && isNonEmptySchema(sVal)) {
+      return sVal;
+    }
+  }
+  
+  const dfs = (nodeObj) => {
+    if (!nodeObj || typeof nodeObj !== 'object') return null;
+    for (const [k, v] of Object.entries(nodeObj)) {
+      if ((k === lastKey || k === cleanP || v?.data_path === cleanP) && isNonEmptySchema(v)) {
+        return v;
+      }
+      if (v && v.children && typeof v.children === 'object' && !Array.isArray(v.children)) {
+        const sub = dfs(v.children);
+        if (sub) return sub;
+      }
+    }
+    return null;
+  };
+  
+  const dfsResult = dfs(dict);
+  if (dfsResult) return dfsResult;
+
+  return { fields: [], children: {} };
+};
+
 // Helper: Extract primitive column keys for an array path across ALL array items and schema metadata
 const resolveColumnsForArray = (rawPath, iterator, currentStack) => {
   const columnSet = new Set();
+  const lastKey = rawPath.split('.').pop();
   
-  // 1. Resolve array in excelJsonData (path direct or recursive)
+  // 1. PRIMARY STRATEGY: Consult Hierarchical Data Schema (store.hierarchySchema)
+  if (store.hierarchySchema && typeof store.hierarchySchema === 'object') {
+    const schema = universalFindSchema(rawPath, store.hierarchySchema) || universalFindSchema(lastKey, store.hierarchySchema);
+    if (schema && Array.isArray(schema.fields) && schema.fields.length > 0) {
+      schema.fields.forEach(f => {
+        if (f && f !== '_hierarchy_schema' && !isInternalMetadataKey(f)) {
+          columnSet.add(f);
+        }
+      });
+    }
+  }
+
+  // 2. PRIMARY STRATEGY PART B: Consult Editor Group Metadata (store.editorMetadata)
+  const allMeta = [
+    ...(store.editorMetadata || []),
+    ...(store.excelJsonData?.editor_metadata || [])
+  ];
+  if (allMeta.length > 0) {
+    const rawP = (rawPath || '').trim().toLowerCase();
+    const lastP = (lastKey || '').trim().toLowerCase();
+    allMeta.forEach(m => {
+      if (m && m.element) {
+        const grp = (m.group || '').trim().toLowerCase();
+        if (grp === rawP || grp === lastP || grp.endsWith(`.${lastP}`)) {
+          if (!isInternalMetadataKey(m.element)) {
+            columnSet.add(m.element);
+          }
+        }
+      }
+    });
+  }
+
+  // 3. SECONDARY STRATEGY: Inspect Data Rows in store.excelJsonData (union across all array items)
   const arr = resolvePath(store.excelJsonData, rawPath, currentStack) || findAnyArrayByName(store.excelJsonData, rawPath);
-  
-  // Collect primitive keys across ALL items in arr (union of all items, not just arr[0])
   if (arr && Array.isArray(arr) && arr.length > 0) {
     for (const item of arr) {
       if (item && typeof item === 'object' && item !== null) {
@@ -230,28 +331,8 @@ const resolveColumnsForArray = (rawPath, iterator, currentStack) => {
       }
     }
   }
-  
-  // 2. Collect from metadata schema (store.editorMetadata)
-  const lastKey = rawPath.split('.').pop();
-  const allMeta = [
-    ...(store.editorMetadata || []),
-    ...(store.excelJsonData?.editor_metadata || [])
-  ];
-  
-  if (allMeta.length > 0) {
-    allMeta.forEach(m => {
-      if (m && m.element) {
-        const grp = (m.group || '').trim().toLowerCase();
-        const rawP = (rawPath || '').trim().toLowerCase();
-        const lastP = (lastKey || '').trim().toLowerCase();
-        if (grp === rawP || grp === lastP) {
-          columnSet.add(m.element);
-        }
-      }
-    });
-  }
 
-  // 3. Inspect template for variables matching iterator.<field>
+  // 4. TERTIARY STRATEGY: Inspect Template Text for {{ iterator.field }}
   const iterPrefix = `${iterator}.`;
   const rawText = editorText.value || '';
   const matches = rawText.matchAll(/\{\{\s*([a-zA-Z0-9_\.]+)/g);
