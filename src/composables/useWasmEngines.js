@@ -898,6 +898,45 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
     wb = load_workbook(excel_path)
     data = json.loads(json_str)
     
+    flattened_tables = {}
+    
+    def collect_sub_tables(parent_key, val):
+        if isinstance(val, dict):
+            for k, v in val.items():
+                if isinstance(v, list) and len(v) > 0:
+                    path = f"{parent_key}.{k}" if parent_key else k
+                    if path not in flattened_tables:
+                        flattened_tables[path] = v
+                    if k not in flattened_tables:
+                        flattened_tables[k] = v
+                    for item in v:
+                        if isinstance(item, dict):
+                            collect_sub_tables(path, item)
+        elif isinstance(val, list):
+            for item in val:
+                if isinstance(item, dict):
+                    for k, v in item.items():
+                        if isinstance(v, list) and len(v) > 0:
+                            path = f"{parent_key}.{k}" if parent_key else k
+                            if path not in flattened_tables:
+                                flattened_tables[path] = v
+                            if k not in flattened_tables:
+                                flattened_tables[k] = v
+                            for child in v:
+                                if isinstance(child, dict):
+                                    collect_sub_tables(path, child)
+
+    for top_k, top_v in data.items():
+        if top_k == 'editor_metadata':
+            continue
+        if isinstance(top_v, list):
+            flattened_tables[top_k] = top_v
+            for item in top_v:
+                collect_sub_tables(top_k, item)
+        elif isinstance(top_v, dict):
+            flattened_tables[top_k] = top_v
+            collect_sub_tables(top_k, top_v)
+
     valid_prefixes = ('OUT_', 'JSON_', 'EXPORT_')
     has_prefixed_sheets = any(sheet.upper().startswith(valid_prefixes) for sheet in wb.sheetnames)
     
@@ -914,18 +953,18 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                     break
                     
         sheet_id = sanitize_id(stripped_name)
-        if sheet_id in data:
-            sheet_data = data[sheet_id]
+        target_data = data.get(sheet_id) or flattened_tables.get(sheet_id) or flattened_tables.get(stripped_name)
+        
+        if target_data is not None:
             ws = wb[sheet_name]
             
             if sheet_id == 'editor_metadata':
-                # Overwrite completely to ensure all new schema fields are present
                 ws.delete_rows(1, ws.max_row)
                 headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width']
                 for c_idx, h in enumerate(headers):
                     ws.cell(1, c_idx + 1).value = h
                 
-                for r_idx, row_obj in enumerate(sheet_data):
+                for r_idx, row_obj in enumerate(target_data):
                     excel_row = r_idx + 2
                     for c_idx, h in enumerate(headers):
                         val = row_obj.get(h, '')
@@ -936,133 +975,97 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                         write_cell_value(ws, excel_row, c_idx + 1, val)
                 ws.sheet_state = 'hidden'
                 continue
-                
-            rows = _read_rows(ws, 'iso')
-            kind = _detect_kind(rows)
-            
-            if kind in ('kv', 'kv_header'):
+
+            if isinstance(target_data, dict):
+                rows = _read_rows(ws, 'iso')
+                kind = _detect_kind(rows)
                 start_row = 1 if kind == 'kv_header' else 0
                 
-                # First, find and update or delete existing keys
-                # Iterate backwards to safely delete rows
                 existing_keys = set()
                 for r in range(ws.max_row, start_row, -1):
                     k_val = ws.cell(r, 1).value
                     if k_val not in (None, ''):
                         s_key = sanitize_id(k_val)
-                        if s_key in sheet_data:
+                        if s_key in target_data:
+                            val = target_data[s_key]
+                            if isinstance(val, (list, dict)):
+                                continue
                             existing_keys.add(s_key)
-                            val = sheet_data[s_key]
                             write_cell_value(ws, r, 2, val)
                         else:
-                            # Key was deleted in JSON, delete row in Excel
                             ws.delete_rows(r)
                             
-                # Now, add new keys that are not in Excel
-                for k_val, val in sheet_data.items():
+                for k_val, val in target_data.items():
+                    if isinstance(val, (list, dict)):
+                        continue
                     s_key = sanitize_id(k_val)
                     if s_key not in existing_keys:
                         next_row = ws.max_row + 1
-                        ws.cell(next_row, 1).value = k_val # Use the key name directly
+                        ws.cell(next_row, 1).value = k_val
                         write_cell_value(ws, next_row, 2, val)
-                            
-            elif kind == 'tabular':
-                # 1. Read existing headers from Excel row 1
+
+            elif isinstance(target_data, list):
                 excel_headers = []
                 for c in range(1, ws.max_column + 1):
                     val = ws.cell(1, c).value
                     excel_headers.append(sanitize_id(val) if val not in (None, '') else '')
                 
-                # 2. Determine current active columns from JSON sheet_data
                 active_cols = []
-                if sheet_data:
-                    active_cols = [sanitize_id(k) for k in sheet_data[0].keys() if k]
+                if target_data and isinstance(target_data[0], dict):
+                    active_cols = [sanitize_id(k) for k, v in target_data[0].items() if k and not isinstance(v, (dict, list))]
                 
-                # 3. Handle deleted columns:
-                # If a column header in Excel is NOT in active_cols, we delete it from Excel (iterate backwards!)
                 for c_idx in range(len(excel_headers) - 1, -1, -1):
                     h = excel_headers[c_idx]
                     if h and h not in active_cols:
                         ws.delete_cols(c_idx + 1)
                 
-                # Re-read headers after deletion
                 excel_headers = []
                 for c in range(1, ws.max_column + 1):
                     val = ws.cell(1, c).value
                     excel_headers.append(sanitize_id(val) if val not in (None, '') else '')
                 
-                # 4. Handle added columns:
-                # If a column in active_cols is NOT in excel_headers, append it at the end of Excel sheet
                 for h in active_cols:
                     if h not in excel_headers:
                         new_col_idx = len(excel_headers) + 1
                         ws.cell(1, new_col_idx).value = h
                         excel_headers.append(h)
                 
-                # 5. Delete excess rows in Excel
-                excess = ws.max_row - (len(sheet_data) + 1)
+                excess = ws.max_row - (len(target_data) + 1)
                 if excess > 0:
-                    ws.delete_rows(len(sheet_data) + 2, excess)
+                    ws.delete_rows(len(target_data) + 2, excess)
                     
-                # 6. Write data cells
-                for r_idx, row_obj in enumerate(sheet_data):
+                for r_idx, row_obj in enumerate(target_data):
                     excel_row = r_idx + 2
-                    for c_idx, h in enumerate(excel_headers):
-                        matched_key = None
-                        for key in row_obj.keys():
-                            if sanitize_id(key) == h:
-                                matched_key = key
-                                break
-                        if matched_key is not None:
-                            val = row_obj[matched_key]
-                            write_cell_value(ws, excel_row, c_idx + 1, val)
-                            
-        elif '.' in sheet_name:
-            base_raw, sub_raw = sheet_name.split('.', 1)
-            
-            stripped_base = base_raw
-            if has_prefixed_sheets:
-                base_raw_upper = base_raw.upper()
-                if not base_raw_upper.startswith(valid_prefixes):
-                    continue
-                for prefix in valid_prefixes:
-                    if base_raw_upper.startswith(prefix):
-                        stripped_base = base_raw[len(prefix):]
-                        break
-                        
-            base_id = sanitize_id(stripped_base)
-            sub_id = sanitize_id(sub_raw)
-            
-            if base_id in data and isinstance(data[base_id], list):
-                ws = wb[sheet_name]
-                if ws.max_row >= 2:
-                    headers = [sanitize_id(ws.cell(1, c).value) for c in range(1, ws.max_column + 1)]
-                    ref_key = headers[0]
-                    
-                    flat_rows = []
-                    parent_key_field = list(data[base_id][0].keys())[0] if data[base_id] else None
-                    
-                    for parent_row in data[base_id]:
-                        p_val = parent_row.get(parent_key_field)
-                        children = parent_row.get(sub_id, [])
-                        for child in children:
-                            child_row = {ref_key: p_val}
-                            child_row.update(child)
-                            flat_rows.append(child_row)
-                            
-                    # Delete excess rows in Excel sub-sheet
-                    excess = ws.max_row - (len(flat_rows) + 1)
-                    if excess > 0:
-                        ws.delete_rows(len(flat_rows) + 2, excess)
-                        
-                    # Write data
-                    for r_idx, row_obj in enumerate(flat_rows):
-                        excel_row = r_idx + 2
-                        for c_idx, h in enumerate(headers):
-                            if h and h in row_obj:
-                                val = row_obj[h]
+                    if isinstance(row_obj, dict):
+                        for c_idx, h in enumerate(excel_headers):
+                            matched_key = None
+                            for key in row_obj.keys():
+                                if sanitize_id(key) == h:
+                                    matched_key = key
+                                    break
+                            if matched_key is not None:
+                                val = row_obj[matched_key]
+                                if isinstance(val, (dict, list)):
+                                    continue
                                 write_cell_value(ws, excel_row, c_idx + 1, val)
-                                
+
+    for sub_name, sub_rows in flattened_tables.items():
+        sheet_title = str(sub_name)[-31:]
+        existing_sheet = None
+        for sname in wb.sheetnames:
+            if sanitize_id(sname) == sanitize_id(sheet_title) or sname == sheet_title:
+                existing_sheet = sname
+                break
+        if not existing_sheet and isinstance(sub_rows, list) and len(sub_rows) > 0:
+            ws = wb.create_sheet(title=sheet_title)
+            first_row = sub_rows[0]
+            if isinstance(first_row, dict):
+                headers = [k for k, v in first_row.items() if not isinstance(v, (dict, list))]
+                ws.append(headers)
+                for r_obj in sub_rows:
+                    if isinstance(r_obj, dict):
+                        ws.append(["" if r_obj.get(h) is None else str(r_obj.get(h)) for h in headers])
+
     wb.save(out_excel_path)
 
 def create_default_workbook_from_json(json_str, out_path):
@@ -1077,12 +1080,33 @@ def create_default_workbook_from_json(json_str, out_path):
     if wb.active:
         wb.remove(wb.active)
         
+    sub_tables = {}
+
+    def collect_nested_lists(parent_path, item_obj):
+        if isinstance(item_obj, dict):
+            for k, v in item_obj.items():
+                if isinstance(v, list) and len(v) > 0:
+                    sub_key = f"{parent_path}.{k}" if parent_path else k
+                    if sub_key not in sub_tables:
+                        sub_tables[sub_key] = []
+                    if k not in sub_tables:
+                        sub_tables[k] = []
+                    for child in v:
+                        if isinstance(child, dict):
+                            flat_child = {ck: cv for ck, cv in child.items() if not isinstance(cv, (dict, list))}
+                            sub_tables[sub_key].append(flat_child)
+                            sub_tables[k].append(flat_child)
+                            collect_nested_lists(sub_key, child)
+
     for sheet_name, sheet_content in data.items():
+        if sheet_name == 'editor_metadata':
+            continue
         ws = wb.create_sheet(title=str(sheet_name))
         if isinstance(sheet_content, dict):
             ws.append(["Clau", "Valor"])
             for k, v in sheet_content.items():
                 if isinstance(v, (dict, list)):
+                    collect_nested_lists(sheet_name, {k: v})
                     continue
                 ws.append([str(k), "" if v is None else str(v)])
         elif isinstance(sheet_content, list) and len(sheet_content) > 0:
@@ -1090,10 +1114,30 @@ def create_default_workbook_from_json(json_str, out_path):
             ws.append(headers)
             for row in sheet_content:
                 ws.append(["" if row.get(h) is None else str(row.get(h)) for h in headers])
+                collect_nested_lists(sheet_name, row)
         else:
             ws.append(["Dada"])
             ws.append([str(sheet_content)])
             
+    for sub_name, sub_rows in sub_tables.items():
+        sheet_title = str(sub_name)[-31:]
+        if sheet_title in wb.sheetnames:
+            continue
+        ws = wb.create_sheet(title=sheet_title)
+        if sub_rows and isinstance(sub_rows[0], dict):
+            headers = list(sub_rows[0].keys())
+            ws.append(headers)
+            for r in sub_rows:
+                ws.append(["" if r.get(h) is None else str(r.get(h)) for h in headers])
+
+    if 'editor_metadata' in data:
+        ws = wb.create_sheet(title='editor_metadata')
+        headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width']
+        ws.append(headers)
+        for row_obj in data['editor_metadata']:
+            ws.append(["" if row_obj.get(h) is None else str(row_obj.get(h)) for h in headers])
+        ws.sheet_state = 'hidden'
+
     if not wb.sheetnames:
         wb.create_sheet(title="Dades")
         
