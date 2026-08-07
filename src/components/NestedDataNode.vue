@@ -226,6 +226,14 @@ const getElementMetadata = (elementName) => {
   return store.editorMetadata.find(m => m.group === props.arrayKey && m.element === elementName) || null;
 };
 
+const getFieldLabel = (elementName) => {
+  const meta = getElementMetadata(elementName);
+  if (meta && meta.label && meta.label.trim()) {
+    return meta.label.trim();
+  }
+  return elementName;
+};
+
 const getElementType = (elementName) => {
   const meta = getElementMetadata(elementName);
   return meta ? meta.type : 'Text';
@@ -383,6 +391,7 @@ const openGroupConfig = () => {
     const meta = getElementMetadata(el) || { type: 'Text' };
     return {
       element: el,
+      label: meta.label || '',
       type: meta.type || 'Text',
       sourceType: meta.sourceType || 'static',
       optionsRaw: Array.isArray(meta.options) ? meta.options.join(', ') : (typeof meta.options === 'string' ? meta.options : ''),
@@ -394,6 +403,39 @@ const openGroupConfig = () => {
     };
   });
   isConfigModalOpen.value = true;
+};
+
+const addNewFieldToConfig = () => {
+  const key = prompt("Introdueix el nom del nou camp/clau (es sanititzarà automàticament):");
+  if (!key) return;
+  const cleanKey = key.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  
+  if (Array.isArray(props.items)) {
+    if (props.items.length === 0) {
+      props.items.push({ [cleanKey]: '' });
+    } else {
+      props.items.forEach(item => {
+        if (typeof item === 'object' && !(cleanKey in item)) {
+          item[cleanKey] = '';
+        }
+      });
+    }
+  }
+  
+  if (!groupConfigList.value.some(i => i.element === cleanKey)) {
+    groupConfigList.value.push({
+      element: cleanKey,
+      label: '',
+      type: 'Text',
+      sourceType: 'static',
+      optionsRaw: '',
+      vectorPath: '',
+      displayField: '',
+      valueField: '',
+      multiple: false,
+      width: ''
+    });
+  }
 };
 
 const saveGroupConfig = () => {
@@ -413,6 +455,9 @@ const saveGroupConfig = () => {
       element: item.element,
       type: item.type
     };
+    if (item.label && item.label.trim()) {
+      meta.label = item.label.trim();
+    }
     if (item.type === 'Select') {
       meta.sourceType = item.sourceType;
       meta.multiple = !!item.multiple;
@@ -834,7 +879,8 @@ const getItemPath = (idx, fieldKey) => {
             <tbody>
               <tr v-for="(val, fKey) in getPrimitiveFields(item)" :key="fKey">
                 <td style="vertical-align: middle; padding: 6px 10px; border-bottom: 1px solid var(--border-color);">
-                  <code style="font-weight: 600; font-size: 0.8rem;">{{ fKey }}</code>
+                  <span style="font-weight: 600; font-size: 0.8rem; color: var(--text-primary);">{{ getFieldLabel(fKey) }}</span>
+                  <code v-if="getFieldLabel(fKey) !== fKey" style="font-size: 0.7rem; color: var(--text-muted); margin-left: 6px;">({{ fKey }})</code>
                 </td>
                 <td style="padding: 4px 6px; border-bottom: 1px solid var(--border-color);">
                   <div style="display: flex; gap: 4px; align-items: center; width: 100%;">
@@ -947,7 +993,7 @@ const getItemPath = (idx, fieldKey) => {
           <!-- HORIZONTAL LAYOUT (Grid View) -->
           <div v-else style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem; margin-bottom: 0.75rem;">
             <div v-for="(val, fKey) in getPrimitiveFields(item)" :key="fKey" style="display: flex; flex-direction: column; gap: 2px;">
-              <label style="font-size: 0.72rem; font-weight: 600; color: var(--text-muted); margin: 0;">{{ fKey }}</label>
+              <label style="font-size: 0.72rem; font-weight: 600; color: var(--text-muted); margin: 0;">{{ getFieldLabel(fKey) }}</label>
               
               <div style="display: flex; gap: 4px; align-items: stretch; width: 100%;">
                 <!-- Select Type -->
@@ -1098,7 +1144,8 @@ const getItemPath = (idx, fieldKey) => {
             <thead>
               <tr style="background: var(--bg-tertiary);">
                 <th style="padding: 8px; text-align: left;">Element / Camp</th>
-                <th style="padding: 8px; text-align: left; width: 140px;">Tipus de Dada</th>
+                <th style="padding: 8px; text-align: left;">Etiqueta al formulari (Opcional)</th>
+                <th style="padding: 8px; text-align: left; width: 130px;">Tipus de Dada</th>
                 <th style="padding: 8px; text-align: left;">Font d'Opcions (Select)</th>
               </tr>
             </thead>
@@ -1107,8 +1154,18 @@ const getItemPath = (idx, fieldKey) => {
                 <td style="padding: 6px 8px; vertical-align: top;">
                   <code style="font-weight: bold; font-size: 0.85rem;">{{ item.element }}</code>
                 </td>
+                <td style="padding: 4px 6px; vertical-align: top;">
+                  <input 
+                    type="text" 
+                    v-model="item.label" 
+                    class="data-input" 
+                    style="padding: 2px 6px; height: 28px; font-size: 0.8rem;"
+                    :placeholder="item.element"
+                    title="Nom personalitzat a mostrar al formulari en comptes del nom del camp"
+                  >
+                </td>
                 <td style="padding: 6px 8px; vertical-align: top;">
-                  <select v-model="item.type" class="data-input" style="padding: 4px 8px; height: 32px; font-size: 0.8rem;">
+                  <select v-model="item.type" class="data-input" style="padding: 2px 6px; height: 28px; font-size: 0.8rem;">
                     <option value="Text">Text</option>
                     <option value="Select">Select (Llista)</option>
                     <option value="Date">Data</option>
@@ -1133,7 +1190,7 @@ const getItemPath = (idx, fieldKey) => {
                         v-model="item.optionsRaw" 
                         class="data-input" 
                         placeholder="opcio1, opcio2, opcio3"
-                        style="padding: 4px 8px; height: 32px; font-size: 0.8rem;"
+                        style="padding: 4px 8px; height: 28px; font-size: 0.8rem;"
                       >
                     </div>
                     
@@ -1169,6 +1226,20 @@ const getItemPath = (idx, fieldKey) => {
               </tr>
             </tbody>
           </table>
+
+          <!-- Add field / key button inside config modal -->
+          <div style="margin-top: 0.75rem; padding: 0 0.5rem; display: flex; justify-content: flex-start;">
+            <button 
+              type="button"
+              class="btn btn-secondary" 
+              style="width: auto; padding: 3px 10px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px;" 
+              @click="addNewFieldToConfig"
+              title="Afegeix una nova clau o camp a aquest grup"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>Afegeix nou camp / clau</span>
+            </button>
+          </div>
         </div>
         
         <div class="modal-footer" style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem; display: flex; justify-content: flex-end; gap: 8px;">

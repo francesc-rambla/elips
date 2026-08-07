@@ -14,7 +14,7 @@ const savingExcel = ref(false);
 
 const isExcelLoaded = computed(() => !!store.excelJsonData);
 
-const viewMode = ref('complete'); // 'complete' or 'compact'
+const viewMode = ref('compact'); // 'complete' or 'compact' (default: compact)
 const selectedCompactSheet = ref('');
 
 // Auto-initialize selectedCompactSheet and open root sheets when data loads
@@ -642,6 +642,14 @@ const isConfigModalOpen = ref(false);
 const activeConfigGroup = ref('');
 const groupConfigList = ref([]);
 
+const getFieldLabel = (groupName, elementName) => {
+  const meta = getElementMetadata(groupName, elementName);
+  if (meta && meta.label && meta.label.trim()) {
+    return meta.label.trim();
+  }
+  return elementName;
+};
+
 const openGroupConfig = (groupName, sheetData) => {
   activeConfigGroup.value = groupName;
   const isKv = getSheetType(sheetData) === 'kv';
@@ -651,6 +659,7 @@ const openGroupConfig = (groupName, sheetData) => {
     const meta = getElementMetadata(groupName, el) || { type: 'Text' };
     return {
       element: el,
+      label: meta.label || '',
       type: meta.type || 'Text',
       sourceType: meta.sourceType || 'static',
       optionsRaw: Array.isArray(meta.options) ? meta.options.join(', ') : (typeof meta.options === 'string' ? meta.options : ''),
@@ -663,6 +672,43 @@ const openGroupConfig = (groupName, sheetData) => {
   });
   
   isConfigModalOpen.value = true;
+};
+
+const addNewFieldToConfig = () => {
+  const key = prompt("Introdueix el nom de la nova clau/camp (es sanititzarà automàticament):");
+  if (!key) return;
+  const cleanKey = key.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  const groupName = activeConfigGroup.value;
+  
+  if (store.excelJsonData && store.excelJsonData[groupName]) {
+    const sheetData = store.excelJsonData[groupName];
+    if (Array.isArray(sheetData)) {
+      if (sheetData.length === 0) {
+        sheetData.push({ [cleanKey]: '' });
+      } else {
+        sheetData.forEach(row => {
+          if (!(cleanKey in row)) row[cleanKey] = '';
+        });
+      }
+    } else if (typeof sheetData === 'object') {
+      if (!(cleanKey in sheetData)) sheetData[cleanKey] = '';
+    }
+  }
+  
+  if (!groupConfigList.value.some(i => i.element === cleanKey)) {
+    groupConfigList.value.push({
+      element: cleanKey,
+      label: '',
+      type: 'Text',
+      sourceType: 'static',
+      optionsRaw: '',
+      vectorPath: '',
+      displayField: '',
+      valueField: '',
+      multiple: false,
+      width: ''
+    });
+  }
 };
 
 const saveGroupConfig = () => {
@@ -678,6 +724,9 @@ const saveGroupConfig = () => {
       element: item.element,
       type: item.type
     };
+    if (item.label && item.label.trim()) {
+      meta.label = item.label.trim();
+    }
     if (item.type === 'Select') {
       meta.sourceType = item.sourceType;
       meta.multiple = !!item.multiple;
@@ -1076,7 +1125,10 @@ onMounted(() => {
                 <tr v-for="(val, key) in getKvPrimitiveEntries(sheetData)" :key="key">
                   <td style="vertical-align: middle; padding: 3px 8px;">
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;">
-                      <code>{{ key }}</code>
+                      <div>
+                        <span style="font-weight: 600; color: var(--text-primary);">{{ getFieldLabel(name, key) }}</span>
+                        <code v-if="getFieldLabel(name, key) !== key" style="font-size: 0.7rem; color: var(--text-muted); margin-left: 6px;">({{ key }})</code>
+                      </div>
                       <button 
                         class="btn-icon-only text-danger" 
                         style="height: 22px; width: 22px; min-width: 22px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
@@ -1265,19 +1317,30 @@ onMounted(() => {
             <thead>
               <tr>
                 <th>Element (Clau/Columna)</th>
+                <th>Etiqueta al formulari (Opcional)</th>
                 <th>Tipus de Dada</th>
                 <th>Valors Possibles (Select)</th>
-                <th v-if="getSheetType(store.excelJsonData[activeConfigGroup]) === 'tabular'" style="width: 100px;">Amplada (%)</th>
-                <th v-if="getSheetType(store.excelJsonData[activeConfigGroup]) === 'tabular'" style="width: 70px; text-align: center;">Accions</th>
+                <th v-if="getSheetType(store.excelJsonData[activeConfigGroup]) === 'tabular'" style="width: 90px;">Amplada (%)</th>
+                <th v-if="getSheetType(store.excelJsonData[activeConfigGroup]) === 'tabular'" style="width: 60px; text-align: center;">Accions</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="item in groupConfigList" :key="item.element">
-                <td style="font-weight: 600; font-family: monospace; font-size: 0.8rem; vertical-align: middle; padding: 8px;">
+                <td style="font-weight: 600; font-family: monospace; font-size: 0.8rem; vertical-align: middle; padding: 6px 8px;">
                   {{ item.element }}
                 </td>
                 <td style="padding: 4px;">
-                  <select v-model="item.type" class="data-input" style="padding: 4px 8px; height: 32px; font-size: 0.85rem;">
+                  <input 
+                    type="text" 
+                    v-model="item.label" 
+                    class="data-input" 
+                    style="padding: 2px 6px; height: 28px; font-size: 0.8rem;"
+                    :placeholder="item.element"
+                    title="Nom personalitzat a mostrar al formulari en comptes del nom del camp"
+                  >
+                </td>
+                <td style="padding: 4px;">
+                  <select v-model="item.type" class="data-input" style="padding: 2px 6px; height: 28px; font-size: 0.8rem;">
                     <option value="Text">Text (String)</option>
                     <option value="Number">Number (Numèric)</option>
                     <option value="Date">Date (Data)</option>
@@ -1302,7 +1365,7 @@ onMounted(() => {
                         v-model="item.optionsRaw" 
                         class="data-input" 
                         placeholder="opcio1, opcio2, opcio3"
-                        style="padding: 4px 8px; height: 32px; font-size: 0.8rem;"
+                        style="padding: 4px 8px; height: 28px; font-size: 0.8rem;"
                       >
                     </div>
                     
@@ -1350,7 +1413,7 @@ onMounted(() => {
                       max="100" 
                       placeholder="Auto"
                       class="data-input" 
-                      style="padding: 4px 8px; height: 32px; font-size: 0.8rem; text-align: right;"
+                      style="padding: 2px 6px; height: 28px; font-size: 0.8rem; text-align: right;"
                     >
                     <span style="font-size: 0.85rem; color: var(--text-muted);">%</span>
                   </div>
@@ -1360,21 +1423,27 @@ onMounted(() => {
                 <td v-if="getSheetType(store.excelJsonData[activeConfigGroup]) === 'tabular'" style="padding: 4px; text-align: center; vertical-align: middle;">
                   <button 
                     class="btn-icon-only text-danger" 
-                    style="border: none; background: transparent; font-size: 1.1rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; height: 32px; width: 32px;"
+                    style="border: none; background: transparent; font-size: 1rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; height: 28px; width: 28px;"
                     title="Elimina columna"
                     @click="deleteTabularColumn(item.element)"
                   >
-                    🗑️
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                   </button>
                 </td>
               </tr>
             </tbody>
           </table>
           
-          <!-- Tabular add column control -->
-          <div v-if="getSheetType(store.excelJsonData[activeConfigGroup]) === 'tabular'" style="margin-top: 1rem; padding: 0 1.25rem; display: flex; justify-content: flex-start;">
-            <button class="btn btn-secondary" style="width: auto; padding: 6px 14px; font-size: 0.8rem; display: flex; align-items: center; gap: 6px;" @click="addTabularColumn">
-              ➕ Afegeix Columna
+          <!-- Add field / key button inside config modal -->
+          <div style="margin-top: 0.75rem; padding: 0 0.5rem; display: flex; justify-content: flex-start;">
+            <button 
+              class="btn btn-secondary" 
+              style="width: auto; padding: 3px 10px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px;" 
+              @click="addNewFieldToConfig"
+              title="Afegeix una nova clau o camp a aquest grup"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>Afegeix nova clau / camp</span>
             </button>
           </div>
         </div>
