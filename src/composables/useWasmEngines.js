@@ -50,7 +50,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from openpyxl import load_workbook
-from jinja2 import Environment, StrictUndefined, pass_context
+from jinja2 import Environment, StrictUndefined, DebugUndefined, Undefined, pass_context
 from jinja2.exceptions import UndefinedError, TemplateSyntaxError
 
 def sanitize_empty_jinja_tags(src):
