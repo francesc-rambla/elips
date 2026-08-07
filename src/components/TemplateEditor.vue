@@ -211,17 +211,27 @@ const findAnyArrayByName = (obj, targetName) => {
   return search(obj);
 };
 
-// Helper: Extract primitive column keys for an array path
+// Helper: Extract primitive column keys for an array path across ALL array items and schema metadata
 const resolveColumnsForArray = (rawPath, iterator, currentStack) => {
+  const columnSet = new Set();
+  
+  // 1. Resolve array in excelJsonData (path direct or recursive)
   const arr = resolvePath(store.excelJsonData, rawPath, currentStack) || findAnyArrayByName(store.excelJsonData, rawPath);
-  if (arr && Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
-    const cols = Object.entries(arr[0])
-      .filter(([k, v]) => !isInternalMetadataKey(k) && !Array.isArray(v))
-      .map(([k]) => k);
-    if (cols.length > 0) return cols;
+  
+  // Collect primitive keys across ALL items in arr (union of all items, not just arr[0])
+  if (arr && Array.isArray(arr) && arr.length > 0) {
+    for (const item of arr) {
+      if (item && typeof item === 'object' && item !== null) {
+        Object.entries(item).forEach(([k, v]) => {
+          if (!isInternalMetadataKey(k) && !Array.isArray(v)) {
+            columnSet.add(k);
+          }
+        });
+      }
+    }
   }
   
-  // Metadata fallback
+  // 2. Collect from metadata schema (store.editorMetadata)
   const lastKey = rawPath.split('.').pop();
   const allMeta = [
     ...(store.editorMetadata || []),
@@ -229,16 +239,20 @@ const resolveColumnsForArray = (rawPath, iterator, currentStack) => {
   ];
   
   if (allMeta.length > 0) {
-    const fields = allMeta
-      .filter(m => m && (m.group === lastKey || m.group === rawPath || m.group?.toLowerCase() === lastKey.toLowerCase()))
-      .map(m => m.element)
-      .filter(Boolean);
-    if (fields.length > 0) return Array.from(new Set(fields));
+    allMeta.forEach(m => {
+      if (m && m.element) {
+        const grp = (m.group || '').trim().toLowerCase();
+        const rawP = (rawPath || '').trim().toLowerCase();
+        const lastP = (lastKey || '').trim().toLowerCase();
+        if (grp === rawP || grp === lastP) {
+          columnSet.add(m.element);
+        }
+      }
+    });
   }
 
-  // Template inspection fallback
+  // 3. Inspect template for variables matching iterator.<field>
   const iterPrefix = `${iterator}.`;
-  const templateVars = new Set();
   const rawText = editorText.value || '';
   const matches = rawText.matchAll(/\{\{\s*([a-zA-Z0-9_\.]+)/g);
   for (const m of matches) {
@@ -246,15 +260,12 @@ const resolveColumnsForArray = (rawPath, iterator, currentStack) => {
     if (vPath.startsWith(iterPrefix)) {
       const colName = vPath.slice(iterPrefix.length).split('.')[0].split('|')[0].trim();
       if (colName && !isInternalMetadataKey(colName)) {
-        templateVars.add(colName);
+        columnSet.add(colName);
       }
     }
   }
-  if (templateVars.size > 0) {
-    return Array.from(templateVars);
-  }
 
-  return [];
+  return Array.from(columnSet);
 };
 
 // Traverse upwards to see if a node or selection is inside a FOR loop block (returns full stack ordered by depth)
@@ -372,33 +383,66 @@ const updateActiveLoopContext = () => {
 
 const getSubArraysForArray = (arrayPath) => {
   if (!store.excelJsonData || !arrayPath) return [];
-  const arr = resolvePath(store.excelJsonData, arrayPath);
-  if (!arr || !Array.isArray(arr) || arr.length === 0) return [];
-  const sample = arr[0];
-  if (!sample || typeof sample !== 'object' || sample === null) return [];
-
-  const subArrays = [];
-  Object.entries(sample).forEach(([k, v]) => {
-    if (isInternalMetadataKey(k)) return;
-    if (Array.isArray(v)) {
-      const childSample = v.length > 0 ? v[0] : {};
-      const childFields = [];
-      if (childSample && typeof childSample === 'object' && childSample !== null) {
-        Object.keys(childSample).forEach(ck => {
-          if (!isInternalMetadataKey(ck) && !Array.isArray(childSample[ck])) {
-            childFields.push(ck);
+  const subArraysMap = new Map();
+  
+  // 1. Collect sub-arrays across ALL items in the array (union of all items)
+  const arr = resolvePath(store.excelJsonData, arrayPath) || findAnyArrayByName(store.excelJsonData, arrayPath);
+  if (arr && Array.isArray(arr)) {
+    for (const item of arr) {
+      if (item && typeof item === 'object' && item !== null) {
+        Object.entries(item).forEach(([k, v]) => {
+          if (isInternalMetadataKey(k)) return;
+          if (Array.isArray(v)) {
+            if (!subArraysMap.has(k)) {
+              // Collect union of child fields across all items in v
+              const childFieldsSet = new Set();
+              for (const childItem of v) {
+                if (childItem && typeof childItem === 'object' && childItem !== null) {
+                  Object.keys(childItem).forEach(ck => {
+                    if (!isInternalMetadataKey(ck) && !Array.isArray(childItem[ck])) {
+                      childFieldsSet.add(ck);
+                    }
+                  });
+                }
+              }
+              const iterName = k.replace(/s$/, '').replace(/es$/, '') || 'item';
+              subArraysMap.set(k, { key: k, iteratorName: iterName, value: v, fields: Array.from(childFieldsSet) });
+            }
           }
         });
       }
-      const iterName = k.replace(/s$/, '').replace(/es$/, '') || 'item';
-      subArrays.push({
-        key: k,
-        iteratorName: iterName,
-        fields: childFields
-      });
+    }
+  }
+  
+  // 2. Check metadata schema for registered child groups
+  const lastKey = arrayPath.split('.').pop();
+  const allMeta = [
+    ...(store.editorMetadata || []),
+    ...(store.excelJsonData?.editor_metadata || [])
+  ];
+  
+  allMeta.forEach(m => {
+    if (m && m.group && m.group !== lastKey && m.group !== arrayPath) {
+      const lastP = (lastKey || '').trim().toLowerCase();
+      const rawP = (arrayPath || '').trim().toLowerCase();
+      const grp = m.group.trim().toLowerCase();
+      
+      if (grp.startsWith(`${lastP}.`) || grp.startsWith(`${rawP}.`)) {
+        const subName = m.group.split('.').pop();
+        const iterName = subName.replace(/s$/, '').replace(/es$/, '') || 'item';
+        if (!subArraysMap.has(subName)) {
+          subArraysMap.set(subName, { key: subName, iteratorName: iterName, value: [], fields: [m.element] });
+        } else {
+          const existing = subArraysMap.get(subName);
+          if (existing.fields && !existing.fields.includes(m.element)) {
+            existing.fields.push(m.element);
+          }
+        }
+      }
     }
   });
-  return subArrays;
+
+  return Array.from(subArraysMap.values());
 };
 
 // Metadata label resolution helpers for template chips and variable tree
