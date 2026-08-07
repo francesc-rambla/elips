@@ -211,6 +211,15 @@ const getLeafTableHeaders = computed(() => {
   return effectiveFields.value.length > 0 ? effectiveFields.value : ['valor'];
 });
 
+// Group Layout Config (vertical / horizontal)
+const selectedLayout = ref('vertical');
+
+const groupLayout = computed(() => {
+  if (!store.editorMetadata) return 'vertical';
+  const meta = store.editorMetadata.find(m => m.group === props.arrayKey && m.groupLayout);
+  return meta ? meta.groupLayout : 'vertical';
+});
+
 // Metadata & Custom Data Type Config Helpers
 const getElementMetadata = (elementName) => {
   if (!store.editorMetadata) return null;
@@ -368,6 +377,7 @@ const onVectorPathChange = (configItem) => {
 };
 
 const openGroupConfig = () => {
+  selectedLayout.value = groupLayout.value;
   const elements = effectiveFields.value;
   groupConfigList.value = elements.map(el => {
     const meta = getElementMetadata(el) || { type: 'Text' };
@@ -388,6 +398,15 @@ const openGroupConfig = () => {
 
 const saveGroupConfig = () => {
   store.editorMetadata = store.editorMetadata.filter(m => m.group !== props.arrayKey);
+  
+  // Save group layout header
+  store.editorMetadata.push({
+    group: props.arrayKey,
+    isGroupHeader: true,
+    groupLayout: selectedLayout.value
+  });
+  
+  // Save field config items
   groupConfigList.value.forEach(item => {
     const meta = {
       group: props.arrayKey,
@@ -416,7 +435,7 @@ const saveGroupConfig = () => {
   }
   
   isConfigModalOpen.value = false;
-  store.addLog(`Configuració de tipus de dades per al grup '${props.arrayKey}' desada correctament.`, 'success');
+  store.addLog(`Configuració de tipus de dades i disposició (${selectedLayout.value}) per al grup '${props.arrayKey}' desada correctament.`, 'success');
 };
 
 const addNestedItem = () => {
@@ -576,7 +595,7 @@ const getItemPath = (idx, fieldKey) => {
           📜 Fulla (Vista Tabular)
         </span>
         <span v-else style="font-size: 0.68rem; padding: 2px 6px; background: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-radius: 4px; font-weight: 500;">
-          📁 Intermedi (Vista Formularia: claus=[{{ effectiveFields.join(', ') }}], fills=[{{ childKeys.join(', ') }}])
+          📁 Intermedi (Vista Formularia KV: {{ groupLayout }})
         </span>
       </div>
 
@@ -586,7 +605,7 @@ const getItemPath = (idx, fieldKey) => {
           class="btn btn-secondary" 
           style="width: auto; padding: 2px 8px; font-size: 0.7rem; border-radius: 4px; display: flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
           @click.stop="openGroupConfig"
-          title="Configura tipus de dades per a aquest grup"
+          title="Configura tipus de dades i disposició per a aquest grup"
         >
           ⚙️ Configura
         </button>
@@ -759,7 +778,7 @@ const getItemPath = (idx, fieldKey) => {
       </div>
     </template>
 
-    <!-- INTERMEDIATE LEVEL: Render as Form Cards with Rich Key-Value Inputs & Sub-Hierarchies -->
+    <!-- INTERMEDIATE LEVEL: Render as Form Cards with Configurable Vertical KV or Horizontal Layout -->
     <template v-else>
       <div style="display: flex; flex-direction: column; gap: 0.75rem;">
         <div 
@@ -804,8 +823,129 @@ const getItemPath = (idx, fieldKey) => {
             </div>
           </div>
 
-          <!-- Primitive Fields Key-Value Form Grid with Rich Data Types -->
-          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem; margin-bottom: 0.75rem;">
+          <!-- VERTICAL LAYOUT (Default: 2-Column Key-Value Form Table) -->
+          <table v-if="groupLayout === 'vertical'" class="inspector-table" style="width: 100%; border-collapse: collapse; margin-bottom: 0.75rem;">
+            <thead>
+              <tr style="background: var(--bg-tertiary);">
+                <th style="width: 220px; padding: 6px 10px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 600; font-size: 0.78rem;">Clau / Camp</th>
+                <th style="padding: 6px 10px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 600; font-size: 0.78rem;">Valor</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(val, fKey) in getPrimitiveFields(item)" :key="fKey">
+                <td style="vertical-align: middle; padding: 6px 10px; border-bottom: 1px solid var(--border-color); width: 220px;">
+                  <code style="font-weight: 600; font-size: 0.8rem; color: var(--text-primary);">{{ fKey }}</code>
+                </td>
+                <td style="padding: 4px 6px; border-bottom: 1px solid var(--border-color);">
+                  <div style="display: flex; gap: 4px; align-items: stretch; width: 100%;">
+                    <!-- Select Type -->
+                    <template v-if="getElementType(fKey) === 'Select'">
+                      <!-- Multiple select -->
+                      <div 
+                        v-if="getElementMetadata(fKey)?.multiple"
+                        :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                        :data-path="getItemPath(idx, fKey)"
+                        style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 32px; padding: 4px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 100%; max-height: 80px; overflow-y: auto;"
+                        @click="openMultiSelectModal(item, fKey, getElementMetadata(fKey))"
+                        title="Fes clic per modificar la selecció"
+                      >
+                        <span v-if="getSelectedPills(item[fKey], getElementMetadata(fKey)).length === 0" style="color: var(--text-muted); font-size: 0.8rem; padding: 0 4px;">
+                          [Tria opcions]
+                        </span>
+                        <span 
+                          v-for="pill in getSelectedPills(item[fKey], getElementMetadata(fKey))" 
+                          :key="pill.value" 
+                          style="background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; font-weight: 500; display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                          :title="pill.label"
+                        >
+                          {{ pill.label }}
+                        </span>
+                      </div>
+                      <!-- Single select -->
+                      <select 
+                        v-else
+                        :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                        :data-path="getItemPath(idx, fKey)"
+                        v-model="item[fKey]"
+                        class="data-input"
+                        style="flex-grow: 1; height: 32px;"
+                      >
+                        <option value="">[Buit / Sense valor]</option>
+                        <option 
+                          v-for="opt in resolveSelectOptions(getElementMetadata(fKey))" 
+                          :key="opt.value" 
+                          :value="opt.value"
+                        >
+                          {{ opt.label }}
+                        </option>
+                      </select>
+                    </template>
+                    
+                    <!-- Date Type -->
+                    <input 
+                      v-else-if="getElementType(fKey) === 'Date'"
+                      :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                      :data-path="getItemPath(idx, fKey)"
+                      type="date"
+                      v-model="item[fKey]"
+                      class="data-input"
+                      style="flex-grow: 1; height: 32px;"
+                    >
+                    
+                    <!-- Number Type -->
+                    <input 
+                      v-else-if="getElementType(fKey) === 'Number'"
+                      :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                      :data-path="getItemPath(idx, fKey)"
+                      type="number"
+                      step="any"
+                      v-model="item[fKey]"
+                      class="data-input"
+                      style="flex-grow: 1; height: 32px;"
+                    >
+                    
+                    <!-- Boolean Type -->
+                    <select 
+                      v-else-if="getElementType(fKey) === 'Boolean'"
+                      :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                      :data-path="getItemPath(idx, fKey)"
+                      v-model="item[fKey]"
+                      class="data-input"
+                      style="flex-grow: 1; height: 32px;"
+                    >
+                      <option value="">[Buit / Sense valor]</option>
+                      <option :value="true">Cert (True)</option>
+                      <option :value="false">Fals (False)</option>
+                    </select>
+                    
+                    <!-- Text Type (default) -->
+                    <input 
+                      v-else
+                      :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                      :data-path="getItemPath(idx, fKey)"
+                      type="text"
+                      v-model="item[fKey]"
+                      class="data-input"
+                      style="flex-grow: 1; height: 32px;"
+                    >
+                    
+                    <button 
+                      type="button"
+                      class="btn-icon-only"
+                      style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                      title="Edició complexa en Markdown + Jinja2"
+                      @click="openCellEditor(item, fKey)"
+                    >
+                      📝
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- HORIZONTAL LAYOUT (Grid View) -->
+          <div v-else style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem; margin-bottom: 0.75rem;">
             <div v-for="(val, fKey) in getPrimitiveFields(item)" :key="fKey" style="display: flex; flex-direction: column; gap: 2px;">
               <label style="font-size: 0.72rem; font-weight: 600; color: var(--text-muted); margin: 0;">{{ fKey }}</label>
               
@@ -938,6 +1078,21 @@ const getItemPath = (idx, fieldKey) => {
         </div>
         
         <div class="modal-body" style="flex-grow: 1; overflow-y: auto; padding: 1rem 0;">
+          <!-- Layout selector option (Vertical KV vs Horizontal Grid) -->
+          <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 1rem; flex-wrap: wrap; gap: 8px;">
+            <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">📐 Disposició visual dels camps de formulari:</span>
+            <div style="display: flex; gap: 16px;">
+              <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--text-primary);">
+                <input type="radio" value="vertical" v-model="selectedLayout" style="cursor: pointer;" />
+                <span>📋 Vertical (Taula Clau-Valor 2-Columnes - Per defecte)</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--text-primary);">
+                <input type="radio" value="horizontal" v-model="selectedLayout" style="cursor: pointer;" />
+                <span>📊 Horitzontal (Graella / Grid)</span>
+              </label>
+            </div>
+          </div>
+
           <table class="inspector-table" style="width: 100%; border-collapse: collapse;">
             <thead>
               <tr style="background: var(--bg-tertiary);">
