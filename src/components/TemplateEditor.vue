@@ -281,14 +281,38 @@ const universalFindSchema = (targetPath, dict) => {
   return { fields: [], children: {} };
 };
 
+// Helper: Map transient Jinja iterator variables (e.g. "part.activitats") to canonical schema paths (e.g. "pres.parts.activitats")
+const resolvePathToSchemaPath = (rawPath, stack) => {
+  if (!rawPath) return '';
+  let effectivePath = rawPath;
+  
+  if (stack && stack.length > 0) {
+    for (const loopCtx of stack) {
+      const iter = loopCtx.iterator;
+      const parentSchemaPath = loopCtx.fullSchemaPath || loopCtx.arrayPath;
+      if (effectivePath === iter) {
+        effectivePath = parentSchemaPath;
+        break;
+      } else if (effectivePath.startsWith(`${iter}.`)) {
+        const sub = effectivePath.slice(iter.length + 1);
+        effectivePath = `${parentSchemaPath}.${sub}`;
+        break;
+      }
+    }
+  }
+  
+  return effectivePath;
+};
+
 // Helper: Extract primitive column keys for an array path across ALL array items and schema metadata
 const resolveColumnsForArray = (rawPath, iterator, currentStack) => {
   const columnSet = new Set();
-  const lastKey = rawPath.split('.').pop();
+  const fullSchemaPath = resolvePathToSchemaPath(rawPath, currentStack);
+  const lastKey = fullSchemaPath.split('.').pop();
   
   // 1. PRIMARY STRATEGY: Consult Hierarchical Data Schema (store.hierarchySchema)
   if (store.hierarchySchema && typeof store.hierarchySchema === 'object') {
-    const schema = universalFindSchema(rawPath, store.hierarchySchema) || universalFindSchema(lastKey, store.hierarchySchema);
+    const schema = universalFindSchema(fullSchemaPath, store.hierarchySchema) || universalFindSchema(lastKey, store.hierarchySchema);
     if (schema && Array.isArray(schema.fields) && schema.fields.length > 0) {
       schema.fields.forEach(f => {
         if (f && f !== '_hierarchy_schema' && !isInternalMetadataKey(f)) {
@@ -304,7 +328,7 @@ const resolveColumnsForArray = (rawPath, iterator, currentStack) => {
     ...(store.excelJsonData?.editor_metadata || [])
   ];
   if (allMeta.length > 0) {
-    const rawP = (rawPath || '').trim().toLowerCase();
+    const rawP = (fullSchemaPath || '').trim().toLowerCase();
     const lastP = (lastKey || '').trim().toLowerCase();
     allMeta.forEach(m => {
       if (m && m.element) {
@@ -439,10 +463,12 @@ const getActiveLoopStack = (targetNode = null) => {
   const outerFirstBlocks = [...rawLoopBlocks].reverse();
   const resolvedStack = [];
   for (const block of outerFirstBlocks) {
+    const fullSchemaPath = resolvePathToSchemaPath(block.arrayPath, resolvedStack);
     const columns = resolveColumnsForArray(block.arrayPath, block.iterator, resolvedStack);
     resolvedStack.push({
       iterator: block.iterator,
       arrayPath: block.arrayPath,
+      fullSchemaPath: fullSchemaPath,
       columns
     });
   }
@@ -462,50 +488,38 @@ const updateActiveLoopContext = () => {
   activeLoopContext.value = stack.length > 0 ? stack[0] : null;
 };
 
-const getSubArraysForArray = (arrayPath) => {
-  if (!store.excelJsonData || !arrayPath) return [];
+const getSubArraysForArray = (arrayPath, currentStack = null) => {
+  if (!arrayPath) return [];
   const subArraysMap = new Map();
-  
-  // 1. Collect sub-arrays across ALL items in the array (union of all items)
-  const arr = resolvePath(store.excelJsonData, arrayPath) || findAnyArrayByName(store.excelJsonData, arrayPath);
-  if (arr && Array.isArray(arr)) {
-    for (const item of arr) {
-      if (item && typeof item === 'object' && item !== null) {
-        Object.entries(item).forEach(([k, v]) => {
-          if (isInternalMetadataKey(k)) return;
-          if (Array.isArray(v)) {
-            if (!subArraysMap.has(k)) {
-              // Collect union of child fields across all items in v
-              const childFieldsSet = new Set();
-              for (const childItem of v) {
-                if (childItem && typeof childItem === 'object' && childItem !== null) {
-                  Object.keys(childItem).forEach(ck => {
-                    if (!isInternalMetadataKey(ck) && !Array.isArray(childItem[ck])) {
-                      childFieldsSet.add(ck);
-                    }
-                  });
-                }
-              }
-              const iterName = k.replace(/s$/, '').replace(/es$/, '') || 'item';
-              subArraysMap.set(k, { key: k, iteratorName: iterName, value: v, fields: Array.from(childFieldsSet) });
-            }
-          }
-        });
-      }
+  const fullSchemaPath = resolvePathToSchemaPath(arrayPath, currentStack);
+  const lastKey = fullSchemaPath.split('.').pop();
+
+  // 1. PRIMARY STRATEGY: Consult Hierarchical Data Schema (store.hierarchySchema)
+  if (store.hierarchySchema && typeof store.hierarchySchema === 'object') {
+    const schema = universalFindSchema(fullSchemaPath, store.hierarchySchema) || universalFindSchema(lastKey, store.hierarchySchema);
+    if (schema && schema.children) {
+      const childObj = schema.children;
+      const childKeys = Array.isArray(childObj) ? childObj : (typeof childObj === 'object' ? Object.keys(childObj) : []);
+      childKeys.forEach(ck => {
+        if (typeof ck === 'string' && ck !== '_hierarchy_schema') {
+          const childSchema = universalFindSchema(`${fullSchemaPath}.${ck}`, store.hierarchySchema) || universalFindSchema(ck, store.hierarchySchema);
+          const fields = childSchema && Array.isArray(childSchema.fields) ? childSchema.fields : [];
+          const iterName = ck.replace(/s$/, '').replace(/es$/, '') || 'item';
+          subArraysMap.set(ck, { key: ck, iteratorName: iterName, value: [], fields });
+        }
+      });
     }
   }
-  
-  // 2. Check metadata schema for registered child groups
-  const lastKey = arrayPath.split('.').pop();
+
+  // 2. PRIMARY STRATEGY PART B: Consult Editor Group Metadata (store.editorMetadata)
   const allMeta = [
     ...(store.editorMetadata || []),
     ...(store.excelJsonData?.editor_metadata || [])
   ];
-  
   allMeta.forEach(m => {
-    if (m && m.group && m.group !== lastKey && m.group !== arrayPath) {
+    if (m && m.group && m.group !== lastKey && m.group !== fullSchemaPath) {
       const lastP = (lastKey || '').trim().toLowerCase();
-      const rawP = (arrayPath || '').trim().toLowerCase();
+      const rawP = (fullSchemaPath || '').trim().toLowerCase();
       const grp = m.group.trim().toLowerCase();
       
       if (grp.startsWith(`${lastP}.`) || grp.startsWith(`${rawP}.`)) {
@@ -522,6 +536,39 @@ const getSubArraysForArray = (arrayPath) => {
       }
     }
   });
+
+  // 3. SECONDARY STRATEGY: Inspect Data Rows in store.excelJsonData across ALL items
+  const arr = resolvePath(store.excelJsonData, arrayPath, currentStack) || findAnyArrayByName(store.excelJsonData, arrayPath);
+  if (arr && Array.isArray(arr)) {
+    for (const item of arr) {
+      if (item && typeof item === 'object' && item !== null) {
+        Object.entries(item).forEach(([k, v]) => {
+          if (isInternalMetadataKey(k)) return;
+          if (Array.isArray(v)) {
+            const iterName = k.replace(/s$/, '').replace(/es$/, '') || 'item';
+            const childFieldsSet = new Set();
+            for (const childItem of v) {
+              if (childItem && typeof childItem === 'object' && childItem !== null) {
+                Object.keys(childItem).forEach(ck => {
+                  if (!isInternalMetadataKey(ck) && !Array.isArray(childItem[ck])) {
+                    childFieldsSet.add(ck);
+                  }
+                });
+              }
+            }
+            if (!subArraysMap.has(k)) {
+              subArraysMap.set(k, { key: k, iteratorName: iterName, value: v, fields: Array.from(childFieldsSet) });
+            } else {
+              const existing = subArraysMap.get(k);
+              childFieldsSet.forEach(f => {
+                if (!existing.fields.includes(f)) existing.fields.push(f);
+              });
+            }
+          }
+        });
+      }
+    }
+  }
 
   return Array.from(subArraysMap.values());
 };
