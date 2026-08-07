@@ -1741,9 +1741,30 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
       try {
         const buffer = await store.excelFile.arrayBuffer();
         _pyodide.FS.writeFile('/work/in.xlsx', new Uint8Array(buffer));
+        exists = true;
       } catch (err) {
         store.addLog(`Error al restaurar fitxer Excel virtual: ${err.message}`, 'warning');
       }
+    }
+
+    if (!exists) {
+      store.addLog("Sintetitzant fitxer Excel virtual (/work/in.xlsx) des de les dades del projecte...", "info");
+      const pyCreateScript = `
+import json
+with open('/work/in.json', 'r', encoding='utf-8') as f:
+    js_str = f.read()
+create_default_workbook_from_json(js_str, '/work/in.xlsx')
+update_excel_from_json('/work/in.xlsx', js_str, '/work/in.xlsx')
+      `;
+      await _pyodide.runPythonAsync(pyCreateScript);
+    } else if (store.excelJsonData) {
+      const pyUpdateScript = `
+import json
+with open('/work/in.json', 'r', encoding='utf-8') as f:
+    js_str = f.read()
+update_excel_from_json('/work/in.xlsx', js_str, '/work/in.xlsx')
+      `;
+      await _pyodide.runPythonAsync(pyUpdateScript);
     }
     
     const fn = _pyodide.globals.get('render_md_two_pass_with_report');
