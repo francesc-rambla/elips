@@ -1164,12 +1164,12 @@ const applyBlock = () => {
       block.innerHTML = `
         <div class="j-head" data-type="${blockType.value}">
           <div style="display:flex;align-items:center;gap:4px;">
-            ${isFor ? '🔁 <span style="font-weight:700;color:var(--color-primary);">PER CADA:</span>' : '🔀 <span style="font-weight:700;color:#b45309;">SI:</span>'} 
+            ${isFor ? '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg> <span style="font-weight:700;color:var(--color-primary);">PER CADA:</span>' : '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> <span style="font-weight:700;color:#b45309;">SI:</span>'} 
             <span class="j-cond-text" data-cond="${expr}">${expr}</span>
           </div>
           <div class="j-actions">
-            ${isFor ? '' : '<button class="j-btn-mini btn-layout" style="background-color:var(--color-primary);color:white;border:none;" title="Canvia a mode integrat al text (Inline)">🌐 Inline</button><button class="j-btn-mini btn-elif" title="Afegeix branca O SI (ELIF)">+ ELIF</button><button class="j-btn-mini btn-else" title="Afegeix branca EN CAS CONTRARI (ELSE)">+ ELSE</button>'}
-            <button class="j-btn-mini btn-trash" style="background-color:var(--color-danger);color:white;border:none;" title="Elimina el bloc">🗑️</button>
+            ${isFor ? '' : '<button class="j-btn-mini btn-layout" style="background-color:var(--color-primary);color:white;border:none;" title="Canvia a mode integrat al text (Inline)">Inline</button><button class="j-btn-mini btn-elif" title="Afegeix branca O SI (ELIF)">+ ELIF</button><button class="j-btn-mini btn-else" title="Afegeix branca EN CAS CONTRARI (ELSE)">+ ELSE</button>'}
+            <button class="j-btn-mini btn-trash" style="background-color:var(--color-danger);color:white;border:none;" title="Elimina el bloc">&times;</button>
           </div>
         </div>
         <div class="j-content" contenteditable="true"><br></div>
@@ -1202,8 +1202,8 @@ const applyBlock = () => {
           branch.className = 'j-branch';
           branch.setAttribute('data-type', 'else');
           branch.innerHTML = `
-            <div style="display:flex;align-items:center;gap:4px;">🛑 <span style="font-weight:700;color:#b45309;">EN CAS CONTRARI</span></div>
-            <button class="j-btn-mini btn-branch-trash" style="background-color:var(--color-danger);color:white;border:none;" title="Elimina la branca">🗑️</button>
+            <div style="display:flex;align-items:center;gap:4px;"><span style="font-weight:700;color:#b45309;">EN CAS CONTRARI</span></div>
+            <button class="j-btn-mini btn-branch-trash" style="background-color:var(--color-danger);color:white;border:none;" title="Elimina la branca">&times;</button>
           `;
           
           branch.querySelector('.btn-branch-trash').onclick = () => {

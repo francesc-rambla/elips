@@ -594,8 +594,8 @@ const getItemPath = (idx, fieldKey) => {
         <span v-if="isLeafLevel" style="font-size: 0.68rem; padding: 2px 6px; background: rgba(0,0,0,0.06); border-radius: 4px; font-weight: 500;">
           📜 Fulla (Vista Tabular)
         </span>
-        <span v-else style="font-size: 0.68rem; padding: 2px 6px; background: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-radius: 4px; font-weight: 500;">
-          📁 Intermedi (Vista Formularia KV: {{ groupLayout }})
+        <span v-else style="font-size: 0.68rem; padding: 2px 6px; background: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-radius: 4px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Intermedi (Vista Formularia KV: {{ groupLayout }})
         </span>
       </div>
 
@@ -603,19 +603,21 @@ const getItemPath = (idx, fieldKey) => {
         <button 
           type="button"
           class="btn btn-secondary" 
-          style="width: auto; padding: 2px 8px; font-size: 0.7rem; border-radius: 4px; display: flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
+          style="width: auto; padding: 2px 8px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
           @click.stop="openGroupConfig"
           title="Configura tipus de dades i disposició per a aquest grup"
         >
-          ⚙️ Configura
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span>Configura</span>
         </button>
         <button 
           type="button"
           class="btn btn-secondary" 
-          style="padding: 0.3rem 0.6rem; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;"
+          style="padding: 0.3rem 0.6rem; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px;"
           @click="addNestedItem"
         >
-          ➕ Afegeix {{ arrayKey }}
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <span>Afegeix {{ arrayKey }}</span>
         </button>
       </div>
     </div>
@@ -750,7 +752,7 @@ const getItemPath = (idx, fieldKey) => {
                     title="Duplica fila"
                     @click="duplicateNestedItem(rIdx)"
                   >
-                    📋
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                   </button>
                   <button 
                     type="button"
@@ -759,7 +761,7 @@ const getItemPath = (idx, fieldKey) => {
                     title="Trasllada fila a un altre pare"
                     @click="openMoveModal(rIdx)"
                   >
-                    ↔️
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 21 7 17 3"/><line x1="21" y1="7" x2="9" y2="7"/><polyline points="7 21 3 17 7 13"/><line x1="3" y1="17" x2="15" y2="17"/></svg>
                   </button>
                   <button 
                     type="button"
@@ -768,7 +770,7 @@ const getItemPath = (idx, fieldKey) => {
                     title="Elimina fila"
                     @click="deleteNestedItem(rIdx)"
                   >
-                    🗑️
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                   </button>
                 </div>
               </td>
@@ -800,7 +802,8 @@ const getItemPath = (idx, fieldKey) => {
                 title="Duplica aquest element i totes les mebres aniuades"
                 @click="duplicateNestedItem(idx)"
               >
-                📋 Duplica
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Duplica</span>
               </button>
               <button 
                 type="button"
@@ -809,7 +812,8 @@ const getItemPath = (idx, fieldKey) => {
                 title="Trasllada aquest element a un altre pare"
                 @click="openMoveModal(idx)"
               >
-                ↔️ Trasllada
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 21 7 17 3"/><line x1="21" y1="7" x2="9" y2="7"/><polyline points="7 21 3 17 7 13"/><line x1="3" y1="17" x2="15" y2="17"/></svg>
+                <span>Trasllada</span>
               </button>
               <button 
                 type="button"
@@ -818,7 +822,7 @@ const getItemPath = (idx, fieldKey) => {
                 title="Elimina element"
                 @click="deleteNestedItem(idx)"
               >
-                🗑️
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
               </button>
             </div>
           </div>
@@ -1044,11 +1048,11 @@ const getItemPath = (idx, fieldKey) => {
                 <button 
                   type="button"
                   class="btn-icon-only"
-                  style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                  style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
                   title="Edició complexa en Markdown + Jinja2"
                   @click="openCellEditor(item, fKey)"
                 >
-                  📝
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                 </button>
               </div>
             </div>
@@ -1071,8 +1075,9 @@ const getItemPath = (idx, fieldKey) => {
     <div class="modal-overlay" v-if="isConfigModalOpen" style="display: flex; z-index: 1050;">
       <div class="modal-content" style="max-width: 800px; width: 90%; max-height: 85vh; display: flex; flex-direction: column;">
         <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
-          <h3 style="border: none; padding-bottom: 0; margin: 0; font-size: 1.1rem;">
-            ⚙️ Configuració de tipus de dades per al grup: <strong style="color: var(--color-primary);">{{ arrayKey }}</strong>
+          <h3 style="border: none; padding-bottom: 0; margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 6px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span>Configuració de tipus de dades per al grup: <strong style="color: var(--color-primary);">{{ arrayKey }}</strong></span>
           </h3>
           <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isConfigModalOpen = false">&times;</button>
         </div>
@@ -1080,15 +1085,15 @@ const getItemPath = (idx, fieldKey) => {
         <div class="modal-body" style="flex-grow: 1; overflow-y: auto; padding: 1rem 0;">
           <!-- Layout selector option (Vertical KV vs Horizontal Grid) -->
           <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 1rem; flex-wrap: wrap; gap: 8px;">
-            <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">📐 Disposició visual dels camps de formulari:</span>
+            <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">Disposició visual dels camps de formulari:</span>
             <div style="display: flex; gap: 16px;">
               <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--text-primary);">
                 <input type="radio" value="vertical" v-model="selectedLayout" style="cursor: pointer;" />
-                <span>📋 Vertical (Taula Clau-Valor 2-Columnes - Per defecte)</span>
+                <span>Vertical (Taula Clau-Valor 2-Columnes - Per defecte)</span>
               </label>
               <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--text-primary);">
                 <input type="radio" value="horizontal" v-model="selectedLayout" style="cursor: pointer;" />
-                <span>📊 Horitzontal (Graella / Grid)</span>
+                <span>Horitzontal (Graella / Grid)</span>
               </label>
             </div>
           </div>

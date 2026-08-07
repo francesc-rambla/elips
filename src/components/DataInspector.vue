@@ -881,32 +881,34 @@ onMounted(() => {
             <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal;">({{ getRowsCount(sheetData) }} files/tuples)</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
-            <button 
-              class="btn btn-secondary" 
-              style="width: auto; padding: 2px 8px; font-size: 0.7rem; border-radius: 4px; display: flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
-              @click.stop="openGroupConfig(name, sheetData)"
-              title="Configura tipus de dades per a aquest grup"
-            >
-              ⚙️ Configura
-            </button>
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down"><path d="m6 9 6 6 6-6"/></svg>
+              <button 
+                class="btn btn-secondary" 
+                style="width: auto; padding: 2px 8px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
+                @click.stop="openGroupConfig(name, sheetData)"
+                title="Configura tipus de dades per a aquest grup"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span>Configura</span>
+              </button>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
           </div>
-        </div>
-        
-        <div class="accordion-content" style="padding: 1rem 0;">
-          <!-- Compact Mode Header Info -->
-          <div v-if="viewMode === 'compact'" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
-            <h4 style="margin: 0; font-size: 1rem; color: var(--text-primary); font-weight: 700; display: flex; align-items: center; gap: 6px;">
-              <span class="accordion-badge" :class="getSheetType(sheetData)">{{ getSheetType(sheetData) }}</span>
-              {{ name }}
-            </h4>
-            <button 
-              class="btn btn-secondary" 
-              style="width: auto; padding: 4px 10px; font-size: 0.75rem; border-radius: 4px; display: flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
-              @click="openGroupConfig(name, sheetData)"
-            >
-              ⚙️ Configura Tipus
-            </button>
+          
+          <div class="accordion-content" style="padding: 1rem 0;">
+            <!-- Compact Mode Header Info -->
+            <div v-if="viewMode === 'compact'" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+              <h4 style="margin: 0; font-size: 1rem; color: var(--text-primary); font-weight: 700; display: flex; align-items: center; gap: 6px;">
+                <span class="accordion-badge" :class="getSheetType(sheetData)">{{ getSheetType(sheetData) }}</span>
+                {{ name }}
+              </h4>
+              <button 
+                class="btn btn-secondary" 
+                style="width: auto; padding: 4px 10px; font-size: 0.75rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
+                @click="openGroupConfig(name, sheetData)"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span>Configura Tipus</span>
+              </button>
           </div>
           <!-- Tabular Preview -->
           <template v-if="getSheetType(sheetData) === 'tabular'">
@@ -1040,11 +1042,11 @@ onMounted(() => {
                         
                         <button 
                           class="btn-icon-only"
-                          style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                          style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
                           title="Edició complexa en Markdown + Jinja2"
                           @click="openCellEditor(name, idx, col, false)"
                         >
-                          📝
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                         </button>
                       </div>
                     </td>
@@ -1055,7 +1057,7 @@ onMounted(() => {
                         title="Elimina fila"
                         @click="deleteTabularRow(name, idx)"
                       >
-                        🗑️
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                       </button>
                     </td>
                   </tr>
@@ -1065,10 +1067,11 @@ onMounted(() => {
             <div style="margin-top: 12px;">
               <button 
                 class="btn btn-secondary" 
-                style="width: auto; padding: 0.4rem 0.8rem; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;"
+                style="width: auto; padding: 0.4rem 0.8rem; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px;"
                 @click="addTabularRow(name, sheetData)"
               >
-                ➕ Afegeix fila
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>Afegeix fila</span>
               </button>
             </div>
           </template>
@@ -1093,7 +1096,7 @@ onMounted(() => {
                         title="Elimina clau-valor"
                         @click="deleteKvKey(name, key)"
                       >
-                        🗑️
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                       </button>
                     </div>
                   </td>
