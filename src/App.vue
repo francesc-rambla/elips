@@ -1060,7 +1060,7 @@ const generateDocuments = async () => {
           title="📁 Carregar fitxers Excel, Plantilles i Document de referència"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
-          <span v-if="store.config.showButtonTexts">Fitxers</span>
+          <span>Fitxers</span>
         </button>
         <button 
           class="office-tab-btn" 
@@ -1069,7 +1069,7 @@ const generateDocuments = async () => {
           title="📊 Inspector i editor de dades Excel"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
-          <span v-if="store.config.showButtonTexts">Dades</span>
+          <span>Dades</span>
         </button>
         <button 
           class="office-tab-btn" 
@@ -1078,7 +1078,7 @@ const generateDocuments = async () => {
           title="📝 Editor de la plantilla Jinja2"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          <span v-if="store.config.showButtonTexts">Plantilla</span>
+          <span>Plantilla</span>
         </button>
         <button 
           class="office-tab-btn" 
@@ -1087,7 +1087,7 @@ const generateDocuments = async () => {
           title="👁️ Previsualització del document i compilació"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span v-if="store.config.showButtonTexts">Previsualització</span>
+          <span>Previsualització</span>
         </button>
       </div>
 
