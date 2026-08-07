@@ -256,6 +256,7 @@ header {
 /* Sidebar Auto-Hide Styles */
 .main-grid.sidebar-auto-hidden {
   grid-template-columns: 1fr;
+  padding-left: 22px;
 }
 
 .control-panel-card {
