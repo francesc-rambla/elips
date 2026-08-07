@@ -1003,6 +1003,17 @@ const generateDocuments = async () => {
         </div>
         
         <div class="header-actions">
+          <!-- Universal Maximize / Restore Toggle Button (Icon only) -->
+          <button 
+            class="btn-icon-only" 
+            @click="store.toggleMaximize" 
+            :title="store.isMaximized ? 'Restaura la mida de la finestra' : 'Maximitza la finestra'"
+            style="width: 32px; height: 32px;"
+          >
+            <svg v-if="!store.isMaximized" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>
+            <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+
           <!-- Terminal Logs Drawer Toggle -->
           <button class="btn-icon-only" :class="{ 'btn-active': isTerminalOpen }" @click="isTerminalOpen = !isTerminalOpen" title="Mostra la terminal de logs i incidències" style="position: relative; width: 32px; height: 32px;">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-terminal"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
@@ -1022,88 +1033,102 @@ const generateDocuments = async () => {
         </div>
       </header>
 
-    <!-- Standard Document Sub-Header Toolbar (hidden in Maximized Mode) -->
-    <div v-show="!store.isMaximized" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); padding: 8px 1.5rem; flex-shrink: 0; box-shadow: var(--shadow-sm); gap: 1rem; flex-wrap: wrap;">
-      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-        <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; display: flex; align-items: center; gap: 4px;">
-          📄 Document de Treball:
-        </span>
+    <!-- Microsoft Office Desktop App Ribbon Tab Bar (Fitxers, Dades, Plantilla, Previsualització) -->
+    <div v-show="!store.isMaximized" class="office-ribbon-bar" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); padding: 0 1.25rem; flex-shrink: 0; box-shadow: var(--shadow-sm); gap: 1rem; flex-wrap: wrap;">
+      <!-- Office Tabs (Left) -->
+      <div class="office-tabs" style="display: flex; align-items: stretch; gap: 4px; margin-bottom: -1px;">
+        <button 
+          class="office-tab-btn" 
+          :class="{ active: store.activeTab === 'upload' }" 
+          @click="store.setActiveTab('upload')"
+          title="Carregar fitxers Excel, Plantilles i Document de referència"
+        >
+          📁 Fitxers
+        </button>
+        <button 
+          class="office-tab-btn" 
+          :class="{ active: store.activeTab === 'data' }" 
+          @click="store.setActiveTab('data')"
+          title="Inspector i editor de dades Excel"
+        >
+          📊 Dades
+        </button>
+        <button 
+          class="office-tab-btn" 
+          :class="{ active: store.activeTab === 'template' }" 
+          @click="store.setActiveTab('template')"
+          title="Editor de la plantilla Jinja2"
+        >
+          📝 Plantilla
+        </button>
+        <button 
+          class="office-tab-btn" 
+          :class="{ active: store.activeTab === 'preview' }" 
+          @click="store.setActiveTab('preview')"
+          title="Previsualització del document i compilació"
+        >
+          👁️ Previsualització
+        </button>
+      </div>
+
+      <!-- Right Side: Document Toolbar -->
+      <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
+        <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">📄 Doc:</span>
         <select 
           :value="activeDocName" 
           @change="switchActiveDocument($event.target.value)" 
           class="data-input" 
-          style="width: 250px; height: 30px; font-size: 0.85rem; font-weight: bold; padding: 2px 8px;"
+          style="width: 170px; height: 28px; font-size: 0.8rem; font-weight: bold; padding: 2px 6px;"
         >
           <option v-for="dName in documentsList" :key="dName" :value="dName">
             {{ dName }}
           </option>
         </select>
         
-        <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.75rem; width: auto; height: 30px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" @click="createNewDocument" title="Crea un nou document en aquest projecte">
-          ➕ Nou Document
+        <button class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 28px; font-weight: 500;" @click="createNewDocument" title="Crea un nou document en aquest projecte">
+          ➕ Nou
         </button>
         <button 
-          class="btn btn-secondary text-danger" 
-          style="padding: 4px 10px; font-size: 0.75rem; width: auto; height: 30px; border-color: rgba(239, 68, 68, 0.2); background: transparent; display: inline-flex; align-items: center; gap: 4px;" 
-          @click="deleteDocument(activeDocName)"
           v-if="activeDocName !== 'Document Principal'"
+          class="btn btn-secondary text-danger" 
+          style="padding: 2px 7px; font-size: 0.72rem; height: 28px; border-color: rgba(239, 68, 68, 0.2); background: transparent;" 
+          @click="deleteDocument(activeDocName)"
           title="Elimina el document actual"
         >
-          🗑️ Elimina Document
+          🗑️
         </button>
-
-        <span style="border-left: 1px solid var(--border-color); height: 18px; margin: 0 4px;"></span>
-
-        <!-- Save Status Badge & Manual Save Button -->
-        <span 
-          v-if="saveStatus === 'saved'" 
-          style="display: inline-flex; align-items: center; gap: 5px; font-size: 0.75rem; font-weight: 600; color: var(--color-success); background: var(--color-success-light); padding: 3px 10px; border-radius: 12px; border: 1px solid var(--color-success);" 
-          title="Tots els canvis d'aquest document estan desats a la memòria del navegador"
-        >
-          🟢 Desat
-        </span>
-
-        <span 
-          v-else-if="saveStatus === 'modified'" 
-          style="display: inline-flex; align-items: center; gap: 5px; font-size: 0.75rem; font-weight: 600; color: #b45309; background: #fef3c7; padding: 3px 10px; border-radius: 12px; border: 1px solid #f59e0b;" 
-          title="Modificat - s'està esperant per desar automàticament o pots clicar 'Desa ara'"
-        >
-          🟠 Modificat
-        </span>
-
-        <span 
-          v-else-if="saveStatus === 'saving'" 
-          style="display: inline-flex; align-items: center; gap: 5px; font-size: 0.75rem; font-weight: 600; color: var(--color-primary); background: var(--color-primary-light); padding: 3px 10px; border-radius: 12px; border: 1px solid var(--color-primary);" 
-          class="loading-pulse" 
-          title="Desant canvis a la memòria del navegador..."
-        >
-          🔵 Desant...
-        </span>
 
         <button 
           class="btn btn-primary" 
-          :style="saveStatus === 'modified' ? 'padding: 4px 12px; font-size: 0.75rem; width: auto; height: 30px; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; border: none; background: #d97706; color: white;' : 'padding: 4px 12px; font-size: 0.75rem; width: auto; height: 30px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; border: none; background: var(--color-primary);'" 
+          :style="saveStatus === 'modified' ? 'padding: 2px 9px; font-size: 0.72rem; height: 28px; font-weight: 700; background: #d97706; color: white; border: none;' : 'padding: 2px 9px; font-size: 0.72rem; height: 28px; font-weight: 600; border: none; background: var(--color-primary);'" 
           @click="manualSave" 
-          title="Desa manualment el document i projecte actuals a l'emmagatzematge del navegador (Ctrl+S)"
+          title="Desa manualment el document i projecte actuals (Ctrl+S)"
         >
-          💾 Desa ara
+          💾 Desa
         </button>
 
-        <!-- Universal Maximize / Restore Toggle Button -->
-        <button 
-          class="btn btn-secondary" 
-          style="padding: 4px 12px; font-size: 0.75rem; width: auto; height: 30px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;"
-          @click="store.toggleMaximize"
-          title="Maximitza o restaura la vista de qualsevol pestanya a pantalla completa"
+        <span 
+          v-if="saveStatus === 'saved'" 
+          style="display: inline-flex; align-items: center; font-size: 0.7rem; font-weight: 600; color: var(--color-success); background: var(--color-success-light); padding: 2px 6px; border-radius: 10px; border: 1px solid var(--color-success);" 
+          title="Tots els canvis desats"
         >
-          <span v-if="!store.isMaximized">🖥️ Maximitzar Vista</span>
-          <span v-else>🗗 Vista Normal</span>
-        </button>
-      </div>
-      
-      <div style="font-size: 0.78rem; color: var(--text-muted); font-weight: 500; display: flex; align-items: center; gap: 6px;">
-        <span style="display: inline-block; width: 6px; height: 6px; background-color: var(--color-success); border-radius: 50%;"></span>
-        Tots els documents d'aquest projecte comparteixen el mateix model de dades d'Excel
+          🟢
+        </span>
+        <span 
+          v-else-if="saveStatus === 'modified'" 
+          style="display: inline-flex; align-items: center; font-size: 0.7rem; font-weight: 600; color: #b45309; background: #fef3c7; padding: 2px 6px; border-radius: 10px; border: 1px solid #f59e0b;" 
+          title="Modificat"
+        >
+          🟠
+        </span>
+        <span 
+          v-else-if="saveStatus === 'saving'" 
+          style="display: inline-flex; align-items: center; font-size: 0.7rem; font-weight: 600; color: var(--color-primary); background: var(--color-primary-light); padding: 2px 6px; border-radius: 10px; border: 1px solid var(--color-primary);" 
+          class="loading-pulse" 
+          title="Desant..."
+        >
+          🔵
+        </span>
       </div>
     </div>
 
