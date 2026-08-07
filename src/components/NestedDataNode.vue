@@ -592,12 +592,6 @@ const getItemPath = (idx, fieldKey) => {
           <span>Sub-taula: <strong style="color: var(--color-primary);">{{ arrayKey }}</strong></span>
           <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted);">({{ items.length }} registres)</span>
         </h5>
-        <span v-if="isLeafLevel" style="font-size: 0.68rem; padding: 2px 6px; background: rgba(0,0,0,0.06); border-radius: 4px; font-weight: 500;">
-          Fulla (Vista Tabular)
-        </span>
-        <span v-else style="font-size: 0.68rem; padding: 2px 6px; background: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-radius: 4px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;">
-          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Intermedi (Vista Formularia KV: {{ groupLayout }})
-        </span>
       </div>
 
       <div style="display: flex; align-items: center; gap: 6px;">
@@ -609,16 +603,17 @@ const getItemPath = (idx, fieldKey) => {
           title="Configura tipus de dades i disposició per a aquest grup"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span>Configura</span>
+          <span v-if="store.config.showButtonTexts">Configura</span>
         </button>
         <button 
           type="button"
           class="btn btn-secondary" 
-          style="padding: 0.3rem 0.6rem; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px;"
+          style="padding: 2px 8px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 4px;"
           @click="addNestedItem"
+          :title="'Afegeix ' + arrayKey"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          <span>Afegeix {{ arrayKey }}</span>
+          <span v-if="store.config.showButtonTexts">Afegeix {{ arrayKey }}</span>
         </button>
       </div>
     </div>
@@ -783,15 +778,15 @@ const getItemPath = (idx, fieldKey) => {
 
     <!-- INTERMEDIATE LEVEL: Render as Form Cards with Configurable Vertical KV or Horizontal Layout -->
     <template v-else>
-      <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+      <div style="display: flex; flex-direction: column; gap: 0.35rem;">
         <div 
           v-for="(item, idx) in items" 
           :key="idx"
           class="nested-card-item"
-          style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04);"
+          style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.4rem 0.6rem; box-shadow: 0 1px 3px rgba(0,0,0,0.03);"
         >
           <!-- Card Header -->
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; padding-bottom: 0.25rem; border-bottom: 1px dashed var(--border-color);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem; padding-bottom: 0.2rem; border-bottom: 1px dashed var(--border-color);">
             <span style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary);">
               #{{ idx + 1 }} {{ arrayKey }}: <strong>{{ getItemLabel(item, `Element #${idx + 1}`) }}</strong>
             </span>
@@ -804,7 +799,7 @@ const getItemPath = (idx, fieldKey) => {
                 @click="duplicateNestedItem(idx)"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                <span>Duplica</span>
+                <span v-if="store.config.showButtonTexts">Duplica</span>
               </button>
               <button 
                 type="button"
@@ -814,7 +809,7 @@ const getItemPath = (idx, fieldKey) => {
                 @click="openMoveModal(idx)"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 21 7 17 3"/><line x1="21" y1="7" x2="9" y2="7"/><polyline points="7 21 3 17 7 13"/><line x1="3" y1="17" x2="15" y2="17"/></svg>
-                <span>Trasllada</span>
+                <span v-if="store.config.showButtonTexts">Trasllada</span>
               </button>
               <button 
                 type="button"

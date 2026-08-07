@@ -888,26 +888,27 @@ onMounted(() => {
                 title="Configura tipus de dades per a aquest grup"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                <span>Configura</span>
+                <span v-if="store.config.showButtonTexts">Configura</span>
               </button>
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down"><path d="m6 9 6 6 6-6"/></svg>
             </div>
           </div>
           
-          <div class="accordion-content" style="padding: 1rem 0;">
+          <div class="accordion-content" style="padding: 0.4rem 0;">
             <!-- Compact Mode Header Info -->
-            <div v-if="viewMode === 'compact'" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
-              <h4 style="margin: 0; font-size: 1rem; color: var(--text-primary); font-weight: 700; display: flex; align-items: center; gap: 6px;">
+            <div v-if="viewMode === 'compact'" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.4rem;">
+              <h4 style="margin: 0; font-size: 0.95rem; color: var(--text-primary); font-weight: 700; display: flex; align-items: center; gap: 6px;">
                 <span class="accordion-badge" :class="getSheetType(sheetData)">{{ getSheetType(sheetData) }}</span>
                 {{ name }}
               </h4>
               <button 
                 class="btn btn-secondary" 
-                style="width: auto; padding: 4px 10px; font-size: 0.75rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
+                style="width: auto; padding: 3px 8px; font-size: 0.72rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
                 @click="openGroupConfig(name, sheetData)"
+                title="Configura tipus de dades per a aquest grup"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                <span>Configura Tipus</span>
+                <span v-if="store.config.showButtonTexts">Configura Tipus</span>
               </button>
           </div>
           <!-- Tabular Preview -->
@@ -1064,14 +1065,15 @@ onMounted(() => {
                 </tbody>
               </table>
             </div>
-            <div style="margin-top: 12px;">
+            <div style="margin-top: 6px;">
               <button 
                 class="btn btn-secondary" 
-                style="width: auto; padding: 0.4rem 0.8rem; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px;"
+                style="width: auto; padding: 3px 8px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 4px;"
                 @click="addTabularRow(name, sheetData)"
+                title="Afegeix una nova fila a la taula"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                <span>Afegeix fila</span>
+                <span v-if="store.config.showButtonTexts">Afegeix fila</span>
               </button>
             </div>
           </template>
@@ -1081,18 +1083,18 @@ onMounted(() => {
             <table class="inspector-table">
               <thead>
                 <tr>
-                  <th style="width: 280px;">Clau (Sanititzada)</th>
-                  <th>Valor</th>
+                  <th style="width: 240px; padding: 4px 8px;">Clau (Sanititzada)</th>
+                  <th style="padding: 4px 8px;">Valor</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="(val, key) in getKvPrimitiveEntries(sheetData)" :key="key">
-                  <td style="vertical-align: middle; padding: 6px 12px;">
+                  <td style="vertical-align: middle; padding: 3px 8px;">
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;">
                       <code>{{ key }}</code>
                       <button 
                         class="btn-icon-only text-danger" 
-                        style="height: 24px; width: 24px; min-width: 24px; font-size: 0.8rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+                        style="height: 22px; width: 22px; min-width: 22px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
                         title="Elimina clau-valor"
                         @click="deleteKvKey(name, key)"
                       >
@@ -1100,7 +1102,7 @@ onMounted(() => {
                       </button>
                     </div>
                   </td>
-                  <td style="padding: 4px;">
+                  <td style="padding: 2px 4px;">
                     <div style="display: flex; gap: 4px; align-items: stretch; width: 100%;">
                       <!-- Select Type -->
                       <template v-if="getElementType(name, key) === 'Select'">
@@ -1109,17 +1111,17 @@ onMounted(() => {
                           v-if="getElementMetadata(name, key)?.multiple"
                           :id="'data-field-' + name + '-' + key"
                           :data-path="name + '.' + key"
-                          style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 32px; padding: 4px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 300px; max-height: 80px; overflow-y: auto;"
+                          style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 28px; padding: 2px 4px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 300px; max-height: 80px; overflow-y: auto;"
                           @click="openMultiSelectModal(name, true, key, null, getElementMetadata(name, key))"
                           title="Fes clic per modificar la selecció"
                         >
-                          <span v-if="getSelectedPills(store.excelJsonData[name][key], getElementMetadata(name, key)).length === 0" style="color: var(--text-muted); font-size: 0.8rem; padding: 0 4px;">
+                          <span v-if="getSelectedPills(store.excelJsonData[name][key], getElementMetadata(name, key)).length === 0" style="color: var(--text-muted); font-size: 0.78rem; padding: 0 4px;">
                             [Tria opcions]
                           </span>
                           <span 
                             v-for="pill in getSelectedPills(store.excelJsonData[name][key], getElementMetadata(name, key))" 
                             :key="pill.value" 
-                            style="background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; font-weight: 500; display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                            style="background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); font-size: 0.72rem; padding: 1px 5px; border-radius: 4px; font-weight: 500; display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
                             :title="pill.label"
                           >
                             {{ pill.label }}
@@ -1132,7 +1134,7 @@ onMounted(() => {
                           :data-path="name + '.' + key"
                           v-model="store.excelJsonData[name][key]"
                           class="data-input"
-                          style="flex-grow: 1; height: 32px;"
+                          style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                         >
                           <option value="">[Buit / Sense valor]</option>
                           <option 
@@ -1153,7 +1155,7 @@ onMounted(() => {
                         type="date"
                         v-model="store.excelJsonData[name][key]"
                         class="data-input"
-                        style="flex-grow: 1; height: 32px;"
+                        style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                       >
                       
                       <!-- Number Type -->
@@ -1165,7 +1167,7 @@ onMounted(() => {
                         step="any"
                         v-model="store.excelJsonData[name][key]"
                         class="data-input"
-                        style="flex-grow: 1; height: 32px;"
+                        style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                       >
                       
                       <!-- Boolean Type -->
@@ -1175,7 +1177,7 @@ onMounted(() => {
                         :data-path="name + '.' + key"
                         v-model="store.excelJsonData[name][key]"
                         class="data-input"
-                        style="flex-grow: 1; height: 32px;"
+                        style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                       >
                         <option value="">[Buit / Sense valor]</option>
                         <option :value="true">Cert (True)</option>
@@ -1189,9 +1191,9 @@ onMounted(() => {
                         :data-path="name + '.' + key"
                         v-model="store.excelJsonData[name][key]"
                         class="data-input"
-                        :rows="viewMode === 'compact' ? 3 : undefined"
-                        style="flex-grow: 1; resize: vertical;"
-                        :style="{ minHeight: viewMode === 'compact' ? '75px' : '50px' }"
+                        :rows="viewMode === 'compact' ? 2 : undefined"
+                        style="flex-grow: 1; resize: vertical; font-size: 0.8rem;"
+                        :style="{ minHeight: viewMode === 'compact' ? '55px' : '40px' }"
                       ></textarea>
                       <input 
                         v-else
@@ -1200,11 +1202,11 @@ onMounted(() => {
                         type="text"
                         v-model="store.excelJsonData[name][key]"
                         class="data-input"
-                        style="flex-grow: 1;"
+                        style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                       >
                       <button 
                         class="btn-icon-only"
-                        style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                        style="height: 28px; width: 28px; min-width: 28px; font-size: 0.85rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
                         title="Edició complexa en Markdown + Jinja2"
                         @click="openCellEditor(name, key, null, true)"
                       >
@@ -1215,13 +1217,15 @@ onMounted(() => {
                 </tr>
               </tbody>
             </table>
-            <div style="margin-top: 12px;">
+            <div style="margin-top: 6px;">
               <button 
                 class="btn btn-secondary" 
-                style="width: auto; padding: 0.4rem 0.8rem; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;"
+                style="width: auto; padding: 3px 8px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 4px;"
                 @click="addKvKey(name)"
+                title="Afegeix un nou parell clau-valor"
               >
-                ➕ Afegeix clau
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span v-if="store.config.showButtonTexts">Afegeix clau</span>
               </button>
             </div>
             
