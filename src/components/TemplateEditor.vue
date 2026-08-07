@@ -144,70 +144,142 @@ const resolvePath = (obj, path) => {
   return cur;
 };
 
-// Traverse upwards to see if a node or selection is inside a FOR loop block
-const getActiveLoopContext = (targetNode = null) => {
-  if (activeEditorTab.value !== 'visual') {
-    return null;
-  }
+// Traverse upwards to see if a node or selection is inside a FOR loop block (returns full stack ordered by depth)
+const getActiveLoopStack = (targetNode = null) => {
+  const stack = [];
   
-  let node = targetNode;
-  if (!node) {
-    if (activeEditNode) {
-      node = activeEditNode;
-    } else if (savedRange) {
-      node = savedRange.commonAncestorContainer;
-    } else {
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount > 0) {
-        node = sel.getRangeAt(0).commonAncestorContainer;
-      }
-    }
-  }
-  
-  let loopBlock = null;
-  while (node && canvasRef.value && node !== canvasRef.value) {
-    const el = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
-    if (el && el.classList && el.classList.contains('j-content')) {
-      const parent = el.parentNode;
-      if (parent && parent.classList && parent.classList.contains('jinja-block')) {
-        const head = parent.querySelector('.j-head');
-        const type = parent.getAttribute('data-type') || (head ? head.getAttribute('data-type') : null);
-        if (type === 'for') {
-          loopBlock = parent;
-          break;
+  if (activeEditorTab.value === 'visual') {
+    let node = targetNode;
+    if (!node) {
+      if (activeEditNode) {
+        node = activeEditNode;
+      } else if (savedRange) {
+        node = savedRange.commonAncestorContainer;
+      } else {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          node = sel.getRangeAt(0).commonAncestorContainer;
         }
       }
     }
-    node = node.parentNode;
-  }
-  
-  if (loopBlock) {
-    const condTextNode = loopBlock.querySelector('.j-cond-text');
-    const cond = condTextNode ? condTextNode.getAttribute('data-cond') : '';
-    const match = cond.match(/^(\w+)\s+in\s+([\w\.\_]+)/);
-    if (match) {
-      const iterator = match[1].trim();
-      const arrayPath = match[2].trim();
+    
+    while (node && canvasRef.value && node !== canvasRef.value) {
+      const el = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
+      if (el && el.classList) {
+        let condStr = '';
+        if (el.classList.contains('j-content') && el.parentNode && el.parentNode.classList && el.parentNode.classList.contains('jinja-block')) {
+          const parent = el.parentNode;
+          const type = parent.getAttribute('data-type');
+          if (type === 'for') {
+            const condTextNode = parent.querySelector('.j-cond-text');
+            if (condTextNode) condStr = condTextNode.getAttribute('data-cond') || '';
+          }
+        } else if (el.classList.contains('j-inline-block') && el.getAttribute('data-type') === 'for') {
+          condStr = el.getAttribute('data-cond') || '';
+        } else if (el.getAttribute('data-jinja-for')) {
+          condStr = el.getAttribute('data-jinja-for') || '';
+        }
+        
+        if (condStr) {
+          const match = condStr.match(/(\w+)\s+in\s+([\w\.\_]+)/);
+          if (match) {
+            const iterator = match[1].trim();
+            const arrayPath = match[2].trim();
+            
+            if (!stack.some(s => s.iterator === iterator)) {
+              let columns = [];
+              const arr = resolvePath(store.excelJsonData, arrayPath);
+              if (arr && Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
+                columns = Object.keys(arr[0]).filter(k => !isInternalMetadataKey(k));
+              }
+              
+              stack.push({
+                iterator,
+                arrayPath,
+                columns
+              });
+            }
+          }
+        }
+      }
+      node = node.parentNode;
+    }
+  } else {
+    // Code Mode stack parser based on cursor position in textareaRef
+    if (textareaRef.value) {
+      const pos = textareaRef.value.selectionStart || 0;
+      const codeBefore = editorText.value.substring(0, pos);
       
-      let columns = [];
-      const arr = resolvePath(store.excelJsonData, arrayPath);
-      if (arr && Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
-        columns = Object.keys(arr[0]).filter(k => !isInternalMetadataKey(k));
+      const regex = /\{%\s*(for\s+(\w+)\s+in\s+([\w\.\_]+)|endfor)\s*%\}/g;
+      let m;
+      const forStack = [];
+      while ((m = regex.exec(codeBefore)) !== null) {
+        if (m[1].startsWith('for')) {
+          forStack.push({ iterator: m[2], arrayPath: m[3] });
+        } else if (m[1] === 'endfor') {
+          forStack.pop();
+        }
       }
       
-      return {
-        iterator,
-        arrayPath,
-        columns
-      };
+      for (let i = forStack.length - 1; i >= 0; i--) {
+        const item = forStack[i];
+        let columns = [];
+        const arr = resolvePath(store.excelJsonData, item.arrayPath);
+        if (arr && Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
+          columns = Object.keys(arr[0]).filter(k => !isInternalMetadataKey(k));
+        }
+        stack.push({
+          iterator: item.iterator,
+          arrayPath: item.arrayPath,
+          columns
+        });
+      }
     }
   }
   
-  return null;
+  return stack;
+};
+
+const getActiveLoopContext = (targetNode = null) => {
+  const stack = getActiveLoopStack(targetNode);
+  return stack.length > 0 ? stack[0] : null;
 };
 
 const updateActiveLoopContext = () => {
-  activeLoopContext.value = getActiveLoopContext();
+  const stack = getActiveLoopStack();
+  activeLoopStack.value = stack;
+  activeLoopContext.value = stack.length > 0 ? stack[0] : null;
+};
+
+const getSubArraysForArray = (arrayPath) => {
+  if (!store.excelJsonData || !arrayPath) return [];
+  const arr = resolvePath(store.excelJsonData, arrayPath);
+  if (!arr || !Array.isArray(arr) || arr.length === 0) return [];
+  const sample = arr[0];
+  if (!sample || typeof sample !== 'object' || sample === null) return [];
+
+  const subArrays = [];
+  Object.entries(sample).forEach(([k, v]) => {
+    if (isInternalMetadataKey(k)) return;
+    if (Array.isArray(v)) {
+      const childSample = v.length > 0 ? v[0] : {};
+      const childFields = [];
+      if (childSample && typeof childSample === 'object' && childSample !== null) {
+        Object.keys(childSample).forEach(ck => {
+          if (!isInternalMetadataKey(ck) && !Array.isArray(childSample[ck])) {
+            childFields.push(ck);
+          }
+        });
+      }
+      const iterName = k.replace(/s$/, '').replace(/es$/, '') || 'item';
+      subArrays.push({
+        key: k,
+        iteratorName: iterName,
+        fields: childFields
+      });
+    }
+  });
+  return subArrays;
 };
 
 // Metadata label resolution helpers for template chips and variable tree
@@ -1032,8 +1104,51 @@ const applyVariable = () => {
   isVarModalOpen.value = false;
 };
 
-// Sidebar copy insert variable handler
+// Helper for inserting loop blocks cleanly
+const sidebarInsertLoop = (subKey, fullPath, iteratorName, fields) => {
+  const firstField = (fields && fields.length > 0) ? fields[0] : 'val';
+  const blockCode = `{% for ${iteratorName} in ${fullPath} %}\n- {{ ${iteratorName}.${firstField} }}\n{% endfor %}`;
+  sidebarCopyInsert(blockCode);
+};
+
+// Sidebar copy insert variable / block handler
 const sidebarCopyInsert = (expr) => {
+  if (expr.includes('{%') || expr.includes('\n')) {
+    // Block statement (e.g. Jinja FOR loop block)
+    if (activeEditorTab.value === 'visual') {
+      restoreSelection();
+      const html = parseCodeToVisual(expr);
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = html;
+      
+      const frag = document.createDocumentFragment();
+      while (tempDiv.firstChild) {
+        frag.appendChild(tempDiv.firstChild);
+      }
+      
+      if (savedRange) {
+        savedRange.deleteContents();
+        savedRange.insertNode(frag);
+      } else if (canvasRef.value) {
+        canvasRef.value.appendChild(frag);
+      }
+      syncVisualToCode();
+    } else {
+      if (textareaRef.value) {
+        const txt = textareaRef.value;
+        const start = txt.selectionStart || 0;
+        const end = txt.selectionEnd || 0;
+        editorText.value = editorText.value.substring(0, start) + expr + editorText.value.substring(end);
+        setTimeout(() => {
+          txt.focus();
+          txt.selectionStart = txt.selectionEnd = start + expr.length;
+        }, 50);
+      }
+    }
+    return;
+  }
+
+  // Single variable chip
   if (activeEditorTab.value === 'visual') {
     let clean = expr.replace(/^\{\{\s*/, '').replace(/\s*\}\}$/, '').trim();
     const parts = clean.split('|');
@@ -1044,8 +1159,8 @@ const sidebarCopyInsert = (expr) => {
   } else {
     if (textareaRef.value) {
       const txt = textareaRef.value;
-      const start = txt.selectionStart;
-      const end = txt.selectionEnd;
+      const start = txt.selectionStart || 0;
+      const end = txt.selectionEnd || 0;
       editorText.value = editorText.value.substring(0, start) + expr + editorText.value.substring(end);
       setTimeout(() => {
         txt.focus();
@@ -2849,26 +2964,41 @@ onUnmounted(() => {
       <div class="variables-sidebar">
       <div class="variables-title">Esquema de Dades</div>
       
-      <!-- Contextual loop variables banner (High Priority loop helper) -->
-      <div v-if="activeLoopContext" style="background-color: var(--color-primary-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-focus); margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;">
-        <div style="font-size: 0.7rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase; display: flex; align-items: center; gap: 4px;">
-          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a1 1 0 0 0 0-2H8a1 1 0 0 0 0 2h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
-          <span>Dins del bucle actiu:</span>
+      <!-- Active Loop Stack Cards (ordered by depth: innermost loop first) -->
+      <div v-for="(ctx, idx) in activeLoopStack" :key="ctx.iterator + idx" style="background-color: var(--color-primary-light); padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border-focus); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;">
+        <div style="font-size: 0.68rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase; display: flex; align-items: center; justify-content: space-between;">
+          <span style="display: flex; align-items: center; gap: 4px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            Iterador #{{ idx + 1 }}: {{ ctx.iterator }}
+          </span>
+          <span class="variable-badge present" style="background-color: var(--color-primary); color: white; font-size: 0.58rem;">for {{ ctx.iterator }} in {{ ctx.arrayPath }}</span>
         </div>
-        <code style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: bold; color: var(--text-primary);">
-          for {{ activeLoopContext.iterator }} in {{ activeLoopContext.arrayPath }}
-        </code>
-        <div style="display:flex; flex-direction:column; gap:0.4rem; margin-top:0.25rem;">
+        
+        <div style="display:flex; flex-direction:column; gap:0.25rem; margin-top:0.2rem;">
+          <!-- Primitive fields of active iterator -->
           <div 
-            v-for="col in activeLoopContext.columns" 
+            v-for="col in ctx.columns" 
             :key="col"
             class="variable-item present"
-            style="background-color: var(--bg-card); margin: 0; font-size: 0.75rem; padding: 4px 6px; justify-content: space-between;"
-            @click="sidebarCopyInsert(`{{ ${activeLoopContext.iterator}.${col} }}`)"
-            title="Insereix variable contextual del bucle"
+            style="background-color: var(--bg-card); margin: 0; font-size: 0.72rem; padding: 2px 6px; justify-content: space-between;"
+            @click="sidebarCopyInsert(`{{ ${ctx.iterator}.${col} }}`)"
+            :title="`Insereix variable ${ctx.iterator}.${col}`"
           >
-            <span style="font-weight: 600;">{{ getFieldCustomLabel(col) }}</span>
-            <span class="variable-badge present" style="background-color: var(--color-primary); color: white;">bucle</span>
+            <span style="font-weight: 600;" :title="ctx.iterator + '.' + col">{{ getFieldCustomLabel(col) }}</span>
+            <span class="variable-badge present" style="font-size:0.58rem; background-color: var(--color-primary); color: white;">{{ ctx.iterator }}.{{ col }}</span>
+          </div>
+
+          <!-- Child Sub-Arrays for active iterator (if any) -->
+          <div 
+            v-for="subArray in getSubArraysForArray(ctx.arrayPath)" 
+            :key="subArray.key"
+            class="variable-item present"
+            style="background-color: var(--color-primary-light); margin: 2px 0 0 0; font-size: 0.72rem; padding: 3px 6px; justify-content: space-between;"
+            @click="sidebarInsertLoop(subArray.key, `${ctx.iterator}.${subArray.key}`, subArray.iteratorName, subArray.fields)"
+            :title="`Insereix bucle d'iteració per a ${ctx.iterator}.${subArray.key}`"
+          >
+            <span style="font-weight: 700; color: var(--color-primary);">Itera {{ ctx.iterator }}.{{ subArray.key }}</span>
+            <span class="variable-badge present" style="background-color: var(--color-primary); color: white; font-size: 0.58rem;">Bucle</span>
           </div>
         </div>
       </div>
@@ -2877,9 +3007,10 @@ onUnmounted(() => {
         Carrega un Excel per generar la llista de variables disponibles.
       </div>
       <div v-else style="display:flex; flex-direction:column; gap:0.6rem; flex: 1; overflow-y: auto; min-height: 0;">
+        <!-- Root Data Model Card -->
         <div v-for="node in sidebarTree" :key="node.name" style="margin-bottom:0.5rem;">
-          <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); margin-bottom: 0.25rem; border-bottom: 1px solid var(--border-color); padding-bottom: 2px;">
-            {{ node.name }}
+          <div style="font-size: 0.78rem; font-weight: 700; color: var(--text-secondary); margin-bottom: 0.25rem; border-bottom: 1px solid var(--border-color); padding-bottom: 2px;">
+            Model: {{ node.name }}
           </div>
           
           <!-- Top-level Primitive Keys -->
@@ -2887,6 +3018,7 @@ onUnmounted(() => {
             v-for="f in node.fields" 
             :key="typeof f === 'string' ? f : f.fullPath" 
             class="variable-item present"
+            style="margin-bottom: 0.25rem;"
             @click="sidebarCopyInsert(`{{ ${typeof f === 'string' ? node.name + '.' + f : f.fullPath} }}`)"
             title="Clica per copiar i inserir variable"
           >
@@ -2894,67 +3026,16 @@ onUnmounted(() => {
             <span class="variable-badge present">Clau</span>
           </div>
 
-          <!-- Sub-Arrays (e.g. parts) -->
-          <div v-for="sub in node.subArrays" :key="sub.key" style="margin-top: 0.4rem; padding-left: 0.4rem; border-left: 2px solid var(--color-primary-light);">
-            <div style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary); margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
-              <span style="display: inline-flex; align-items: center; gap: 4px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                {{ sub.key }}
-              </span>
-            </div>
-
-            <!-- Loop shortcut button -->
+          <!-- Top-level Sub-Arrays (e.g. parts) -->
+          <div v-for="sub in node.subArrays" :key="sub.key" style="margin-top: 0.3rem;">
             <div 
               class="variable-item present"
-              style="background-color: var(--color-primary-light);"
-              @click="sidebarCopyInsert(`{% for ${sub.iteratorName} in ${sub.fullPath} %}\n- {{ ${sub.iteratorName}.${sub.fields[0] || 'val'} }}\n{% endfor %}`)"
+              style="background-color: var(--color-primary-light); padding: 3px 6px;"
+              @click="sidebarInsertLoop(sub.key, sub.fullPath, sub.iteratorName, sub.fields)"
               title="Clica per copiar i inserir bucle Jinja"
             >
-              <span>Itera {{ sub.key }}</span>
-              <span class="variable-badge present" style="background-color:var(--color-primary-light)">Bucle</span>
-            </div>
-
-            <!-- Primitive Fields of sub-array item (e.g. part.partida) -->
-            <div 
-              v-for="col in sub.fields" 
-              :key="col" 
-              class="variable-item present"
-              @click="sidebarCopyInsert(activeLoopContext && activeLoopContext.iterator ? `{{ ${activeLoopContext.iterator}.${col} }}` : `{{ ${sub.iteratorName}.${col} }}`)"
-              title="Clica per copiar i inserir variable"
-            >
-              <span :title="col">{{ getFieldCustomLabel(col) }}</span>
-              <span class="variable-badge present">Camp</span>
-            </div>
-
-            <!-- Child Sub-Arrays (e.g. activitats under parts) -->
-            <div v-for="childSub in sub.subArrays" :key="childSub.key" style="margin-top: 0.4rem; padding-left: 0.4rem; border-left: 2px solid var(--color-success-light, #dcfce7);">
-              <div style="font-size: 0.72rem; font-weight: 700; color: var(--color-success, #16a34a); margin-bottom: 4px; display: inline-flex; align-items: center; gap: 4px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                {{ childSub.key }}
-              </div>
-
-              <!-- Inner loop shortcut button -->
-              <div 
-                class="variable-item present"
-                style="background-color: #dcfce7;"
-                @click="sidebarCopyInsert(`{% for ${childSub.iteratorName} in ${sub.iteratorName}.${childSub.key} %}\n- {{ ${childSub.iteratorName}.${childSub.fields[0] || 'val'} }}\n{% endfor %}`)"
-                title="Clica per copiar i inserir bucle d'activitats"
-              >
-                <span>Itera {{ sub.iteratorName }}.{{ childSub.key }}</span>
-                <span class="variable-badge present" style="background-color:#bbf7d0; color:#15803d;">Bucle Aniuat</span>
-              </div>
-
-              <!-- Fields of inner sub-array item (e.g. activitat.descripcio_activitat) -->
-              <div 
-                v-for="childCol in childSub.fields" 
-                :key="childCol" 
-                class="variable-item present"
-                @click="sidebarCopyInsert(`{{ ${childSub.iteratorName}.${childCol} }}`)"
-                title="Clica per copiar i inserir camp d'activitat"
-              >
-                <span :title="childCol">{{ getFieldCustomLabel(childCol) }}</span>
-                <span class="variable-badge present">Camp Activitat</span>
-              </div>
+              <span style="font-weight: 700; color: var(--color-primary);">Itera {{ sub.key }}</span>
+              <span class="variable-badge present" style="background-color: var(--color-primary); color: white; font-size: 0.58rem;">Bucle</span>
             </div>
           </div>
         </div>
