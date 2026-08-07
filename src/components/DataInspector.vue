@@ -1254,17 +1254,6 @@ onMounted(() => {
                 </tr>
               </tbody>
             </table>
-            <div style="margin-top: 6px;">
-              <button 
-                class="btn btn-secondary" 
-                style="width: auto; padding: 3px 8px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 4px;"
-                @click="addKvKey(name)"
-                title="Afegeix un nou parell clau-valor"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                <span v-if="store.config.showButtonTexts">Afegeix clau</span>
-              </button>
-            </div>
             
             <!-- Integrated Hierarchical Nested Sub-Tables -->
             <template v-for="(subSchema, subKey) in getTopLevelChildSchemas(name, sheetData)" :key="subKey">
