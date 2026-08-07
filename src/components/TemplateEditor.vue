@@ -846,7 +846,7 @@ const applyTableModal = () => {
     html += `<tr class="j-row-loop" data-jinja-for="${loopExpr}">`;
     activeCols.forEach(c => {
       const chipRaw = `${iteratorVar.value.trim()}.${c.key}`;
-      html += `<td style="text-align: ${c.align};"><span class="j-var-chip" contenteditable="false" data-raw="${chipRaw}">🏷️ ${chipRaw}</span></td>`;
+      html += `<td style="text-align: ${c.align};"><span class="j-var-chip" contenteditable="false" data-raw="${chipRaw}">${chipRaw}</span></td>`;
     });
     html += '</tr></tbody></table><p><br></p>';
   } else if (isTrans) {
@@ -868,14 +868,14 @@ const applyTableModal = () => {
     html += '<table><thead><tr>';
     html += '<th data-align="left">Dada</th>';
     const headChipRaw = `${iteratorVar.value.trim()}.${selectedColHeaderKey.value}`;
-    html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">🏷️ ${headChipRaw}</span></th>`;
+    html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">${headChipRaw}</span></th>`;
     html += '</tr></thead><tbody>';
     
     activeCols.forEach(c => {
       html += '<tr>';
       html += `<td>${c.header}</td>`;
       const cellChipRaw = `${iteratorVar.value.trim()}.${c.key}`;
-      html += `<td style="text-align: ${c.align};" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${cellChipRaw}">🏷️ ${cellChipRaw}</span></td>`;
+      html += `<td style="text-align: ${c.align};" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${cellChipRaw}">${cellChipRaw}</span></td>`;
       html += '</tr>';
     });
     html += '</tbody></table><p><br></p>';
@@ -945,7 +945,7 @@ const applyVariable = () => {
   }
 
   const rawJinja = filter ? `{{ ${expr} | ${filter} }}` : `{{ ${expr} }}`;
-  const displayLabel = filter ? `🏷️ ${expr} | ${filter}` : `🏷️ ${expr}`;
+  const displayLabel = filter ? `${expr} | ${filter}` : `${expr}`;
 
   if (activeEditorTab.value === 'visual') {
     restoreSelection();
@@ -1129,8 +1129,8 @@ const applyBlock = () => {
         branch.className = 'j-branch';
         branch.setAttribute('data-type', 'elif');
         branch.innerHTML = `
-          <div style="display:flex;align-items:center;gap:4px;">↪️ <span style="font-weight:700;color:#b45309;">O SI:</span> <span class="j-cond-text" data-cond="${expr}">${expr}</span></div>
-          <button class="j-btn-mini btn-branch-trash" style="background-color:var(--color-danger);color:white;border:none;" title="Elimina la branca">🗑️</button>
+          <div style="display:flex;align-items:center;gap:4px;"><span style="font-weight:700;color:#b45309;">O SI:</span> <span class="j-cond-text" data-cond="${expr}">${expr}</span></div>
+          <button class="j-btn-mini btn-branch-trash" style="background-color:var(--color-danger);color:white;border:none;display:inline-flex;align-items:center;justify-content:center;" title="Elimina la branca"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         `;
         
         branch.querySelector('.j-cond-text').onclick = (e) => {
@@ -1554,7 +1554,7 @@ const convertJinjaToChips = (text) => {
     const vars = v.split('|');
     const expr = vars[0].trim();
     const filter = vars.length > 1 ? vars.slice(1).join('|').trim() : '';
-    const displayLabel = filter ? `🏷️ ${expr} | ${filter}` : `🏷️ ${expr}`;
+    const displayLabel = filter ? `${expr} | ${filter}` : `${expr}`;
     return `<span class="j-var-chip" contenteditable="false" data-raw="${expr}${filter ? '|' + filter : ''}">${displayLabel}</span>`;
   });
 };
@@ -1644,7 +1644,7 @@ const parseCommentTablesToHtml = (md) => {
     let html = '<table><thead><tr>';
     html += '<th data-align="left">Dada</th>';
     const headChipRaw = `${loopVar}.${colHeader}`;
-    html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">🏷️ ${headChipRaw}</span></th>`;
+    html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">${headChipRaw}</span></th>`;
     html += '</tr></thead><tbody>';
     
     const bodyLines = lines.slice(2);
@@ -1662,7 +1662,7 @@ const parseCommentTablesToHtml = (md) => {
       
       html += '<tr>';
       html += `<td>${rowLabel}</td>`;
-      html += `<td style="text-align: ${align};" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${cellChipRaw}">🏷️ ${cellChipRaw}</span></td>`;
+      html += `<td style="text-align: ${align};" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${cellChipRaw}">${cellChipRaw}</span></td>`;
       html += '</tr>';
     });
     html += '</tbody></table>';
@@ -1846,9 +1846,13 @@ const compileMarkdownToHtml = (markdownText) => {
     yamlHeaderHtml = `<div class="pandoc-metadata-chip" contenteditable="false" data-raw="${encodeURIComponent(rawYaml)}" style="background-color: var(--bg-tertiary); border: 1px dashed var(--color-primary); border-radius: 6px; padding: 8px 12px; margin-bottom: 1rem; user-select: none;">
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
         <div style="font-size: 0.8rem; font-weight: bold; color: var(--color-primary); display: flex; align-items: center; gap: 6px;">
-          🏷️ <span>Metadades Pandoc (YAML Header)</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+          <span>Metadades Pandoc (YAML Header)</span>
         </div>
-        <button class="j-btn-mini btn-edit-metadata" style="background-color: var(--color-primary); color: white; border: none; padding: 3px 10px; cursor: pointer; border-radius: 4px; font-weight: 600;">✏️ Edita Metadades</button>
+        <button class="j-btn-mini btn-edit-metadata" style="background-color: var(--color-primary); color: white; border: none; padding: 3px 10px; cursor: pointer; border-radius: 4px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          <span>Edita Metadades</span>
+        </button>
       </div>
     </div>`;
   }
@@ -1944,7 +1948,7 @@ const compileMarkdownToHtml = (markdownText) => {
         const vars = v.split('|');
         const expr = vars[0].trim();
         const filter = vars.length > 1 ? vars.slice(1).join('|').trim() : '';
-        const displayLabel = filter ? `🏷️ ${expr} | ${filter}` : `🏷️ ${expr}`;
+        const displayLabel = filter ? `${expr} | ${filter}` : `${expr}`;
         return `<span class="j-var-chip" contenteditable="false" data-raw="${expr}${filter ? '|' + filter : ''}">${displayLabel}</span>`;
       });
       

@@ -1204,11 +1204,11 @@ onMounted(() => {
                       >
                       <button 
                         class="btn-icon-only"
-                        style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                        style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
                         title="Edició complexa en Markdown + Jinja2"
                         @click="openCellEditor(name, key, null, true)"
                       >
-                        📝
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                       </button>
                     </div>
                   </td>
