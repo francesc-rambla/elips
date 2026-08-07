@@ -1624,15 +1624,94 @@ def _filter_empty_rows(data):
         return filtered_list
     return data
 
+def _wrap_tracked(val, path='', enable_links=True):
+    if isinstance(val, dict):
+        if isinstance(val, TrackedDict):
+            return val
+        for k, v in list(val.items()):
+            if isinstance(v, dict):
+                for sub_k, sub_v in list(val.items()):
+                    if sub_k != k and isinstance(sub_v, list):
+                        if sub_k not in v:
+                            v[sub_k] = sub_v
+        return TrackedDict(val, path, enable_links)
+    elif isinstance(val, list):
+        if isinstance(val, TrackedList):
+            return val
+        return TrackedList(val, path, enable_links)
+    elif isinstance(val, (SafeDict, Placeholder)):
+        return val
+    elif isinstance(val, TrackedValue):
+        return val
+    return TrackedValue(val, path, enable_links)
+
+class SafeDict(dict):
+    def __init__(self, d, path=''):
+        super().__init__()
+        self._path = path
+        if isinstance(d, dict):
+            for k, v in d.items():
+                if isinstance(v, dict):
+                    for sub_k, sub_v in d.items():
+                        if sub_k != k and isinstance(sub_v, list):
+                            if sub_k not in v:
+                                v[sub_k] = sub_v
+                self[k] = _wrap_safe(v, f"{path}.{k}" if path else k)
+
+    def __getitem__(self, key):
+        if key not in self:
+            return Placeholder(f"{self._path}.{key}" if self._path else str(key))
+        return super().__getitem__(key)
+
+    def __getattr__(self, name):
+        if name.startswith('_') or name in ('get', 'keys', 'items', 'values'):
+            raise AttributeError(name)
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name)
+
+    def get(self, key, default=None):
+        if key not in self:
+            return Placeholder(f"{self._path}.{key}" if self._path else str(key))
+        return super().get(key, default)
+
+def _wrap_safe(val, path=''):
+    if isinstance(val, dict):
+        if isinstance(val, SafeDict):
+            return val
+        return SafeDict(val, path)
+    elif isinstance(val, list):
+        return [_wrap_safe(item, f"{path}.{idx}") for idx, item in enumerate(val)]
+    elif isinstance(val, Placeholder):
+        return val
+    return val
+
 def render_md_two_pass_with_report(excel_path, template_path, date_format='iso', strict=False):
     raw_doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
     doc = _filter_empty_rows(raw_doc)
+
+    # Merge latest JSON from /work/in.json if present
+    try:
+        if os.path.exists('/work/in.json'):
+            with open('/work/in.json', 'r', encoding='utf-8') as f:
+                json_data = json.load(f)
+                if isinstance(json_data, dict):
+                    for k, v in json_data.items():
+                        if k not in doc or not doc[k]:
+                            doc[k] = v
+                        elif isinstance(v, dict) and isinstance(doc[k], dict):
+                            for sub_k, sub_v in v.items():
+                                if sub_k not in doc[k] or not doc[k][sub_k]:
+                                    doc[k][sub_k] = sub_v
+    except Exception:
+        pass
 
     with open(template_path, 'r', encoding='utf-8') as f:
         tpl_src = f.read()
 
     # Pass 1: Clean Context without HTML links (for Pandoc / Word export)
-    clean_ctx = _wrap_safe(doc, 'doc')
+    clean_ctx = _wrap_safe(doc, '')
     if 'doc' not in clean_ctx:
         clean_ctx['doc'] = clean_ctx
 
@@ -1647,7 +1726,11 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
     env_clean.globals['false'] = False
 
     out1_clean, issues1 = render_with_recovery(env_clean, tpl_src, clean_ctx, 'primera')
-    out2_clean, issues2 = render_with_recovery(env_clean, out1_clean, clean_ctx, 'segona')
+    if '{{' in out1_clean or '{%' in out1_clean:
+        out2_clean, issues2 = render_with_recovery(env_clean, out1_clean, clean_ctx, 'segona')
+    else:
+        out2_clean = out1_clean
+        issues2 = []
     all_issues = issues1 + issues2
 
     # Pass 2: Tracked Context with HTML links (for HTML preview)
@@ -1666,7 +1749,10 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
     env_html.globals['false'] = False
 
     out1_html, _ = render_with_recovery(env_html, tpl_src, html_ctx, 'primera_html')
-    out2_html, _ = render_with_recovery(env_html, out1_html, html_ctx, 'segona_html')
+    if '{{' in out1_html or '{%' in out1_html:
+        out2_html, _ = render_with_recovery(env_html, out1_html, html_ctx, 'segona_html')
+    else:
+        out2_html = out1_html
 
     return json.dumps({
         'markdown': out2_clean,
