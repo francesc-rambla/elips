@@ -21,7 +21,8 @@ watch(() => props.isOpen, (newVal) => {
 
 const saveSettings = () => {
   Object.assign(store.config, localConfig);
-  store.addLog("Configuració de motors desada reactivament.", "success");
+  localStorage.setItem('showButtonTexts', store.config.showButtonTexts ? 'true' : 'false');
+  store.addLog("Configuració de motors i interfície desada reactivament.", "success");
   emit('close');
 };
 
@@ -33,6 +34,7 @@ const resetSettings = () => {
   localConfig.strictMode = false;
   localConfig.useDefaultRef = true;
   localConfig.mainThreadPandoc = true;
+  localConfig.showButtonTexts = true;
 };
 </script>
 
@@ -51,6 +53,22 @@ const resetSettings = () => {
       </div>
       
       <div class="modal-body">
+        <!-- Interface Preferences -->
+        <div style="font-size: 0.85rem; font-weight: bold; color: var(--color-primary); margin-bottom: 0.5rem; text-transform: uppercase; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">
+          🖥️ Interfície i Visualització
+        </div>
+
+        <div class="checkbox-row" style="margin-bottom: 1.25rem;">
+          <input type="checkbox" id="cfgShowButtonTexts" v-model="localConfig.showButtonTexts">
+          <label for="cfgShowButtonTexts" style="display:inline; margin:0; text-transform:none; font-weight: 600;">
+            Mostra els textos als botons de les eines (si es desactiva, es mostraran només les icones amb consells al passar el cursor)
+          </label>
+        </div>
+
+        <div style="font-size: 0.85rem; font-weight: bold; color: var(--color-primary); margin-bottom: 0.5rem; text-transform: uppercase; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">
+          ⚙️ Motors de Compilació
+        </div>
+
         <div class="form-row">
           <label for="cfgPyIndex">Pyodide CDN URL</label>
           <input type="text" id="cfgPyIndex" v-model="localConfig.pyIndex">

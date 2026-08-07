@@ -95,7 +95,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       dateFormat: 'iso',
       strictMode: false,
       useDefaultRef: true,
-      mainThreadPandoc: true
+      mainThreadPandoc: true,
+      showButtonTexts: localStorage.getItem('showButtonTexts') !== 'false'
     }
   }),
   

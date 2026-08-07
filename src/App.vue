@@ -1004,14 +1004,17 @@ const generateDocuments = async () => {
           <span style="font-size: 0.82rem; color: var(--text-primary); font-weight: 700; font-family: monospace; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" :title="currentProjectName">
             {{ currentProjectName }}
           </span>
-          <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; width: auto; height: 26px; font-weight: 500;" @click="openProjectsModal" title="Gestiona projectes">
-            📂 Gestiona
+          <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; width: auto; height: 26px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" @click="openProjectsModal" title="📂 Gestiona els projectes locals de dades">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            <span v-if="store.config.showButtonTexts">Gestiona</span>
           </button>
-          <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; width: auto; height: 26px; font-weight: 500;" @click="loadDemo" :disabled="loadingDemo" title="Carrega dades de demostració per provar l'aplicació">
-            ✨ Demo
+          <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; width: auto; height: 26px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" @click="loadDemo" :disabled="loadingDemo" title="✨ Carrega dades de demostració per provar l'aplicació">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3z"/></svg>
+            <span v-if="store.config.showButtonTexts">Demo</span>
           </button>
-          <button class="btn btn-primary" style="padding: 3px 8px; font-size: 0.72rem; width: auto; height: 26px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600;" @click="downloadAllProjectFiles" title="Descarrega tots els fitxers originals del projecte actiu">
-            📥 Desar fitxers
+          <button class="btn btn-primary" style="padding: 3px 8px; font-size: 0.72rem; width: auto; height: 26px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600;" @click="downloadAllProjectFiles" title="📥 Descarrega tots els fitxers originals del projecte actiu">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span v-if="store.config.showButtonTexts">Desar fitxers</span>
           </button>
         </div>
         
@@ -1054,70 +1057,78 @@ const generateDocuments = async () => {
           class="office-tab-btn" 
           :class="{ active: store.activeTab === 'upload' }" 
           @click="store.setActiveTab('upload')"
-          title="Carregar fitxers Excel, Plantilles i Document de referència"
+          title="📁 Carregar fitxers Excel, Plantilles i Document de referència"
         >
-          📁 Fitxers
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span v-if="store.config.showButtonTexts">Fitxers</span>
         </button>
         <button 
           class="office-tab-btn" 
           :class="{ active: store.activeTab === 'data' }" 
           @click="store.setActiveTab('data')"
-          title="Inspector i editor de dades Excel"
+          title="📊 Inspector i editor de dades Excel"
         >
-          📊 Dades
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          <span v-if="store.config.showButtonTexts">Dades</span>
         </button>
         <button 
           class="office-tab-btn" 
           :class="{ active: store.activeTab === 'template' }" 
           @click="store.setActiveTab('template')"
-          title="Editor de la plantilla Jinja2"
+          title="📝 Editor de la plantilla Jinja2"
         >
-          📝 Plantilla
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          <span v-if="store.config.showButtonTexts">Plantilla</span>
         </button>
         <button 
           class="office-tab-btn" 
           :class="{ active: store.activeTab === 'preview' }" 
           @click="store.setActiveTab('preview')"
-          title="Previsualització del document i compilació"
+          title="👁️ Previsualització del document i compilació"
         >
-          👁️ Previsualització
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span v-if="store.config.showButtonTexts">Previsualització</span>
         </button>
       </div>
 
       <!-- Right Side: Document Toolbar -->
       <div style="display: flex; align-items: center; gap: 8px; padding: 2px 0;">
-        <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">📄 Doc:</span>
+        <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Doc:</span>
         <select 
           :value="activeDocName" 
           @change="switchActiveDocument($event.target.value)" 
           class="data-input" 
           style="width: 170px; height: 26px; font-size: 0.8rem; font-weight: bold; padding: 1px 6px;"
+          title="Selecciona el document de treball actiu"
         >
           <option v-for="dName in documentsList" :key="dName" :value="dName">
             {{ dName }}
           </option>
         </select>
         
-        <button class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 26px; font-weight: 500;" @click="createNewDocument" title="Crea un nou document en aquest projecte">
-          ➕ Nou
+        <button class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 26px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" @click="createNewDocument" title="➕ Crea un nou document en aquest projecte">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <span v-if="store.config.showButtonTexts">Nou</span>
         </button>
         <button 
           v-if="activeDocName !== 'Document Principal'"
           class="btn btn-secondary text-danger" 
-          style="padding: 2px 7px; font-size: 0.72rem; height: 26px; border-color: rgba(239, 68, 68, 0.2); background: transparent;" 
+          style="padding: 2px 7px; font-size: 0.72rem; height: 26px; border-color: rgba(239, 68, 68, 0.2); background: transparent; display: inline-flex; align-items: center; gap: 4px;" 
           @click="deleteDocument(activeDocName)"
-          title="Elimina el document actual"
+          title="🗑️ Elimina el document actual"
         >
-          🗑️
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          <span v-if="store.config.showButtonTexts">Elimina</span>
         </button>
 
         <button 
           class="btn btn-primary" 
-          :style="saveStatus === 'modified' ? 'padding: 2px 9px; font-size: 0.72rem; height: 26px; font-weight: 700; background: #d97706; color: white; border: none;' : 'padding: 2px 9px; font-size: 0.72rem; height: 26px; font-weight: 600; border: none; background: var(--color-primary);'" 
+          :style="saveStatus === 'modified' ? 'padding: 2px 9px; font-size: 0.72rem; height: 26px; font-weight: 700; background: #d97706; color: white; border: none; display: inline-flex; align-items: center; gap: 4px;' : 'padding: 2px 9px; font-size: 0.72rem; height: 26px; font-weight: 600; border: none; background: var(--color-primary); display: inline-flex; align-items: center; gap: 4px;'" 
           @click="manualSave" 
-          title="Desa manualment el document i projecte actuals (Ctrl+S)"
+          title="💾 Desa manualment el document i projecte actuals (Ctrl+S)"
         >
-          💾 Desa
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          <span v-if="store.config.showButtonTexts">Desa</span>
         </button>
 
         <span 
@@ -1158,28 +1169,31 @@ const generateDocuments = async () => {
                 class="btn-segment" 
                 :class="{ active: store.dataActions?.getViewMode && store.dataActions.getViewMode() === 'complete' }"
                 @click="store.dataActions?.setViewMode && store.dataActions.setViewMode('complete')"
-                style="padding: 2px 6px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; color: var(--text-primary);"
-                title="Mostra tots els fulls de dades desglossats"
+                style="padding: 2px 6px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; color: var(--text-primary); display: inline-flex; align-items: center; gap: 4px;"
+                title="📋 Mode Complet: Mostra tots els fulls de dades desglossats"
               >
-                📋 Complet
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                <span v-if="store.config.showButtonTexts">Complet</span>
               </button>
               <button 
                 class="btn-segment" 
                 :class="{ active: store.dataActions?.getViewMode && store.dataActions.getViewMode() === 'compact' }"
                 @click="store.dataActions?.setViewMode && store.dataActions.setViewMode('compact')"
-                style="padding: 2px 6px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; color: var(--text-primary);"
-                title="Mostra el full seleccionat en mode de fitxa compacta"
+                style="padding: 2px 6px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; color: var(--text-primary); display: inline-flex; align-items: center; gap: 4px;"
+                title="🔍 Mode Compacte: Mostra el full seleccionat en mode de fitxa compacta"
               >
-                🔍 Compacte
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                <span v-if="store.config.showButtonTexts">Compacte</span>
               </button>
             </div>
             <button 
               class="btn btn-secondary" 
-              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 2;"
+              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 2; display: inline-flex; align-items: center; gap: 4px;"
               @click="store.dataActions?.toggleJsonView && store.dataActions.toggleJsonView()"
-              title="Commuta entre la vista estructurada per fulls i la vista del JSON natiu"
+              title="📄 Commuta entre la vista estructurada per fulls i la vista del JSON natiu"
             >
-              {{ store.dataActions?.getShowJsonView && store.dataActions.getShowJsonView() ? 'Mostra per fulls' : 'Mostra JSON' }}
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              <span v-if="store.config.showButtonTexts">{{ store.dataActions?.getShowJsonView && store.dataActions.getShowJsonView() ? 'Fulls' : 'Mostra JSON' }}</span>
             </button>
           </div>
           <div class="ribbon-group-label">VISTA</div>
@@ -1190,20 +1204,22 @@ const generateDocuments = async () => {
           <div class="ribbon-group-body" style="display: grid; grid-template-rows: repeat(2, 28px); grid-auto-flow: column; gap: 4px;">
             <button 
               class="btn btn-secondary" 
-              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-color: var(--color-primary, #0284c7); grid-row: 1;"
+              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-color: var(--color-primary, #0284c7); grid-row: 1; display: inline-flex; align-items: center; gap: 4px;"
               @click="store.dataActions?.loadMockData && store.dataActions.loadMockData()"
-              title="Carrega dades de prova en l'esquema jeràrquic"
+              title="🧪 Carrega dades de prova en l'esquema jeràrquic"
             >
-              🧪 Carrega Dades de Prova
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><line x1="8.5" y1="2" x2="15.5" y2="2"/></svg>
+              <span v-if="store.config.showButtonTexts">Dades de Prova</span>
             </button>
             <button 
               class="btn btn-primary" 
-              style="padding: 2px 10px; font-size: 0.72rem; height: 28px; background-color: var(--color-success); border-color: var(--color-success); grid-row: 2;"
+              style="padding: 2px 10px; font-size: 0.72rem; height: 28px; background-color: var(--color-success); border-color: var(--color-success); grid-row: 2; display: inline-flex; align-items: center; gap: 4px;"
               :disabled="store.dataActions?.savingExcel && store.dataActions.savingExcel()"
               @click="store.dataActions?.exportExcel && store.dataActions.exportExcel()"
-              title="Exporta les dades de tornada a un fitxer d'Excel (.xlsx)"
+              title="📥 Exporta les dades de tornada a un fitxer d'Excel (.xlsx)"
             >
-              {{ store.dataActions?.savingExcel && store.dataActions.savingExcel() ? 'Guardant...' : 'Desa i baixa a Excel 📥' }}
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span v-if="store.config.showButtonTexts">{{ store.dataActions?.savingExcel && store.dataActions.savingExcel() ? 'Guardant...' : 'Baixa Excel' }}</span>
             </button>
           </div>
           <div class="ribbon-group-label">DADES</div>
@@ -1218,20 +1234,22 @@ const generateDocuments = async () => {
             <button 
               class="btn btn-secondary" 
               :class="{ 'btn-primary': store.editorActions?.getActiveTab && store.editorActions.getActiveTab() === 'visual' }"
-              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 1;" 
+              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 1; display: inline-flex; align-items: center; gap: 4px;" 
               @click="store.editorActions?.switchEditorTab && store.editorActions.switchEditorTab('visual')"
-              title="Editor Visual (WYSIWYG)"
+              title="👁️ Editor Visual (WYSIWYG)"
             >
-              👁️ Visual
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <span v-if="store.config.showButtonTexts">Visual</span>
             </button>
             <button 
               class="btn btn-secondary" 
               :class="{ 'btn-primary': store.editorActions?.getActiveTab && store.editorActions.getActiveTab() === 'code' }"
-              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 2;" 
+              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 2; display: inline-flex; align-items: center; gap: 4px;" 
               @click="store.editorActions?.switchEditorTab && store.editorActions.switchEditorTab('code')"
-              title="Codi Markdown + Jinja2"
+              title="📄 Codi Markdown + Jinja2"
             >
-              📄 Codi
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              <span v-if="store.config.showButtonTexts">Codi</span>
             </button>
           </div>
           <div class="ribbon-group-label">VISUALITZACIÓ</div>
@@ -1244,10 +1262,10 @@ const generateDocuments = async () => {
               class="btn btn-secondary" 
               style="padding: 4px 10px; font-size: 0.75rem; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;"
               @click="store.editorActions?.openMetadataModal && store.editorActions.openMetadataModal()"
-              title="Metadades Pandoc (Títol, autor, data, índex...)"
+              title="🏷️ Metadades Pandoc (Títol, autor, data, índex...)"
             >
-              <span style="font-size: 1.1rem;">🏷️</span>
-              <span>Metadades</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+              <span v-if="store.config.showButtonTexts" style="font-size: 0.72rem;">Metadades</span>
             </button>
           </div>
           <div class="ribbon-group-label">METADADES</div>
@@ -1259,7 +1277,7 @@ const generateDocuments = async () => {
             <select 
               style="width: 110px; height: 28px; padding: 1px 4px; font-size: 0.75rem; grid-row: 1; grid-column: 1;" 
               @change="store.editorActions?.formatBlock && store.editorActions.formatBlock($event.target.value); $event.target.value = '';" 
-              title="Format de paràgraf"
+              title="Format de paràgraf (Títols H1-H6 o Paràgraf)"
             >
               <option value="">Format...</option>
               <option value="H1">Títol 1 (#)</option>
@@ -1283,9 +1301,18 @@ const generateDocuments = async () => {
         <!-- Group: Insereix -->
         <div class="ribbon-group-card">
           <div class="ribbon-group-body" style="display: grid; grid-template-rows: repeat(2, 28px); grid-auto-flow: column; gap: 4px;">
-            <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 1;" @click="store.editorActions?.openTableModal && store.editorActions.openTableModal()" title="Insereix taula automàtica">📊 Taula automàtica</button>
-            <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 2;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('for_row')" title="Insereix bucle de fila per a taules manuals">🔁 Bucle de fila</button>
-            <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 1; grid-column: 2;" @click="store.editorActions?.openMathModal && store.editorActions.openMathModal()" title="Insereix o edita fórmula d'equació LaTeX / KaTeX">∑ Equació</button>
+            <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 1; display: inline-flex; align-items: center; gap: 4px;" @click="store.editorActions?.openTableModal && store.editorActions.openTableModal()" title="📊 Insereix taula automàtica des de l'Excel">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+              <span v-if="store.config.showButtonTexts">Taula</span>
+            </button>
+            <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 2; display: inline-flex; align-items: center; gap: 4px;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('for_row')" title="🔁 Insereix bucle de fila per a taules manuals">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
+              <span v-if="store.config.showButtonTexts">Bucle de Fila</span>
+            </button>
+            <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 1; grid-column: 2; display: inline-flex; align-items: center; gap: 4px;" @click="store.editorActions?.openMathModal && store.editorActions.openMathModal()" title="∑ Insereix o edita fórmula d'equació LaTeX / KaTeX">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 4H6l6 8-6 8h12"/></svg>
+              <span v-if="store.config.showButtonTexts">Equació</span>
+            </button>
           </div>
           <div class="ribbon-group-label">INSEREIX</div>
         </div>
@@ -1293,8 +1320,14 @@ const generateDocuments = async () => {
         <!-- Group: Estructura -->
         <div class="ribbon-group-card">
           <div class="ribbon-group-body" style="display: grid; grid-template-rows: repeat(2, 28px); grid-auto-flow: column; gap: 4px;">
-            <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 1;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('if')" title="Insereix condicional IF">🔀 Condicional IF</button>
-            <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 2;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('for')" title="Insereix bucle FOR de text">🔁 Bucle FOR</button>
+            <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 1; display: inline-flex; align-items: center; gap: 4px;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('if')" title="🔀 Insereix condicional IF">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+              <span v-if="store.config.showButtonTexts">IF</span>
+            </button>
+            <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 2; display: inline-flex; align-items: center; gap: 4px;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('for')" title="🔁 Insereix bucle FOR de text">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+              <span v-if="store.config.showButtonTexts">FOR</span>
+            </button>
           </div>
           <div class="ribbon-group-label">ESTRUCTURA</div>
         </div>
@@ -1304,13 +1337,13 @@ const generateDocuments = async () => {
       <template v-else-if="store.activeTab === 'upload'">
         <div class="ribbon-group-card">
           <div class="ribbon-group-body" style="display: flex; align-items: center; gap: 6px; height: 60px;">
-            <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.72rem; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;" @click="loadDemo" :disabled="loadingDemo" title="Carrega fitxers de demostració per provar l'aplicació">
-              <span>✨</span>
-              <span>Carrega Demo</span>
+            <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.72rem; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;" @click="loadDemo" :disabled="loadingDemo" title="✨ Carrega fitxers de demostració per provar l'aplicació">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3z"/></svg>
+              <span v-if="store.config.showButtonTexts">Carrega Demo</span>
             </button>
-            <button class="btn btn-primary" style="padding: 4px 10px; font-size: 0.72rem; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;" @click="downloadAllProjectFiles" title="Descarrega el paquet ZIP del projecte">
-              <span>📥</span>
-              <span>Exporta ZIP</span>
+            <button class="btn btn-primary" style="padding: 4px 10px; font-size: 0.72rem; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;" @click="downloadAllProjectFiles" title="📥 Descarrega el paquet ZIP del projecte sencer">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span v-if="store.config.showButtonTexts">Exporta ZIP</span>
             </button>
           </div>
           <div class="ribbon-group-label">ACCIONS FITXERS</div>
@@ -1321,9 +1354,9 @@ const generateDocuments = async () => {
       <template v-else-if="store.activeTab === 'preview'">
         <div class="ribbon-group-card">
           <div class="ribbon-group-body" style="display: flex; align-items: center; gap: 6px; height: 60px;">
-            <button class="btn btn-success" style="padding: 4px 12px; font-size: 0.75rem; height: 48px; font-weight: bold; display: flex; align-items: center; gap: 6px;" :disabled="store.generating" @click="store.editorActions?.emitGenerate && store.editorActions.emitGenerate()" title="Compila la plantilla i genera els documents finals">
-              <span style="font-size: 1.2rem;">⚡</span>
-              <span>Genera Documents Finals</span>
+            <button class="btn btn-success" style="padding: 4px 12px; font-size: 0.75rem; height: 48px; font-weight: bold; display: flex; align-items: center; gap: 6px;" :disabled="store.generating" @click="store.editorActions?.emitGenerate && store.editorActions.emitGenerate()" title="⚡ Compila la plantilla i genera els documents finals">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              <span v-if="store.config.showButtonTexts">Genera Documents Finals</span>
             </button>
           </div>
           <div class="ribbon-group-label">COMPILACIÓ</div>
