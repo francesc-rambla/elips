@@ -1433,7 +1433,7 @@ const sidebarCopyInsert = (expr) => {
     let charOffset = 0;
     if (canvasRef.value) {
       charOffset = getCaretCharacterOffsetWithin(canvasRef.value);
-      const currentMd = convertHtmlToMarkdown(canvasRef.value);
+      const currentMd = parseHtmlToMarkdown(canvasRef.value);
       editorText.value = currentMd;
     }
     
@@ -1718,6 +1718,9 @@ const configureRowLoop = () => {
 const convertHtmlToMarkdown = (element) => {
   const clone = element.cloneNode(true);
   
+  // Remove UI helper elements before conversion
+  clone.querySelectorAll('.j-head, .j-actions, .j-footer, .j-inline-tag, .btn-layout, .btn-trash, .trailing-editable-line, .pandoc-metadata-chip').forEach(el => el.remove());
+  
   // Replace variable chips in the element
   clone.querySelectorAll('.j-var-chip').forEach(c => {
     let raw = (c.getAttribute('data-raw') || '').trim();
@@ -1754,6 +1757,7 @@ const convertHtmlToMarkdown = (element) => {
              })
              .replace(/<div><br><\/div>/gi, '\n')
              .replace(/<div>(.*?)<\/div>/gi, '\n$1')
+             .replace(/<p>(.*?)<\/p>/gi, '\n$1\n')
              .replace(/<br\s*[\/]?>/gi, '\n');
              
   const txt = document.createElement("textarea");
