@@ -1049,39 +1049,176 @@ const generateDocuments = async () => {
     <!-- Microsoft Office Desktop App Ribbon Tab Bar (Fitxers, Dades, Plantilla, Previsualització) -->
     <div v-show="!store.isMaximized" class="office-ribbon-bar" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); padding: 0 1.25rem; flex-shrink: 0; box-shadow: var(--shadow-sm); gap: 1rem; flex-wrap: wrap;">
       <!-- Office Tabs (Left) -->
-      <div class="office-tabs" style="display: flex; align-items: stretch; gap: 4px; margin-bottom: -1px;">
-        <button 
-          class="office-tab-btn" 
-          :class="{ active: store.activeTab === 'upload' }" 
-          @click="store.setActiveTab('upload')"
-          title="Carregar fitxers Excel, Plantilles i Document de referència"
-        >
-          📁 Fitxers
-        </button>
-        <button 
-          class="office-tab-btn" 
-          :class="{ active: store.activeTab === 'data' }" 
-          @click="store.setActiveTab('data')"
-          title="Inspector i editor de dades Excel"
-        >
-          📊 Dades
-        </button>
-        <button 
-          class="office-tab-btn" 
-          :class="{ active: store.activeTab === 'template' }" 
-          @click="store.setActiveTab('template')"
-          title="Editor de la plantilla Jinja2"
-        >
-          📝 Plantilla
-        </button>
-        <button 
-          class="office-tab-btn" 
-          :class="{ active: store.activeTab === 'preview' }" 
-          @click="store.setActiveTab('preview')"
-          title="Previsualització del document i compilació"
-        >
-          👁️ Previsualització
-        </button>
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <div class="office-tabs" style="display: flex; align-items: stretch; gap: 4px; margin-bottom: -1px;">
+          <button 
+            class="office-tab-btn" 
+            :class="{ active: store.activeTab === 'upload' }" 
+            @click="store.setActiveTab('upload')"
+            title="Carregar fitxers Excel, Plantilles i Document de referència"
+          >
+            📁 Fitxers
+          </button>
+          <button 
+            class="office-tab-btn" 
+            :class="{ active: store.activeTab === 'data' }" 
+            @click="store.setActiveTab('data')"
+            title="Inspector i editor de dades Excel"
+          >
+            📊 Dades
+          </button>
+          <button 
+            class="office-tab-btn" 
+            :class="{ active: store.activeTab === 'template' }" 
+            @click="store.setActiveTab('template')"
+            title="Editor de la plantilla Jinja2"
+          >
+            📝 Plantilla
+          </button>
+          <button 
+            class="office-tab-btn" 
+            :class="{ active: store.activeTab === 'preview' }" 
+            @click="store.setActiveTab('preview')"
+            title="Previsualització del document i compilació"
+          >
+            👁️ Previsualització
+          </button>
+        </div>
+
+        <!-- MS Office Style Ribbon Action Groups based on activeTab -->
+
+        <!-- Contextual Groups for Dades Tab -->
+        <template v-if="store.activeTab === 'data'">
+          <div class="office-ribbon-group" style="display: flex; align-items: center; gap: 6px; border-left: 1px solid var(--border-color); padding-left: 8px;">
+            <span style="font-size: 0.68rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Vista:</span>
+            <div class="segmented-control" style="display: inline-flex; border: 1px solid var(--border-color); border-radius: 4px; padding: 1px; background: var(--bg-tertiary);">
+              <button 
+                class="btn-segment" 
+                :class="{ active: store.dataActions?.getViewMode && store.dataActions.getViewMode() === 'complete' }"
+                @click="store.dataActions?.setViewMode && store.dataActions.setViewMode('complete')"
+                style="padding: 3px 8px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; color: var(--text-primary);"
+                title="Mostra tots els fulls de dades desglossats"
+              >
+                📋 Complet
+              </button>
+              <button 
+                class="btn-segment" 
+                :class="{ active: store.dataActions?.getViewMode && store.dataActions.getViewMode() === 'compact' }"
+                @click="store.dataActions?.setViewMode && store.dataActions.setViewMode('compact')"
+                style="padding: 3px 8px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; color: var(--text-primary);"
+                title="Mostra el full seleccionat en mode de fitxa compacta"
+              >
+                🔍 Compacte
+              </button>
+            </div>
+
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 3px 8px; font-size: 0.72rem; height: 28px;"
+              @click="store.dataActions?.toggleJsonView && store.dataActions.toggleJsonView()"
+              title="Commuta entre la vista estructurada per fulls i la vista del JSON natiu"
+            >
+              {{ store.dataActions?.getShowJsonView && store.dataActions.getShowJsonView() ? 'Mostra per fulls' : 'Mostra JSON' }}
+            </button>
+          </div>
+
+          <div class="office-ribbon-group" style="display: flex; align-items: center; gap: 6px; border-left: 1px solid var(--border-color); padding-left: 8px;">
+            <span style="font-size: 0.68rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Dades:</span>
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 3px 8px; font-size: 0.72rem; height: 28px; background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-color: var(--color-primary, #0284c7);"
+              @click="store.dataActions?.loadMockData && store.dataActions.loadMockData()"
+              title="Carrega dades de prova en l'esquema jeràrquic"
+            >
+              🧪 Carrega Dades de Prova
+            </button>
+
+            <button 
+              class="btn btn-primary" 
+              style="padding: 3px 10px; font-size: 0.72rem; height: 28px; background-color: var(--color-success); border-color: var(--color-success);"
+              :disabled="store.dataActions?.savingExcel && store.dataActions.savingExcel()"
+              @click="store.dataActions?.exportExcel && store.dataActions.exportExcel()"
+              title="Exporta les dades de tornada a un fitxer d'Excel (.xlsx)"
+            >
+              {{ store.dataActions?.savingExcel && store.dataActions.savingExcel() ? 'Guardant...' : 'Desa i baixa a Excel 📥' }}
+            </button>
+          </div>
+        </template>
+
+        <!-- Contextual Groups for Plantilla Tab -->
+        <template v-else-if="store.activeTab === 'template'">
+          <!-- Group Visualització -->
+          <div class="office-ribbon-group" style="display: flex; align-items: center; gap: 4px; border-left: 1px solid var(--border-color); padding-left: 8px;">
+            <span style="font-size: 0.68rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Visualització:</span>
+            <div class="segmented-control" style="display: inline-flex; border: 1px solid var(--border-color); border-radius: 4px; padding: 1px; background: var(--bg-tertiary);">
+              <button 
+                class="btn-segment" 
+                :class="{ active: store.editorActions?.getActiveTab && store.editorActions.getActiveTab() === 'visual' }"
+                @click="store.editorActions?.switchEditorTab && store.editorActions.switchEditorTab('visual')"
+                style="padding: 3px 8px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; color: var(--text-primary);"
+                title="Editor Visual (WYSIWYG)"
+              >
+                👁️ Visual
+              </button>
+              <button 
+                class="btn-segment" 
+                :class="{ active: store.editorActions?.getActiveTab && store.editorActions.getActiveTab() === 'code' }"
+                @click="store.editorActions?.switchEditorTab && store.editorActions.switchEditorTab('code')"
+                style="padding: 3px 8px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; color: var(--text-primary);"
+                title="Codi Markdown + Jinja2"
+              >
+                📄 Codi
+              </button>
+            </div>
+          </div>
+
+          <!-- Group Metadades -->
+          <div class="office-ribbon-group" style="display: flex; align-items: center; gap: 4px; border-left: 1px solid var(--border-color); padding-left: 8px;">
+            <span style="font-size: 0.68rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Metadades:</span>
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 3px 8px; font-size: 0.72rem; height: 28px;"
+              @click="store.editorActions?.openMetadataModal && store.editorActions.openMetadataModal()"
+              title="Metadades Pandoc (Títol, autor, data, índex...)"
+            >
+              🏷️ Metadades
+            </button>
+          </div>
+
+          <!-- Group Format -->
+          <div class="office-ribbon-group" style="display: flex; align-items: center; gap: 4px; border-left: 1px solid var(--border-color); padding-left: 8px;">
+            <span style="font-size: 0.68rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Format:</span>
+            <select style="width: auto; height: 28px; padding: 1px 4px; font-size: 0.75rem;" @change="store.editorActions?.formatBlock && store.editorActions.formatBlock($event.target.value); $event.target.value = '';" title="Format de paràgraf">
+              <option value="">Format...</option>
+              <option value="H1">Títol 1 (#)</option>
+              <option value="H2">Títol 2 (##)</option>
+              <option value="H3">Títol 3 (###)</option>
+              <option value="H4">Títol 4 (####)</option>
+              <option value="H5">Títol 5 (#####)</option>
+              <option value="H6">Títol 6 (######)</option>
+              <option value="P">Paràgraf normal (p)</option>
+            </select>
+            <button class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 28px; font-weight: bold;" @click="store.editorActions?.formatDoc && store.editorActions.formatDoc('bold')" title="Negreta (Ctrl+B)"><b>B</b></button>
+            <button class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 28px; font-style: italic;" @click="store.editorActions?.formatDoc && store.editorActions.formatDoc('italic')" title="Cursiva (Ctrl+I)"><i>I</i></button>
+            <button class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 28px;" @click="store.editorActions?.insertList && store.editorActions.insertList('unordered')" title="Llista de punts">•</button>
+            <button class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 28px;" @click="store.editorActions?.insertList && store.editorActions.insertList('ordered')" title="Llista numerada">1.</button>
+          </div>
+
+          <!-- Group Insereix -->
+          <div class="office-ribbon-group" style="display: flex; align-items: center; gap: 4px; border-left: 1px solid var(--border-color); padding-left: 8px;">
+            <span style="font-size: 0.68rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Insereix:</span>
+            <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; height: 28px;" @click="store.editorActions?.openTableModal && store.editorActions.openTableModal()" title="Insereix taula automàtica">📊 Taula automàtica</button>
+            <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; height: 28px;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('for_row')" title="Insereix bucle de fila per a taules manuals">🔁 Bucle de fila</button>
+            <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; height: 28px;" @click="store.editorActions?.openMathModal && store.editorActions.openMathModal()" title="Insereix o edita fórmula d'equació LaTeX / KaTeX">∑ Equació</button>
+          </div>
+
+          <!-- Group Estructura -->
+          <div class="office-ribbon-group" style="display: flex; align-items: center; gap: 4px; border-left: 1px solid var(--border-color); padding-left: 8px;">
+            <span style="font-size: 0.68rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Estructura:</span>
+            <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; height: 28px;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('if')" title="Insereix condicional IF">🔀 IF</button>
+            <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; height: 28px;" @click="store.editorActions?.openBlockModal && store.editorActions.openBlockModal('for')" title="Insereix bucle FOR de text">🔁 FOR</button>
+          </div>
+        </template>
       </div>
 
       <!-- Right Side: Document Toolbar -->

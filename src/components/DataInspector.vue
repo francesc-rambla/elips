@@ -811,65 +811,23 @@ const loadMockData = () => {
   const pName = localStorage.getItem('currentProjectName') || 'Default';
   localStorage.setItem(`${pName}:hierarchySchema`, JSON.stringify(mockTreeSchema));
 };
+
+onMounted(() => {
+  store.dataActions = {
+    loadMockData: () => loadMockData(),
+    setViewMode: (mode) => { viewMode.value = mode; },
+    getViewMode: () => viewMode.value,
+    toggleJsonView: () => { showJsonView.value = !showJsonView.value; },
+    getShowJsonView: () => showJsonView.value,
+    exportExcel: () => exportExcel(),
+    isExcelLoaded: () => isExcelLoaded.value,
+    savingExcel: () => savingExcel.value
+  };
+});
 </script>
 
 <template>
   <div class="workspace-wrapper">
-    <div v-if="!store.isMaximized" style="display: flex; justify-content: space-between; align-items: center; width: 100%; border-bottom: 2px solid var(--border-color); padding-bottom: 6px; margin-bottom: 8px;">
-      <div v-show="!store.isMaximized">
-        <h3 style="margin-bottom:0.25rem; font-size: 1.1rem; border: none; padding-bottom: 0;">Editor i Estructura de Dades</h3>
-        <p style="font-size:0.75rem; color:var(--text-muted)">Modifiqueu els valors directament i exporteu de tornada a l'Excel.</p>
-      </div>
-      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-        <!-- Test Data Button -->
-        <button 
-          class="btn btn-secondary" 
-          style="width: auto; padding: 0.4rem 0.8rem; font-size:0.75rem; background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-color: var(--color-primary, #0284c7);"
-          @click="loadMockData"
-          title="Carrega un conjunt de dades jeràrquiques codificats per fer proves de l'editor"
-        >
-          🧪 Carrega Dades de Prova
-        </button>
-
-        <!-- Segmented Control for Layout (only if not in raw JSON view) -->
-        <div v-if="isExcelLoaded && !showJsonView" class="segmented-control" style="display: inline-flex; border: 1px solid var(--border-color); border-radius: 6px; padding: 2px; background: var(--bg-tertiary);">
-          <button 
-            class="btn-segment" 
-            :class="{ active: viewMode === 'complete' }"
-            @click="viewMode = 'complete'"
-            style="padding: 4px 8px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 4px; color: var(--text-primary); display: flex; align-items: center; gap: 4px;"
-          >
-            📋 Complet
-          </button>
-          <button 
-            class="btn-segment" 
-            :class="{ active: viewMode === 'compact' }"
-            @click="viewMode = 'compact'"
-            style="padding: 4px 8px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 4px; color: var(--text-primary); display: flex; align-items: center; gap: 4px;"
-          >
-            🔍 Compacte
-          </button>
-        </div>
-
-        <button 
-          v-if="isExcelLoaded"
-          class="btn btn-secondary" 
-          style="width: auto; padding: 0.4rem 0.8rem; font-size:0.75rem;"
-          @click="showJsonView = !showJsonView"
-        >
-          {{ showJsonView ? 'Mostra per fulls' : 'Mostra JSON' }}
-        </button>
-        <button 
-          v-if="isExcelLoaded"
-          class="btn btn-primary" 
-          style="width: auto; padding: 0.4rem 0.8rem; font-size:0.75rem; background-color: var(--color-success); border-color: var(--color-success);"
-          :disabled="savingExcel"
-          @click="exportExcel"
-        >
-          {{ savingExcel ? 'Guardant...' : 'Desa i baixa a Excel 📥' }}
-        </button>
-      </div>
-    </div>
 
     <!-- Empty State -->
     <div v-if="!isExcelLoaded" class="sheets-accordion">
