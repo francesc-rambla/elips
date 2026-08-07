@@ -210,6 +210,38 @@ const updateActiveLoopContext = () => {
   activeLoopContext.value = getActiveLoopContext();
 };
 
+// Metadata label resolution helpers for template chips and variable tree
+const getFieldCustomLabel = (keyName) => {
+  if (!keyName || typeof keyName !== 'string') return keyName;
+  let foundLabel = '';
+  if (store.editorMetadata && Array.isArray(store.editorMetadata)) {
+    const meta = store.editorMetadata.find(m => m.element === keyName && m.label && m.label.trim());
+    if (meta) foundLabel = meta.label.trim();
+  }
+  if (!foundLabel && store.excelJsonData?.editor_metadata) {
+    const metaList = store.excelJsonData.editor_metadata;
+    if (Array.isArray(metaList)) {
+      const meta = metaList.find(m => m.element === keyName && m.label && m.label.trim());
+      if (meta) foundLabel = meta.label.trim();
+    }
+  }
+  return foundLabel || keyName;
+};
+
+const resolveFieldLabel = (rawExpr) => {
+  if (!rawExpr || typeof rawExpr !== 'string') return rawExpr;
+  const vars = rawExpr.trim().split('|');
+  const expr = vars[0].trim();
+  const filter = vars.length > 1 ? vars.slice(1).join('|').trim() : '';
+
+  const segments = expr.split('.');
+  const lastKey = segments[segments.length - 1];
+
+  const customLabel = getFieldCustomLabel(lastKey);
+  const baseDisplay = customLabel !== lastKey ? customLabel : expr;
+  return filter ? `${baseDisplay} | ${filter}` : baseDisplay;
+};
+
 // Computed properties for the modal data browser
 const availableVariables = computed(() => {
   if (!store.excelJsonData) return [];
@@ -220,9 +252,10 @@ const availableVariables = computed(() => {
     const ctx = activeLoopContext.value;
     for (const col of ctx.columns) {
       if (isInternalMetadataKey(col)) continue;
+      const cLabel = getFieldCustomLabel(col);
       list.push({ 
         path: `${ctx.iterator}.${col}`, 
-        label: `Bucle actiu (${ctx.iterator}.${col})`, 
+        label: cLabel !== col ? `${cLabel} (${ctx.iterator}.${col})` : `Bucle actiu (${ctx.iterator}.${col})`, 
         category: 'loopContext',
         isContext: true 
       });
@@ -245,7 +278,8 @@ const availableVariables = computed(() => {
           if (Array.isArray(v)) {
             walkVars(v, childP);
           } else {
-            list.push({ path: `${pathPrefix}[0].${k}`, label: `Primer element (${pathPrefix}[0].${k})`, category: 'arrayItem', isContext: false });
+            const cLabel = getFieldCustomLabel(k);
+            list.push({ path: `${pathPrefix}[0].${k}`, label: cLabel !== k ? `${cLabel} (${pathPrefix}[0].${k})` : `Primer element (${pathPrefix}[0].${k})`, category: 'arrayItem', isContext: false });
           }
         });
       }
@@ -258,7 +292,8 @@ const availableVariables = computed(() => {
         } else if (typeof v === 'object' && v !== null) {
           walkVars(v, childP);
         } else {
-          list.push({ path: childP, label: childP, category: 'scalar', isContext: false });
+          const cLabel = getFieldCustomLabel(k);
+          list.push({ path: childP, label: cLabel !== k ? `${cLabel} (${childP})` : childP, category: 'scalar', isContext: false });
         }
       });
     }
@@ -846,7 +881,7 @@ const applyTableModal = () => {
     html += `<tr class="j-row-loop" data-jinja-for="${loopExpr}">`;
     activeCols.forEach(c => {
       const chipRaw = `${iteratorVar.value.trim()}.${c.key}`;
-      html += `<td style="text-align: ${c.align};"><span class="j-var-chip" contenteditable="false" data-raw="${chipRaw}">${chipRaw}</span></td>`;
+      html += `<td style="text-align: ${c.align};"><span class="j-var-chip" contenteditable="false" data-raw="${chipRaw}">${resolveFieldLabel(chipRaw)}</span></td>`;
     });
     html += '</tr></tbody></table><p><br></p>';
   } else if (isTrans) {
@@ -868,14 +903,14 @@ const applyTableModal = () => {
     html += '<table><thead><tr>';
     html += '<th data-align="left">Dada</th>';
     const headChipRaw = `${iteratorVar.value.trim()}.${selectedColHeaderKey.value}`;
-    html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">${headChipRaw}</span></th>`;
+    html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">${resolveFieldLabel(headChipRaw)}</span></th>`;
     html += '</tr></thead><tbody>';
     
     activeCols.forEach(c => {
       html += '<tr>';
       html += `<td>${c.header}</td>`;
       const cellChipRaw = `${iteratorVar.value.trim()}.${c.key}`;
-      html += `<td style="text-align: ${c.align};" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${cellChipRaw}">${cellChipRaw}</span></td>`;
+      html += `<td style="text-align: ${c.align};" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${cellChipRaw}">${resolveFieldLabel(cellChipRaw)}</span></td>`;
       html += '</tr>';
     });
     html += '</tbody></table><p><br></p>';
@@ -945,7 +980,7 @@ const applyVariable = () => {
   }
 
   const rawJinja = filter ? `{{ ${expr} | ${filter} }}` : `{{ ${expr} }}`;
-  const displayLabel = filter ? `${expr} | ${filter}` : `${expr}`;
+  const displayLabel = resolveFieldLabel(filter ? `${expr} | ${filter}` : `${expr}`);
 
   if (activeEditorTab.value === 'visual') {
     restoreSelection();
@@ -1554,7 +1589,7 @@ const convertJinjaToChips = (text) => {
     const vars = v.split('|');
     const expr = vars[0].trim();
     const filter = vars.length > 1 ? vars.slice(1).join('|').trim() : '';
-    const displayLabel = filter ? `${expr} | ${filter}` : `${expr}`;
+    const displayLabel = resolveFieldLabel(v);
     return `<span class="j-var-chip" contenteditable="false" data-raw="${expr}${filter ? '|' + filter : ''}">${displayLabel}</span>`;
   });
 };
@@ -1644,7 +1679,7 @@ const parseCommentTablesToHtml = (md) => {
     let html = '<table><thead><tr>';
     html += '<th data-align="left">Dada</th>';
     const headChipRaw = `${loopVar}.${colHeader}`;
-    html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">${headChipRaw}</span></th>`;
+    html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">${resolveFieldLabel(headChipRaw)}</span></th>`;
     html += '</tr></thead><tbody>';
     
     const bodyLines = lines.slice(2);
@@ -1662,7 +1697,7 @@ const parseCommentTablesToHtml = (md) => {
       
       html += '<tr>';
       html += `<td>${rowLabel}</td>`;
-      html += `<td style="text-align: ${align};" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${cellChipRaw}">${cellChipRaw}</span></td>`;
+      html += `<td style="text-align: ${align};" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${cellChipRaw}">${resolveFieldLabel(cellChipRaw)}</span></td>`;
       html += '</tr>';
     });
     html += '</tbody></table>';
@@ -1948,7 +1983,7 @@ const compileMarkdownToHtml = (markdownText) => {
         const vars = v.split('|');
         const expr = vars[0].trim();
         const filter = vars.length > 1 ? vars.slice(1).join('|').trim() : '';
-        const displayLabel = filter ? `${expr} | ${filter}` : `${expr}`;
+        const displayLabel = resolveFieldLabel(v);
         return `<span class="j-var-chip" contenteditable="false" data-raw="${expr}${filter ? '|' + filter : ''}">${displayLabel}</span>`;
       });
       
@@ -2832,7 +2867,7 @@ onUnmounted(() => {
             @click="sidebarCopyInsert(`{{ ${activeLoopContext.iterator}.${col} }}`)"
             title="Insereix variable contextual del bucle"
           >
-            <span style="font-weight: 600;">{{ activeLoopContext.iterator }}.{{ col }}</span>
+            <span style="font-weight: 600;">{{ getFieldCustomLabel(col) }}</span>
             <span class="variable-badge present" style="background-color: var(--color-primary); color: white;">bucle</span>
           </div>
         </div>
@@ -2855,7 +2890,7 @@ onUnmounted(() => {
             @click="sidebarCopyInsert(`{{ ${typeof f === 'string' ? node.name + '.' + f : f.fullPath} }}`)"
             title="Clica per copiar i inserir variable"
           >
-            <span>{{ typeof f === 'string' ? f : f.key }}</span>
+            <span :title="typeof f === 'string' ? f : f.key">{{ getFieldCustomLabel(typeof f === 'string' ? f : f.key) }}</span>
             <span class="variable-badge present">Clau</span>
           </div>
 
@@ -2887,7 +2922,7 @@ onUnmounted(() => {
               @click="sidebarCopyInsert(activeLoopContext && activeLoopContext.iterator ? `{{ ${activeLoopContext.iterator}.${col} }}` : `{{ ${sub.iteratorName}.${col} }}`)"
               title="Clica per copiar i inserir variable"
             >
-              <span>{{ col }}</span>
+              <span :title="col">{{ getFieldCustomLabel(col) }}</span>
               <span class="variable-badge present">Camp</span>
             </div>
 
@@ -2917,7 +2952,7 @@ onUnmounted(() => {
                 @click="sidebarCopyInsert(`{{ ${childSub.iteratorName}.${childCol} }}`)"
                 title="Clica per copiar i inserir camp d'activitat"
               >
-                <span>{{ childCol }}</span>
+                <span :title="childCol">{{ getFieldCustomLabel(childCol) }}</span>
                 <span class="variable-badge present">Camp Activitat</span>
               </div>
             </div>
