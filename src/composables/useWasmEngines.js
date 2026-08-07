@@ -875,6 +875,9 @@ def write_cell_value(ws, row_idx, col_idx, value):
         visited.add(ref_key)
         target_cell = ref_cell
     
+    if isinstance(value, (list, dict)):
+        value = json.dumps(value, ensure_ascii=False)
+
     # Cast value to correct type before writing
     if isinstance(value, str):
         s = value.strip()
@@ -1857,6 +1860,21 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     
     // Read the updated Excel file from Pyodide virtual FS
     const excelBytes = _pyodide.FS.readFile('/work/out.xlsx');
+    try {
+      _pyodide.FS.writeFile('/work/in.xlsx', excelBytes);
+    } catch (_) {}
+
+    // Persist binary buffer into store.excelFile and IndexedDB persistent storage
+    try {
+      const pName = store.currentProjectName || localStorage.getItem('currentProjectName') || 'Default';
+      const fileName = store.excelFileName || `${pName}.xlsx`;
+      store.excelFileName = fileName;
+      store.excelFile = new File([excelBytes], fileName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      await saveBinaryFile(`${pName}:excelFileBuffer`, excelBytes.buffer);
+    } catch (e) {
+      console.warn("Error desant el fitxer Excel a IndexedDB:", e);
+    }
+
     return new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   };
 
