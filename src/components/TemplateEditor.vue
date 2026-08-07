@@ -2773,92 +2773,10 @@ onUnmounted(() => {
 
 <template>
   <div style="display: flex; flex-direction: column; gap: 0.5rem; height: 100%; max-height: 100%; min-height: 0; flex: 1;">
-    <!-- Visual vs Code Tab Controller (hidden in Maximized mode since it moves to super-toolbar) -->
-    <div v-if="!store.isMaximized" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--border-color); padding-bottom: 4px; flex-shrink: 0;">
-      <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-        <button 
-          class="btn-secondary" 
-          style="width:auto; padding:0.4rem 0.8rem; font-size:0.75rem;"
-          :class="{ 'btn-primary': activeEditorTab === 'visual' }"
-          @click="switchTab('visual')"
-        >
-          👁️ Editor Visual
-        </button>
-        <button 
-          class="btn-secondary" 
-          style="width:auto; padding:0.4rem 0.8rem; font-size:0.75rem;"
-          :class="{ 'btn-primary': activeEditorTab === 'code' }"
-          @click="switchTab('code')"
-        >
-          📄 Codi Markdown
-        </button>
-        <button 
-          class="btn-secondary" 
-          style="width:auto; padding:0.4rem 0.8rem; font-size:0.75rem;"
-          @click="openMetadataModal()"
-          title="Metadades Pandoc (Títol, autor, data, índex...)"
-        >
-          🏷️ Metadades
-        </button>
-      </div>
-      
-      <!-- Maximize & Generation controls -->
-      <div v-if="!isCellMode" style="display: flex; gap: 6px; align-items: center;">
-        <button 
-          class="btn-secondary" 
-          style="width: auto; padding: 0.4rem 0.8rem; font-size: 0.75rem; display: flex; align-items: center; gap: 4px;"
-          @click="store.toggleMaximize"
-          title="Maximitza l'editor a pantalla completa"
-        >
-          🖥️ Maximitzar
-        </button>
-      </div>
-    </div>
-
     <!-- Template Grid: Left Column Editor Container + Right Column Data Schema Sidebar -->
     <div class="template-grid">
       <!-- Editor Canvas Wrapper -->
       <div class="editor-container">
-        <!-- Visual Toolbar (hidden in Maximized mode since it moves to super-toolbar) -->
-        <div class="editor-header" v-if="activeEditorTab === 'visual' && !store.isMaximized" style="flex-wrap: wrap; gap: 6px; padding: 0.5rem;">
-          <select style="width: auto; padding: 4px; font-size: 0.8rem;" @change="formatBlock($event.target.value); $event.target.value = '';">
-            <option value="">Format...</option>
-            <option value="H1">Títol 1 (#)</option>
-            <option value="H2">Títol 2 (##)</option>
-            <option value="H3">Títol 3 (###)</option>
-            <option value="H4">Títol 4 (####)</option>
-            <option value="H5">Títol 5 (#####)</option>
-            <option value="H6">Títol 6 (######)</option>
-            <option value="P">Paràgraf (text normal)</option>
-          </select>
-          
-          <div style="display:flex; gap:2px;">
-            <button class="btn-icon-only" style="width:30px; height:30px; font-size:0.8rem;" @click="formatCmd('bold')"><b>B</b></button>
-            <button class="btn-icon-only" style="width:30px; height:30px; font-size:0.8rem;" @click="formatCmd('italic')"><i>I</i></button>
-          </div>
-          
-          <span style="border-left:1px solid var(--border-color); height:18px;"></span>
-          
-          <div style="display:flex; gap:2px;">
-            <button class="btn-icon-only" style="width:30px; height:30px; font-size:0.8rem;" @click="formatCmd('insertUnorderedList')">•</button>
-            <button class="btn-icon-only" style="width:30px; height:30px; font-size:0.8rem;" @click="formatCmd('insertOrderedList')">1.</button>
-          </div>
-
-          <span style="border-left:1px solid var(--border-color); height:18px;"></span>
-
-          <div style="display:flex; gap:4px;">
-            <button class="btn btn-secondary" style="width:auto; height:30px; padding:0 0.5rem; font-size:0.75rem;" @click="openTableModal()">📊 Taula</button>
-            <button class="btn btn-secondary" style="width:auto; height:30px; padding:0 0.5rem; font-size:0.75rem; background-color: var(--color-primary-light); color: var(--color-primary);" @click="configureRowLoop">🔁 Bucle Fila</button>
-          </div>
-
-          <span style="border-left:1px solid var(--border-color); height:18px;"></span>
-
-          <div style="display:flex; gap:4px;">
-            <button class="btn btn-secondary" style="width:auto; height:30px; padding:0 0.5rem; font-size:0.75rem; color: #b45309;" @click="openMathModal()">📐 + Equació</button>
-            <button class="btn btn-secondary" style="width:auto; height:30px; padding:0 0.5rem; font-size:0.75rem;" @click="openBlockModal('if')">+ 🔀 IF</button>
-            <button class="btn btn-secondary" style="width:auto; height:30px; padding:0 0.5rem; font-size:0.75rem;" @click="openBlockModal('for')">+ 🔁 FOR</button>
-          </div>
-        </div>
 
         <!-- Visual WYSIWYG Editor Canvas -->
         <div 
