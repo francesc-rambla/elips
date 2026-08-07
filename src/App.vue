@@ -5,7 +5,6 @@ import { useWasmEngines } from './composables/useWasmEngines';
 import { saveBinaryFile, getBinaryFile, deleteBinaryFile } from './utils/db';
 
 // Components
-import Stepper from './components/Stepper.vue';
 import FileCard from './components/FileCard.vue';
 import DataInspector from './components/DataInspector.vue';
 import TemplateEditor from './components/TemplateEditor.vue';
@@ -19,6 +18,20 @@ const { initEngines, parseExcel, renderMarkdown, compileDocx, saveExcelData, wri
 const isSettingsOpen = ref(false);
 const isThemeDark = ref(localStorage.getItem('theme') === 'dark');
 const isTerminalOpen = ref(false);
+
+const isSidebarAutoHidden = ref(localStorage.getItem('sidebarAutoHidden') === 'true');
+const isSidebarHovered = ref(false);
+
+const toggleSidebarAutoHide = () => {
+  isSidebarAutoHidden.value = !isSidebarAutoHidden.value;
+  localStorage.setItem('sidebarAutoHidden', String(isSidebarAutoHidden.value));
+  store.addLog(
+    isSidebarAutoHidden.value 
+      ? "Tauler de control configurat en mode Auto-amagat (situa el cursor a l'esquerra per obrir-lo)." 
+      : "Tauler de control fixat a la vista.", 
+    "info"
+  );
+};
 
 const buildCode = ref(typeof __BUILD_CODE__ !== 'undefined' ? __BUILD_CODE__ : 'BUILD-DEV');
 
@@ -1368,19 +1381,47 @@ const generateDocuments = async () => {
       </div>
     </div>
 
+    <!-- Sidebar Edge Hover Trigger Bar when Auto-Hidden -->
+    <div 
+      v-if="isSidebarAutoHidden && !store.isMaximized" 
+      class="sidebar-edge-trigger" 
+      @mouseenter="isSidebarHovered = true"
+      title="Passa el cursor per mostrar el Tauler de Control"
+    >
+      <div style="writing-mode: vertical-rl; text-transform: uppercase; font-size: 0.65rem; font-weight: 700; color: var(--color-primary); letter-spacing: 1px; padding: 10px 2px; transform: rotate(180deg); user-select: none;">
+        ◀ TAULER
+      </div>
+    </div>
+
     <div class="container" :style="store.isMaximized ? 'padding: 6px 12px; gap: 0; height: calc(100vh - 42px);' : ''">
 
-
-      <!-- Stepper -->
-      <Stepper v-show="!store.isMaximized" />
-
       <!-- Main Workspace Grid -->
-      <div class="main-grid" :class="{ 'editor-maximized': store.isMaximized }">
+      <div 
+        class="main-grid" 
+        :class="{ 'editor-maximized': store.isMaximized, 'sidebar-auto-hidden': isSidebarAutoHidden && !store.isMaximized }"
+      >
         <!-- Control Card Panel -->
-        <div class="card" v-show="!store.isMaximized">
-          <div class="card-title">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sliders-horizontal"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="12" x2="12" y1="18" y2="22"/></svg>
-            Tauler de Control
+        <div 
+          class="card control-panel-card" 
+          v-show="!store.isMaximized"
+          :class="{ 'auto-hidden': isSidebarAutoHidden, 'hovered': isSidebarHovered }"
+          @mouseenter="isSidebarHovered = true"
+          @mouseleave="isSidebarHovered = false"
+        >
+          <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sliders-horizontal"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="12" x2="12" y1="18" y2="22"/></svg>
+              <span>Tauler de Control</span>
+            </div>
+            <button 
+              type="button" 
+              class="btn-icon-only" 
+              style="width: 24px; height: 24px; font-size: 0.75rem; border: none; background: transparent;"
+              @click="toggleSidebarAutoHide"
+              :title="isSidebarAutoHidden ? 'Fixa el tauler de control' : 'Auto-amaga el tauler de control'"
+            >
+              📌
+            </button>
           </div>
 
           <div style="display: flex; flex-direction: column; gap: 0.75rem;">
