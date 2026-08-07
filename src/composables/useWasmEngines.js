@@ -420,6 +420,17 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     else:
                         parent[sub_key] = data_to_set
 
+    # Auto-link sub-tables to parent objects if not explicitly linked by dotted sheet name
+    kv_dicts = [k for k, v in root.items() if isinstance(v, dict)]
+    tabular_lists = [k for k, v in root.items() if isinstance(v, list)]
+
+    if len(kv_dicts) == 1 and len(tabular_lists) > 0:
+        parent_dict_key = kv_dicts[0]
+        parent_dict = root[parent_dict_key]
+        for t_key in tabular_lists:
+            if t_key not in parent_dict:
+                parent_dict[t_key] = root[t_key]
+
     return {
         'data': root,
         'hierarchy_schema': hierarchy_schema
