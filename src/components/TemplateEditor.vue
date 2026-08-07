@@ -287,18 +287,20 @@ const getActiveLoopStack = (targetNode = null) => {
     }
   }
 
-  // Resolve columns and path references sequentially using stack context
-  const stack = [];
-  for (const block of rawLoopBlocks) {
-    const columns = resolveColumnsForArray(block.arrayPath, block.iterator, stack);
-    stack.push({
+  // Resolve columns and path references sequentially from outermost to innermost
+  const outerFirstBlocks = [...rawLoopBlocks].reverse();
+  const resolvedStack = [];
+  for (const block of outerFirstBlocks) {
+    const columns = resolveColumnsForArray(block.arrayPath, block.iterator, resolvedStack);
+    resolvedStack.push({
       iterator: block.iterator,
       arrayPath: block.arrayPath,
       columns
     });
   }
   
-  return stack;
+  // Return stack ordered by depth (innermost first) for sidebar display
+  return resolvedStack.reverse();
 };
 
 const getActiveLoopContext = (targetNode = null) => {
@@ -472,17 +474,13 @@ const availableArrays = computed(() => {
   walkArrays(store.excelJsonData, '');
 
   // Add iterator-relative array options if inside an active FOR loop!
-  if (activeLoopContext.value) {
-    const ctx = activeLoopContext.value;
-    if (ctx.columns) {
-      ctx.columns.forEach(col => {
-        if (isInternalMetadataKey(col)) return;
-        const arr = resolvePath(store.excelJsonData, `${ctx.iterator}.${col}`);
-        if (arr && Array.isArray(arr)) {
-          setList.add(`${ctx.iterator}.${col}`);
-        }
+  if (activeLoopStack.value && activeLoopStack.value.length > 0) {
+    activeLoopStack.value.forEach(ctx => {
+      const subArrays = getSubArraysForArray(ctx.arrayPath);
+      subArrays.forEach(sub => {
+        setList.add(`${ctx.iterator}.${sub.key}`);
       });
-    }
+    });
   }
 
   return Array.from(setList);
@@ -1178,7 +1176,7 @@ const sidebarCopyInsert = (expr) => {
     // Block statement (e.g. Jinja FOR loop block)
     if (activeEditorTab.value === 'visual') {
       restoreSelection();
-      const html = parseCodeToVisual(expr);
+      const html = compileMarkdownToHtml(expr);
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = html;
       
