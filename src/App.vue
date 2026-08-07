@@ -958,8 +958,8 @@ const generateDocuments = async () => {
     <!-- Loading Screen Overlay -->
     <div v-if="isLoading" class="loading-screen">
       <div class="loading-card">
-        <div class="loading-logo">CP</div>
-        <h2 class="loading-title">Inicialitzant Motors WebAssembly</h2>
+        <div class="loading-logo">elips</div>
+        <h2 class="loading-title">elips — Editor de LIcitacions PúbliqueS</h2>
         <p class="loading-subtitle">S'estan carregant Pyodide, Pandoc i l'entorn de compilació regional en local...</p>
         
         <div class="loading-spinner-container">
@@ -979,48 +979,48 @@ const generateDocuments = async () => {
       <!-- Standard Header (hidden in Maximized Mode) -->
       <header v-show="!store.isMaximized">
         <div class="brand">
-          <div class="brand-logo">CP</div>
-        <div class="brand-title">
-          <h1>Generador de Contractes Públics (Vue.js)</h1>
-          <p>Estructurat per components modulars de fons, lliurat com a Single-File</p>
+          <div class="brand-logo" title="elips: Editor de LIcitacions PúbliqueS">elips</div>
+          <div class="brand-title">
+            <h1>elips</h1>
+            <p>Editor de LIcitacions PúbliqueS</p>
+          </div>
         </div>
-      </div>
-      
-      <div style="display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.06); padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border-color); margin-left: auto; margin-right: 20px;">
-        <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;">PROJECTE:</span>
-        <span style="font-size: 0.85rem; color: var(--text-primary); font-weight: 700; font-family: monospace; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" :title="currentProjectName">
-          {{ currentProjectName }}
-        </span>
-        <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.75rem; width: auto; height: auto; font-weight: 500;" @click="openProjectsModal" title="Gestiona projectes">
-          📂 Gestiona
-        </button>
-        <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.75rem; width: auto; height: auto; font-weight: 500;" @click="loadDemo" :disabled="loadingDemo" title="Carrega dades de demostració per provar l'aplicació">
-          ✨ Demo
-        </button>
-        <button class="btn btn-primary" style="padding: 4px 10px; font-size: 0.75rem; width: auto; height: auto; display: inline-flex; align-items: center; gap: 4px; font-weight: 600;" @click="downloadAllProjectFiles" title="Descarrega tots els fitxers originals del projecte actiu">
-          📥 Desar fitxers
-        </button>
-      </div>
-      
-      <div class="header-actions">
-        <!-- Terminal Logs Drawer Toggle -->
-        <button class="btn-icon-only" :class="{ 'btn-active': isTerminalOpen }" @click="isTerminalOpen = !isTerminalOpen" title="Mostra la terminal de logs i incidències" style="position: relative;">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-terminal"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
-          <span v-if="store.issues.length > 0" class="badge-dot"></span>
-        </button>
-
-        <!-- Theme Toggle -->
-        <button class="btn-icon-only" @click="toggleTheme" title="Canvia el tema (Clar/Fosc)">
-          <svg v-if="!isThemeDark" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
-          <svg v-else xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-moon"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
-        </button>
         
-        <!-- Settings toggle -->
-        <button class="btn-icon-only" @click="isSettingsOpen = true" title="Configuració avançada">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-        </button>
-      </div>
-    </header>
+        <div style="display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.06); padding: 4px 10px; border-radius: 16px; border: 1px solid var(--border-color); margin-left: auto; margin-right: 16px;">
+          <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;">PROJECTE:</span>
+          <span style="font-size: 0.82rem; color: var(--text-primary); font-weight: 700; font-family: monospace; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" :title="currentProjectName">
+            {{ currentProjectName }}
+          </span>
+          <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; width: auto; height: 26px; font-weight: 500;" @click="openProjectsModal" title="Gestiona projectes">
+            📂 Gestiona
+          </button>
+          <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; width: auto; height: 26px; font-weight: 500;" @click="loadDemo" :disabled="loadingDemo" title="Carrega dades de demostració per provar l'aplicació">
+            ✨ Demo
+          </button>
+          <button class="btn btn-primary" style="padding: 3px 8px; font-size: 0.72rem; width: auto; height: 26px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600;" @click="downloadAllProjectFiles" title="Descarrega tots els fitxers originals del projecte actiu">
+            📥 Desar fitxers
+          </button>
+        </div>
+        
+        <div class="header-actions">
+          <!-- Terminal Logs Drawer Toggle -->
+          <button class="btn-icon-only" :class="{ 'btn-active': isTerminalOpen }" @click="isTerminalOpen = !isTerminalOpen" title="Mostra la terminal de logs i incidències" style="position: relative; width: 32px; height: 32px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-terminal"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
+            <span v-if="store.issues.length > 0" class="badge-dot"></span>
+          </button>
+
+          <!-- Theme Toggle -->
+          <button class="btn-icon-only" @click="toggleTheme" title="Canvia el tema (Clar/Fosc)" style="width: 32px; height: 32px;">
+            <svg v-if="!isThemeDark" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+            <svg v-else xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-moon"><path d="M12 3a6 6 0 0 0 9 9 9 0 1 1-9-9Z"/></svg>
+          </button>
+          
+          <!-- Settings toggle -->
+          <button class="btn-icon-only" @click="isSettingsOpen = true" title="Configuració avançada" style="width: 32px; height: 32px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </header>
 
     <!-- Standard Document Sub-Header Toolbar (hidden in Maximized Mode) -->
     <div v-show="!store.isMaximized" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); padding: 8px 1.5rem; flex-shrink: 0; box-shadow: var(--shadow-sm); gap: 1rem; flex-wrap: wrap;">
