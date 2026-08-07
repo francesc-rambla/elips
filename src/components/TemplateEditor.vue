@@ -1412,43 +1412,99 @@ const sidebarInsertLoop = (subKey, fullPath, iteratorName, fields) => {
 // Sidebar copy insert variable / block handler
 const sidebarCopyInsert = (expr) => {
   const isBlock = expr.includes('{%') || expr.includes('\n');
-  const insertContent = isBlock ? `\n\n${expr.trim()}\n\n` : (expr.startsWith('{{') ? expr : `{{ ${expr} }}`);
 
   if (activeEditorTab.value === 'code') {
     if (textareaRef.value) {
       const txt = textareaRef.value;
       const start = txt.selectionStart || 0;
       const end = txt.selectionEnd || 0;
-      editorText.value = editorText.value.substring(0, start) + insertContent + editorText.value.substring(end);
+      const insertText = isBlock ? `\n\n${expr.trim()}\n\n` : (expr.startsWith('{{') ? expr : `{{ ${expr} }}`);
+      editorText.value = editorText.value.substring(0, start) + insertText + editorText.value.substring(end);
       setTimeout(() => {
         txt.focus();
-        txt.selectionStart = txt.selectionEnd = start + insertContent.length;
+        txt.selectionStart = txt.selectionEnd = start + insertText.length;
         updateActiveLoopContext();
       }, 50);
     }
   } else {
-    // Visual Mode:
-    // Update Markdown source of truth at caret offset and recompile visual canvas
-    saveSelection();
-    let charOffset = 0;
-    if (canvasRef.value) {
-      charOffset = getCaretCharacterOffsetWithin(canvasRef.value);
-      const currentMd = parseHtmlToMarkdown(canvasRef.value);
-      editorText.value = currentMd;
-    }
+    // Visual Mode DOM Range Insertion
+    restoreSelection();
     
-    const currentText = editorText.value || '';
-    const safeOffset = Math.min(charOffset, currentText.length);
-    editorText.value = currentText.substring(0, safeOffset) + insertContent + currentText.substring(safeOffset);
-    
-    // Compile markdown back to visual HTML DOM canvas
-    syncCodeToVisual();
-    
-    const newCaretPos = safeOffset + insertContent.length;
-    nextTick(() => {
-      if (canvasRef.value) {
-        setCaretCharacterOffsetWithin(canvasRef.value, newCaretPos);
+    if (isBlock) {
+      // 1. Insert Block (Jinja loop or condition block)
+      const html = compileMarkdownToHtml(expr);
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = html;
+      
+      const frag = document.createDocumentFragment();
+      let lastNode = null;
+      while (tempDiv.firstChild) {
+        lastNode = tempDiv.firstChild;
+        frag.appendChild(lastNode);
       }
+      
+      if (savedRange && canvasRef.value && canvasRef.value.contains(savedRange.commonAncestorContainer)) {
+        savedRange.deleteContents();
+        savedRange.insertNode(frag);
+      } else if (canvasRef.value) {
+        canvasRef.value.appendChild(frag);
+      }
+      
+      if (lastNode) {
+        const newRange = document.createRange();
+        newRange.setStartAfter(lastNode);
+        newRange.collapse(true);
+        const sel = window.getSelection();
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+        }
+        savedRange = newRange.cloneRange();
+      }
+    } else {
+      // 2. Insert Single Variable Chip
+      let clean = expr.replace(/^\{\{\s*/, '').replace(/\s*\}\}$/, '').trim();
+      const parts = clean.split('|');
+      const varRaw = parts[0].trim();
+      const filterRaw = parts.slice(1).join('|').trim();
+      
+      const chip = document.createElement('span');
+      chip.className = 'j-var-chip';
+      chip.setAttribute('contenteditable', 'false');
+      chip.setAttribute('data-raw', varRaw + (filterRaw ? `|${filterRaw}` : ''));
+      chip.textContent = resolveFieldLabel(clean);
+      
+      chip.ondblclick = (e) => {
+        e.stopPropagation();
+        openVarModal(chip);
+      };
+
+      const space = document.createTextNode(' ');
+      
+      if (savedRange && canvasRef.value && canvasRef.value.contains(savedRange.commonAncestorContainer)) {
+        savedRange.deleteContents();
+        savedRange.insertNode(chip);
+        chip.after(space);
+      } else if (canvasRef.value) {
+        canvasRef.value.appendChild(chip);
+        canvasRef.value.appendChild(space);
+      }
+
+      const newRange = document.createRange();
+      newRange.setStart(space, 1);
+      newRange.collapse(true);
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+      }
+      savedRange = newRange.cloneRange();
+    }
+
+    // Sync visual canvas DOM back to Markdown editorText
+    syncVisualToCode();
+    
+    nextTick(() => {
       updateActiveLoopContext();
     });
   }
