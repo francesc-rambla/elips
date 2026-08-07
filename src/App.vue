@@ -1671,7 +1671,7 @@ const generateDocuments = async () => {
         </div>
 
         <!-- Main Display Card Panel -->
-        <div class="card" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;">
+        <div class="card main-display-card" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; padding: 0.25rem 0.5rem;">
           <!-- Tab: Uploads panel -->
           <div class="tab-content" :class="{ active: store.activeTab === 'upload' }" style="overflow-y: auto; padding-right: 6px;">
             <div class="upload-group">
@@ -1909,16 +1909,11 @@ const generateDocuments = async () => {
       </div>
     </div>
 
-    <!-- Footer with Build Code badge -->
-    <footer style="text-align: center; padding: 10px 1.5rem; font-size: 0.75rem; color: var(--text-muted); border-top: 1px solid var(--border-color); background: var(--bg-secondary); margin-top: auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; flex-shrink: 0;">
-      <div>
-        <strong>Generador de Contractes Públics</strong> • Vue 3 Single-File App
-      </div>
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <span style="font-family: monospace; font-weight: 700; background: var(--bg-tertiary); padding: 3px 10px; border-radius: 12px; border: 1px solid var(--border-color); color: var(--text-primary);" title="Codi únic de compilació per identificar la versió distribuïda">
-          🏷️ Compilació: {{ buildCode }}
-        </span>
-      </div>
+    <!-- Ultra-Compact Minimal Footer -->
+    <footer style="text-align: left; padding: 2px 0.75rem; font-size: 0.65rem; color: var(--text-muted); border-top: 1px solid var(--border-color); background: var(--bg-secondary); margin-top: auto; display: flex; align-items: center; justify-content: flex-start; flex-shrink: 0; min-height: 20px; height: 20px; box-sizing: border-box;">
+      <span style="font-family: monospace; font-weight: 600; color: var(--text-muted); font-size: 0.65rem;" title="Codi de compilació d'elips">
+        🏷️ {{ buildCode }}
+      </span>
     </footer>
   </div>
 </template>
