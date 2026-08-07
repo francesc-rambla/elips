@@ -110,12 +110,14 @@ const isInternalMetadataKey = (k) => {
 };
 
 // Resolve nested object path inside excelJsonData
-const resolvePath = (obj, path) => {
+const resolvePath = (obj, path, currentStack = null) => {
   if (!obj || !path) return null;
   
   let effectivePath = path;
-  if (activeLoopStack.value && activeLoopStack.value.length > 0) {
-    for (const loopCtx of activeLoopStack.value) {
+  const stackToUse = currentStack || activeLoopStack.value || [];
+  
+  if (stackToUse.length > 0) {
+    for (const loopCtx of stackToUse) {
       const iter = loopCtx.iterator;
       if (effectivePath === iter) {
         effectivePath = loopCtx.arrayPath;
@@ -128,29 +130,81 @@ const resolvePath = (obj, path) => {
     }
   }
 
-  const parts = effectivePath.split('.');
-  let cur = obj;
-  for (const p of parts) {
-    if (cur && typeof cur === 'object') {
-      if (Array.isArray(cur)) {
-        if (cur.length > 0) {
-          cur = cur[0][p];
+  // 1. Try direct evaluation of path
+  const evaluateDirect = (pStr) => {
+    const parts = pStr.split('.');
+    let cur = obj;
+    for (const p of parts) {
+      if (cur && typeof cur === 'object') {
+        if (Array.isArray(cur)) {
+          if (cur.length > 0) {
+            cur = cur[0][p];
+          } else {
+            return null;
+          }
         } else {
-          return null;
+          cur = cur[p];
         }
       } else {
-        cur = cur[p];
+        return null;
       }
-    } else {
-      return null;
+    }
+    return cur;
+  };
+
+  let res = evaluateDirect(effectivePath);
+  if (res !== null && res !== undefined) return res;
+
+  // 2. Fallback: Search inside all root sheets if path omitted root sheet prefix (e.g., "parts.activitats" -> "pres.parts.activitats")
+  if (typeof obj === 'object' && obj !== null) {
+    for (const rootKey of Object.keys(obj)) {
+      if (isInternalMetadataKey(rootKey)) continue;
+      const fullPathWithRoot = `${rootKey}.${effectivePath}`;
+      res = evaluateDirect(fullPathWithRoot);
+      if (res !== null && res !== undefined) return res;
     }
   }
-  return cur;
+
+  // 3. Fallback: Search by sheet/array name directly
+  const lastSeg = effectivePath.split('.').pop();
+  if (typeof obj === 'object' && obj !== null) {
+    for (const [rootKey, rootVal] of Object.entries(obj)) {
+      if (rootKey === lastSeg && Array.isArray(rootVal)) return rootVal;
+      if (typeof rootVal === 'object' && rootVal !== null && lastSeg in rootVal && Array.isArray(rootVal[lastSeg])) {
+        return rootVal[lastSeg];
+      }
+    }
+  }
+
+  return null;
+};
+
+// Helper: Extract primitive column keys for an array path
+const resolveColumnsForArray = (rawPath, iterator, currentStack) => {
+  const arr = resolvePath(store.excelJsonData, rawPath, currentStack);
+  if (arr && Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
+    return Object.entries(arr[0])
+      .filter(([k, v]) => !isInternalMetadataKey(k) && !Array.isArray(v))
+      .map(([k]) => k);
+  }
+  
+  // Metadata fallback
+  const lastKey = rawPath.split('.').pop();
+  if (store.editorMetadata && Array.isArray(store.editorMetadata)) {
+    const fields = store.editorMetadata.filter(m => m.group === lastKey || m.group === rawPath).map(m => m.element);
+    if (fields.length > 0) return Array.from(new Set(fields));
+  }
+  if (store.excelJsonData?.editor_metadata && Array.isArray(store.excelJsonData.editor_metadata)) {
+    const fields = store.excelJsonData.editor_metadata.filter(m => m.group === lastKey || m.group === rawPath).map(m => m.element);
+    if (fields.length > 0) return Array.from(new Set(fields));
+  }
+
+  return [];
 };
 
 // Traverse upwards to see if a node or selection is inside a FOR loop block (returns full stack ordered by depth)
 const getActiveLoopStack = (targetNode = null) => {
-  const stack = [];
+  const rawLoopBlocks = [];
   
   if (activeEditorTab.value === 'visual') {
     let node = targetNode;
@@ -180,6 +234,8 @@ const getActiveLoopStack = (targetNode = null) => {
           }
         } else if (el.getAttribute && el.getAttribute('data-jinja-for')) {
           condStr = el.getAttribute('data-jinja-for') || '';
+        } else if (el.getAttribute && el.getAttribute('data-jinja-col-loop')) {
+          condStr = el.getAttribute('data-jinja-col-loop') || '';
         }
         
         if (condStr) {
@@ -188,19 +244,10 @@ const getActiveLoopStack = (targetNode = null) => {
             const iterator = match[1].trim();
             const rawPath = match[2].trim().split('|')[0].trim();
             
-            if (!stack.some(s => s.iterator === iterator)) {
-              let columns = [];
-              const arr = resolvePath(store.excelJsonData, rawPath);
-              if (arr && Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
-                columns = Object.entries(arr[0])
-                  .filter(([k, v]) => !isInternalMetadataKey(k) && !Array.isArray(v))
-                  .map(([k]) => k);
-              }
-              
-              stack.push({
+            if (!rawLoopBlocks.some(s => s.iterator === iterator)) {
+              rawLoopBlocks.push({
                 iterator,
-                arrayPath: rawPath,
-                columns
+                arrayPath: rawPath
               });
             }
           }
@@ -214,7 +261,7 @@ const getActiveLoopStack = (targetNode = null) => {
       const pos = textareaRef.value.selectionStart || 0;
       const codeBefore = editorText.value.substring(0, pos);
       
-      const regex = /\{%\s*(for\s+([a-zA-Z0-9_]+)\s+in\s+([^%\}]+)|endfor)\s*%\}/g;
+      const regex = /\{%\s*(for\s+([a-zA-Z0-9_\.]+)\s+in\s+([^%\}]+)|endfor)\s*%\}/g;
       let m;
       const forStack = [];
       while ((m = regex.exec(codeBefore)) !== null) {
@@ -229,20 +276,25 @@ const getActiveLoopStack = (targetNode = null) => {
       
       for (let i = forStack.length - 1; i >= 0; i--) {
         const item = forStack[i];
-        let columns = [];
-        const arr = resolvePath(store.excelJsonData, item.arrayPath);
-        if (arr && Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
-          columns = Object.entries(arr[0])
-            .filter(([k, v]) => !isInternalMetadataKey(k) && !Array.isArray(v))
-            .map(([k]) => k);
+        if (!rawLoopBlocks.some(s => s.iterator === item.iterator)) {
+          rawLoopBlocks.push({
+            iterator: item.iterator,
+            arrayPath: item.arrayPath
+          });
         }
-        stack.push({
-          iterator: item.iterator,
-          arrayPath: item.arrayPath,
-          columns
-        });
       }
     }
+  }
+
+  // Resolve columns and path references sequentially using stack context
+  const stack = [];
+  for (const block of rawLoopBlocks) {
+    const columns = resolveColumnsForArray(block.arrayPath, block.iterator, stack);
+    stack.push({
+      iterator: block.iterator,
+      arrayPath: block.arrayPath,
+      columns
+    });
   }
   
   return stack;
