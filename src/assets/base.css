@@ -214,6 +214,38 @@ header {
   box-shadow: 0 -2px 5px rgba(0, 0, 0, 0.03);
 }
 
+/* MS Office Ribbon Tool Content Group Styling */
+.office-tools-bar {
+  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ribbon-group-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border-right: 1px solid var(--border-color);
+  padding-right: 10px;
+  margin-right: 2px;
+  flex-shrink: 0;
+}
+
+.ribbon-group-body {
+  flex-grow: 1;
+  display: flex;
+  align-items: center;
+}
+
+.ribbon-group-label {
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-align: center;
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+  user-select: none;
+}
+
 .app-viewport {
   height: 100vh;
   display: flex;
