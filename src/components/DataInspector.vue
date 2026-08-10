@@ -1303,159 +1303,164 @@ onMounted(() => {
           
           <!-- Key Value Preview -->
           <template v-else>
-            <table class="inspector-table">
-              <thead>
-                <tr>
-                  <th style="width: 240px; padding: 4px 8px;">Clau (Sanititzada)</th>
-                  <th style="padding: 4px 8px;">Valor</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(val, key) in getKvPrimitiveEntries(sheetData)" :key="key">
-                  <td style="vertical-align: middle; padding: 3px 8px;">
-                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;">
-                      <div>
-                        <span style="font-weight: 600; color: var(--text-primary);">{{ getFieldLabel(name, key) }}</span>
-                        <code v-if="getFieldLabel(name, key) !== key" style="font-size: 0.7rem; color: var(--text-muted); margin-left: 6px;">({{ key }})</code>
-                      </div>
-                      <button 
-                        class="btn-icon-only text-danger" 
-                        style="height: 22px; width: 22px; min-width: 22px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
-                        title="Elimina clau-valor"
-                        @click="deleteKvKey(name, key)"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                      </button>
-                    </div>
-                  </td>
-                  <td style="padding: 2px 4px;">
-                    <div style="display: flex; gap: 4px; align-items: stretch; width: 100%;">
-                      <!-- Select Type -->
-                      <template v-if="getElementType(name, key) === 'Select'">
-                        <!-- Multiple select -->
-                        <div 
-                          v-if="getElementMetadata(name, key)?.multiple"
-                          :id="'data-field-' + name + '-' + key"
-                          :data-path="name + '.' + key"
-                          style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 28px; padding: 2px 4px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 300px; max-height: 80px; overflow-y: auto;"
-                          @click="openMultiSelectModal(name, true, key, null, getElementMetadata(name, key))"
-                          title="Fes clic per modificar la selecció"
-                        >
-                          <span v-if="getSelectedPills(store.excelJsonData[name][key], getElementMetadata(name, key)).length === 0" style="color: var(--text-muted); font-size: 0.78rem; padding: 0 4px;">
-                            [Tria opcions]
-                          </span>
-                          <span 
-                            v-for="pill in getSelectedPills(store.excelJsonData[name][key], getElementMetadata(name, key))" 
-                            :key="pill.value" 
-                            style="background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); font-size: 0.72rem; padding: 1px 5px; border-radius: 4px; font-weight: 500; display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
-                            :title="pill.label"
-                          >
-                            {{ pill.label }}
-                          </span>
-                        </div>
-                        <!-- Single select -->
-                        <select 
-                          v-else
-                          :id="'data-field-' + name + '-' + key"
-                          :data-path="name + '.' + key"
-                          v-model="store.excelJsonData[name][key]"
-                          class="data-input"
-                          style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
-                        >
-                          <option value="">[Buit / Sense valor]</option>
-                          <option 
-                            v-for="opt in resolveSelectOptions(getElementMetadata(name, key))" 
-                            :key="opt.value" 
-                            :value="opt.value"
-                          >
-                            {{ opt.label }}
-                          </option>
-                        </select>
-                      </template>
-                      
-                      <!-- Computed Type (Non-editable) -->
-                      <div 
-                        v-else-if="getElementType(name, key) === 'Computed'" 
-                        :id="'data-field-' + name + '-' + key"
-                        :data-path="name + '.' + key"
-                        style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 28px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: not-allowed;" 
-                        title="🔒 Camp calculat automàticament"
-                      >
-                        <span style="font-size: 0.85rem;">🧮</span>
-                        <span style="flex-grow: 1;">{{ store.excelJsonData[name][key] !== undefined ? store.excelJsonData[name][key] : 0 }}</span>
-                        <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
-                      </div>
+            <div 
+              :style="store.config.labelPosition === 'top' 
+                ? 'display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; padding: 6px 0;' 
+                : 'display: flex; flex-direction: column; gap: 8px; padding: 6px 0;'"
+            >
+              <div 
+                v-for="(val, key) in getKvPrimitiveEntries(sheetData)" 
+                :key="key"
+                :style="store.config.labelPosition === 'top' 
+                  ? 'display: flex; flex-direction: column; gap: 4px; background: var(--bg-card); padding: 10px; border: 1px solid var(--border-color); border-radius: var(--radius-sm);' 
+                  : 'display: flex; align-items: center; gap: 12px; padding: 4px 8px; border-bottom: 1px dashed var(--border-color);'"
+              >
+                <!-- Label Header -->
+                <div 
+                  :style="store.config.labelPosition === 'top'
+                    ? 'display: flex; justify-content: space-between; align-items: center;'
+                    : 'width: 240px; min-width: 200px; display: flex; justify-content: space-between; align-items: center;'"
+                >
+                  <div>
+                    <span style="font-weight: 600; font-size: 0.82rem; color: var(--text-primary);">{{ getFieldLabel(name, key) }}</span>
+                    <code v-if="getFieldLabel(name, key) !== key" style="font-size: 0.7rem; color: var(--text-muted); margin-left: 6px;">({{ key }})</code>
+                  </div>
+                  <button 
+                    class="btn-icon-only text-danger" 
+                    style="height: 20px; width: 20px; min-width: 20px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+                    title="Elimina clau-valor"
+                    @click="deleteKvKey(name, key)"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
 
-                      <!-- Date Type -->
-                      <input 
-                        v-else-if="getElementType(name, key) === 'Date'"
-                        :id="'data-field-' + name + '-' + key"
-                        :data-path="name + '.' + key"
-                        type="date"
-                        v-model="store.excelJsonData[name][key]"
-                        class="data-input"
-                        style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                <!-- Input Controls -->
+                <div style="display: flex; gap: 4px; align-items: stretch; width: 100%; flex-grow: 1;">
+                  <!-- Select Type -->
+                  <template v-if="getElementType(name, key) === 'Select'">
+                    <!-- Multiple select -->
+                    <div 
+                      v-if="getElementMetadata(name, key)?.multiple"
+                      :id="'data-field-' + name + '-' + key"
+                      :data-path="name + '.' + key"
+                      style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 28px; padding: 2px 4px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 100%; max-height: 80px; overflow-y: auto;"
+                      @click="openMultiSelectModal(name, true, key, null, getElementMetadata(name, key))"
+                      title="Fes clic per modificar la selecció"
+                    >
+                      <span v-if="getSelectedPills(store.excelJsonData[name][key], getElementMetadata(name, key)).length === 0" style="color: var(--text-muted); font-size: 0.78rem; padding: 0 4px;">
+                        [Tria opcions]
+                      </span>
+                      <span 
+                        v-for="pill in getSelectedPills(store.excelJsonData[name][key], getElementMetadata(name, key))" 
+                        :key="pill.value" 
+                        style="background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); font-size: 0.72rem; padding: 1px 5px; border-radius: 4px; font-weight: 500; display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                        :title="pill.label"
                       >
-                      
-                      <!-- Number Type -->
-                      <input 
-                        v-else-if="getElementType(name, key) === 'Number'"
-                        :id="'data-field-' + name + '-' + key"
-                        :data-path="name + '.' + key"
-                        type="number"
-                        step="any"
-                        v-model="store.excelJsonData[name][key]"
-                        class="data-input"
-                        style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
-                      >
-                      
-                      <!-- Boolean Type -->
-                      <select 
-                        v-else-if="getElementType(name, key) === 'Boolean'"
-                        :id="'data-field-' + name + '-' + key"
-                        :data-path="name + '.' + key"
-                        v-model="store.excelJsonData[name][key]"
-                        class="data-input"
-                        style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
-                      >
-                        <option value="">[Buit / Sense valor]</option>
-                        <option :value="true">Cert (True)</option>
-                        <option :value="false">Fals (False)</option>
-                      </select>
-                      
-                      <!-- Text Type (default) -->
-                      <textarea 
-                        v-else-if="viewMode === 'compact' || (typeof val === 'string' && val.length > 40)"
-                        :id="'data-field-' + name + '-' + key"
-                        :data-path="name + '.' + key"
-                        v-model="store.excelJsonData[name][key]"
-                        class="data-input"
-                        :rows="viewMode === 'compact' ? 2 : undefined"
-                        style="flex-grow: 1; resize: vertical; font-size: 0.8rem;"
-                        :style="{ minHeight: viewMode === 'compact' ? '55px' : '40px' }"
-                      ></textarea>
-                      <input 
-                        v-else
-                        :id="'data-field-' + name + '-' + key"
-                        :data-path="name + '.' + key"
-                        type="text"
-                        v-model="store.excelJsonData[name][key]"
-                        class="data-input"
-                        style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
-                      >
-                      <button 
-                        class="btn-icon-only"
-                        style="height: 28px; width: 28px; min-width: 28px; font-size: 0.85rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
-                        title="Edició complexa en Markdown + Jinja2"
-                        @click="openCellEditor(name, key, null, true)"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-                      </button>
+                        {{ pill.label }}
+                      </span>
                     </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                    <!-- Single select -->
+                    <select 
+                      v-else
+                      :id="'data-field-' + name + '-' + key"
+                      :data-path="name + '.' + key"
+                      v-model="store.excelJsonData[name][key]"
+                      class="data-input"
+                      style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                    >
+                      <option value="">[Buit / Sense valor]</option>
+                      <option 
+                        v-for="opt in resolveSelectOptions(getElementMetadata(name, key))" 
+                        :key="opt.value" 
+                        :value="opt.value"
+                      >
+                        {{ opt.label }}
+                      </option>
+                    </select>
+                  </template>
+                  
+                  <!-- Computed Type (Non-editable) -->
+                  <div 
+                    v-else-if="getElementType(name, key) === 'Computed'" 
+                    :id="'data-field-' + name + '-' + key"
+                    :data-path="name + '.' + key"
+                    style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 28px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: not-allowed;" 
+                    title="🔒 Camp calculat automàticament"
+                  >
+                    <span style="font-size: 0.85rem;">🧮</span>
+                    <span style="flex-grow: 1;">{{ store.excelJsonData[name][key] !== undefined ? store.excelJsonData[name][key] : 0 }}</span>
+                    <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
+                  </div>
+
+                  <!-- Date Type -->
+                  <input 
+                    v-else-if="getElementType(name, key) === 'Date'"
+                    :id="'data-field-' + name + '-' + key"
+                    :data-path="name + '.' + key"
+                    type="date"
+                    v-model="store.excelJsonData[name][key]"
+                    class="data-input"
+                    style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                  >
+                  
+                  <!-- Number Type -->
+                  <input 
+                    v-else-if="getElementType(name, key) === 'Number'"
+                    :id="'data-field-' + name + '-' + key"
+                    :data-path="name + '.' + key"
+                    type="number"
+                    step="any"
+                    v-model="store.excelJsonData[name][key]"
+                    class="data-input"
+                    style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                  >
+                  
+                  <!-- Boolean Type -->
+                  <select 
+                    v-else-if="getElementType(name, key) === 'Boolean'"
+                    :id="'data-field-' + name + '-' + key"
+                    :data-path="name + '.' + key"
+                    v-model="store.excelJsonData[name][key]"
+                    class="data-input"
+                    style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                  >
+                    <option value="">[Buit / Sense valor]</option>
+                    <option :value="true">Cert (True)</option>
+                    <option :value="false">Fals (False)</option>
+                  </select>
+                  
+                  <!-- Text Type (default) -->
+                  <textarea 
+                    v-else-if="viewMode === 'compact' || (typeof val === 'string' && val.length > 40)"
+                    :id="'data-field-' + name + '-' + key"
+                    :data-path="name + '.' + key"
+                    v-model="store.excelJsonData[name][key]"
+                    class="data-input"
+                    :rows="viewMode === 'compact' ? 2 : undefined"
+                    style="flex-grow: 1; resize: vertical; font-size: 0.8rem;"
+                    :style="{ minHeight: viewMode === 'compact' ? '55px' : '40px' }"
+                  ></textarea>
+                  <input 
+                    v-else
+                    :id="'data-field-' + name + '-' + key"
+                    :data-path="name + '.' + key"
+                    type="text"
+                    v-model="store.excelJsonData[name][key]"
+                    class="data-input"
+                    style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                  >
+                  <button 
+                    class="btn-icon-only"
+                    style="height: 28px; width: 28px; min-width: 28px; font-size: 0.85rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                    title="Edició complexa en Markdown + Jinja2"
+                    @click="openCellEditor(name, key, null, true)"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
             
             <!-- Integrated Hierarchical Nested Sub-Tables -->
             <template v-for="(subSchema, subKey) in getTopLevelChildSchemas(name, sheetData)" :key="subKey">

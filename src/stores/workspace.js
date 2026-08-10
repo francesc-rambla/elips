@@ -98,7 +98,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       strictMode: false,
       useDefaultRef: true,
       mainThreadPandoc: true,
-      showButtonTexts: localStorage.getItem('showButtonTexts') !== 'false'
+      showButtonTexts: localStorage.getItem('showButtonTexts') !== 'false',
+      labelPosition: localStorage.getItem('labelPosition') || 'top' // 'top' (default) or 'left'
     }
   }),
   

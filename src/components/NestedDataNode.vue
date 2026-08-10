@@ -1042,139 +1042,148 @@ const getItemPath = (idx, fieldKey) => {
           </div>
 
           <!-- VERTICAL LAYOUT (Default: 2-Column Key-Value Form Table) -->
-          <table v-if="groupLayout === 'vertical'" class="inspector-table" style="width: 100%; border-collapse: collapse; margin-bottom: 0.75rem;">
-            <thead>
-              <tr style="background: var(--bg-tertiary);">
-                <th style="width: 220px; padding: 6px 10px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 600; font-size: 0.78rem;">Clau / Camp</th>
-                <th style="padding: 6px 10px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 600; font-size: 0.78rem;">Valor de Formulari</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(val, fKey) in getPrimitiveFields(item)" :key="fKey">
-                <td style="vertical-align: middle; padding: 6px 10px; border-bottom: 1px solid var(--border-color);">
-                  <span style="font-weight: 600; font-size: 0.8rem; color: var(--text-primary);">{{ getFieldLabel(fKey) }}</span>
-                  <code v-if="getFieldLabel(fKey) !== fKey" style="font-size: 0.7rem; color: var(--text-muted); margin-left: 6px;">({{ fKey }})</code>
-                </td>
-                <td style="padding: 4px 6px; border-bottom: 1px solid var(--border-color);">
-                  <div style="display: flex; gap: 4px; align-items: center; width: 100%;">
-                    <!-- Select Type -->
-                    <template v-if="getElementType(fKey) === 'Select'">
-                      <!-- Multiple select -->
-                      <div 
-                        v-if="getElementMetadata(fKey)?.multiple"
-                        :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
-                        :data-path="getItemPath(idx, fKey)"
-                        style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 32px; padding: 4px 8px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 100%; max-height: 80px; overflow-y: auto;"
-                        @click="openMultiSelectModal(item, fKey, getElementMetadata(fKey))"
-                        title="Fes clic per modificar la selecció"
-                      >
-                        <span v-if="getSelectedPills(item[fKey], getElementMetadata(fKey)).length === 0" style="color: var(--text-muted); font-size: 0.8rem;">
-                          [Tria opcions]
-                        </span>
-                        <span 
-                          v-for="pill in getSelectedPills(item[fKey], getElementMetadata(fKey))" 
-                          :key="pill.value" 
-                          style="background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; font-weight: 500; display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
-                          :title="pill.label"
-                        >
-                          {{ pill.label }}
-                        </span>
-                      </div>
-                      <!-- Single select -->
-                      <select 
-                        v-else
-                        :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
-                        :data-path="getItemPath(idx, fKey)"
-                        v-model="item[fKey]"
-                        class="data-input"
-                        style="flex-grow: 1; height: 32px;"
-                      >
-                        <option value="">[Buit / Sense valor]</option>
-                        <option 
-                          v-for="opt in resolveSelectOptions(getElementMetadata(fKey))" 
-                          :key="opt.value" 
-                          :value="opt.value"
-                        >
-                          {{ opt.label }}
-                        </option>
-                      </select>
-                    </template>
-                    
-                    <!-- Computed Type (Non-editable) -->
-                    <div 
-                      v-else-if="getElementType(fKey) === 'Computed'" 
-                      :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
-                      :data-path="getItemPath(idx, fKey)"
-                      style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 32px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.85rem; font-weight: 600; cursor: not-allowed;" 
-                      title="🔒 Camp calculat automàticament"
-                    >
-                      <span style="font-size: 0.9rem;">🧮</span>
-                      <span style="flex-grow: 1;">{{ item[fKey] !== undefined ? item[fKey] : 0 }}</span>
-                      <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px;">Calculat</span>
-                    </div>
+          <!-- VERTICAL FORM LAYOUT -->
+          <div 
+            v-if="groupLayout === 'vertical'" 
+            :style="store.config.labelPosition === 'top' 
+              ? 'display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; margin-bottom: 0.75rem;' 
+              : 'display: flex; flex-direction: column; gap: 6px; margin-bottom: 0.75rem;'"
+          >
+            <div 
+              v-for="(val, fKey) in getPrimitiveFields(item)" 
+              :key="fKey"
+              :style="store.config.labelPosition === 'top' 
+                ? 'display: flex; flex-direction: column; gap: 4px; background: var(--bg-card); padding: 8px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-sm);' 
+                : 'display: flex; align-items: center; gap: 10px; padding: 4px 6px; border-bottom: 1px solid var(--border-color);'"
+            >
+              <!-- Label Header -->
+              <div 
+                :style="store.config.labelPosition === 'top'
+                  ? 'display: flex; align-items: center; gap: 6px;'
+                  : 'width: 220px; min-width: 180px; display: flex; align-items: center; gap: 6px;'"
+              >
+                <span style="font-weight: 600; font-size: 0.8rem; color: var(--text-primary);">{{ getFieldLabel(fKey) }}</span>
+                <code v-if="getFieldLabel(fKey) !== fKey" style="font-size: 0.7rem; color: var(--text-muted);">({{ fKey }})</code>
+              </div>
 
-                    <!-- Date Type -->
-                    <input 
-                      v-else-if="getElementType(fKey) === 'Date'"
-                      :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
-                      :data-path="getItemPath(idx, fKey)"
-                      type="date"
-                      v-model="item[fKey]"
-                      class="data-input"
-                      style="flex-grow: 1; height: 32px;"
+              <!-- Input Controls -->
+              <div style="display: flex; gap: 4px; align-items: center; width: 100%; flex-grow: 1;">
+                <!-- Select Type -->
+                <template v-if="getElementType(fKey) === 'Select'">
+                  <!-- Multiple select -->
+                  <div 
+                    v-if="getElementMetadata(fKey)?.multiple"
+                    :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                    :data-path="getItemPath(idx, fKey)"
+                    style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 32px; padding: 4px 8px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 100%; max-height: 80px; overflow-y: auto;"
+                    @click="openMultiSelectModal(item, fKey, getElementMetadata(fKey))"
+                    title="Fes clic per modificar la selecció"
+                  >
+                    <span v-if="getSelectedPills(item[fKey], getElementMetadata(fKey)).length === 0" style="color: var(--text-muted); font-size: 0.8rem;">
+                      [Tria opcions]
+                    </span>
+                    <span 
+                      v-for="pill in getSelectedPills(item[fKey], getElementMetadata(fKey))" 
+                      :key="pill.value" 
+                      style="background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; font-weight: 500; display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                      :title="pill.label"
                     >
-                    
-                    <!-- Number Type -->
-                    <input 
-                      v-else-if="getElementType(fKey) === 'Number'"
-                      :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
-                      :data-path="getItemPath(idx, fKey)"
-                      type="number"
-                      step="any"
-                      v-model="item[fKey]"
-                      class="data-input"
-                      style="flex-grow: 1; height: 32px;"
-                    >
-                    
-                    <!-- Boolean Type -->
-                    <select 
-                      v-else-if="getElementType(fKey) === 'Boolean'"
-                      :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
-                      :data-path="getItemPath(idx, fKey)"
-                      v-model="item[fKey]"
-                      class="data-input"
-                      style="flex-grow: 1; height: 32px;"
-                    >
-                      <option value="">[Buit / Sense valor]</option>
-                      <option :value="true">Cert (True)</option>
-                      <option :value="false">Fals (False)</option>
-                    </select>
-                    
-                    <!-- Text Type (default) -->
-                    <input 
-                      v-else
-                      :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
-                      :data-path="getItemPath(idx, fKey)"
-                      type="text"
-                      v-model="item[fKey]"
-                      class="data-input"
-                      style="flex-grow: 1; height: 32px;"
-                    >
-                    
-                    <button 
-                      type="button"
-                      class="btn-icon-only"
-                      style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
-                      title="Edició complexa en Markdown + Jinja2"
-                      @click="openCellEditor(item, fKey)"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-                    </button>
+                      {{ pill.label }}
+                    </span>
                   </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                  <!-- Single select -->
+                  <select 
+                    v-else
+                    :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                    :data-path="getItemPath(idx, fKey)"
+                    v-model="item[fKey]"
+                    class="data-input"
+                    style="flex-grow: 1; height: 32px;"
+                  >
+                    <option value="">[Buit / Sense valor]</option>
+                    <option 
+                      v-for="opt in resolveSelectOptions(getElementMetadata(fKey))" 
+                      :key="opt.value" 
+                      :value="opt.value"
+                    >
+                      {{ opt.label }}
+                    </option>
+                  </select>
+                </template>
+                
+                <!-- Computed Type (Non-editable) -->
+                <div 
+                  v-else-if="getElementType(fKey) === 'Computed'" 
+                  :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                  :data-path="getItemPath(idx, fKey)"
+                  style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 32px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.85rem; font-weight: 600; cursor: not-allowed;" 
+                  title="🔒 Camp calculat automàticament"
+                >
+                  <span style="font-size: 0.9rem;">🧮</span>
+                  <span style="flex-grow: 1;">{{ item[fKey] !== undefined ? item[fKey] : 0 }}</span>
+                  <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px;">Calculat</span>
+                </div>
+
+                <!-- Date Type -->
+                <input 
+                  v-else-if="getElementType(fKey) === 'Date'"
+                  :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                  :data-path="getItemPath(idx, fKey)"
+                  type="date"
+                  v-model="item[fKey]"
+                  class="data-input"
+                  style="flex-grow: 1; height: 32px;"
+                >
+                
+                <!-- Number Type -->
+                <input 
+                  v-else-if="getElementType(fKey) === 'Number'"
+                  :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                  :data-path="getItemPath(idx, fKey)"
+                  type="number"
+                  step="any"
+                  v-model="item[fKey]"
+                  class="data-input"
+                  style="flex-grow: 1; height: 32px;"
+                >
+                
+                <!-- Boolean Type -->
+                <select 
+                  v-else-if="getElementType(fKey) === 'Boolean'"
+                  :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                  :data-path="getItemPath(idx, fKey)"
+                  v-model="item[fKey]"
+                  class="data-input"
+                  style="flex-grow: 1; height: 32px;"
+                >
+                  <option value="">[Buit / Sense valor]</option>
+                  <option :value="true">Cert (True)</option>
+                  <option :value="false">Fals (False)</option>
+                </select>
+                
+                <!-- Text Type (default) -->
+                <input 
+                  v-else
+                  :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                  :data-path="getItemPath(idx, fKey)"
+                  type="text"
+                  v-model="item[fKey]"
+                  class="data-input"
+                  style="flex-grow: 1; height: 32px;"
+                >
+                
+                <button 
+                  type="button"
+                  class="btn-icon-only"
+                  style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                  title="Edició complexa en Markdown + Jinja2"
+                  @click="openCellEditor(item, fKey)"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
 
           <!-- HORIZONTAL LAYOUT (Grid View) -->
           <div v-else style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem; margin-bottom: 0.75rem;">

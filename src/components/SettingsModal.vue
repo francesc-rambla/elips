@@ -22,6 +22,7 @@ watch(() => props.isOpen, (newVal) => {
 const saveSettings = () => {
   Object.assign(store.config, localConfig);
   localStorage.setItem('showButtonTexts', store.config.showButtonTexts ? 'true' : 'false');
+  localStorage.setItem('labelPosition', store.config.labelPosition || 'top');
   store.addLog("Configuració de motors i interfície desada reactivament.", "success");
   emit('close');
 };
@@ -35,6 +36,7 @@ const resetSettings = () => {
   localConfig.useDefaultRef = true;
   localConfig.mainThreadPandoc = true;
   localConfig.showButtonTexts = true;
+  localConfig.labelPosition = 'top';
 };
 </script>
 
@@ -56,6 +58,14 @@ const resetSettings = () => {
         <!-- Interface Preferences -->
         <div style="font-size: 0.85rem; font-weight: bold; color: var(--color-primary); margin-bottom: 0.5rem; text-transform: uppercase; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">
           🖥️ Interfície i Visualització
+        </div>
+
+        <div class="form-row" style="margin-bottom: 0.85rem;">
+          <label for="cfgLabelPosition" style="font-weight: 600;">Posició de les etiquetes als formularis de dades</label>
+          <select id="cfgLabelPosition" v-model="localConfig.labelPosition" style="width: 100%; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.85rem;">
+            <option value="top">A dalt (Superiors - per defecte)</option>
+            <option value="left">A l'esquerra</option>
+          </select>
         </div>
 
         <div class="checkbox-row" style="margin-bottom: 1.25rem;">
