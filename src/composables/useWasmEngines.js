@@ -2200,51 +2200,48 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
 
     try {
       let expr = formulaStr.trim();
+      if (!expr) return 0;
 
-      // Parse nested SI(...) / IF(...) function calls into JavaScript ternary operators: ( (cond) ? (true_val) : (false_val) )
-      const parseNestedIf = (s) => {
-        const regex = /(?:SI|IF)\s*\(/gi;
-        let match;
-        while ((match = regex.exec(s)) !== null) {
-          const startIdx = match.index;
-          const openParenIdx = startIdx + match[0].length - 1;
-          let parenCount = 1;
-          let closeParenIdx = -1;
-          let topArgs = [];
-          let currentArg = '';
+      // Safe, non-infinite parser for SI(...) / IF(...) function calls into JavaScript ternary operators
+      const transformIf = (s) => {
+        let str = s;
+        let maxPasses = 30;
+        while (maxPasses-- > 0) {
+          const match = str.match(/(?:SI|IF)\s*\(([^()]+)\)/i);
+          if (!match) break;
 
-          for (let i = openParenIdx + 1; i < s.length; i++) {
-            const char = s[i];
-            if (char === '(') parenCount++;
-            else if (char === ')') {
-              parenCount--;
-              if (parenCount === 0) {
-                closeParenIdx = i;
-                topArgs.push(currentArg);
-                break;
-              }
-            }
-            if ((char === ';' || char === ',') && parenCount === 1) {
-              topArgs.push(currentArg);
-              currentArg = '';
+          const fullMatch = match[0];
+          const innerContent = match[1];
+
+          let parts = [];
+          let current = '';
+          let inQuotes = false;
+          for (let i = 0; i < innerContent.length; i++) {
+            const ch = innerContent[i];
+            if (ch === '"') inQuotes = !inQuotes;
+            if ((ch === ';' || ch === ',') && !inQuotes) {
+              parts.push(current);
+              current = '';
             } else {
-              currentArg += char;
+              current += ch;
             }
           }
+          parts.push(current);
 
-          if (closeParenIdx !== -1 && topArgs.length >= 3) {
-            const cond = parseNestedIf(topArgs[0]);
-            const tVal = parseNestedIf(topArgs[1]);
-            const fVal = parseNestedIf(topArgs.slice(2).join(';'));
-            const replacement = `( (${cond}) ? (${tVal}) : (${fVal}) )`;
-            s = s.substring(0, startIdx) + replacement + s.substring(closeParenIdx + 1);
-            regex.lastIndex = 0;
+          if (parts.length >= 3) {
+            const cond = parts[0];
+            const tVal = parts[1];
+            const fVal = parts.slice(2).join(';');
+            const ternary = `( (${cond}) ? (${tVal}) : (${fVal}) )`;
+            str = str.replace(fullMatch, ternary);
+          } else {
+            break;
           }
         }
-        return s;
+        return str;
       };
 
-      expr = parseNestedIf(expr);
+      expr = transformIf(expr);
 
       // Operator normalizations
       expr = expr.replace(/(^|[^<>=!])=([^=])/g, '$1==$2');
@@ -2312,7 +2309,10 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         const formula = meta.calcFormula;
 
         if (fn === 'CUSTOM' && formula) {
-          obj[meta.element] = evaluateCustomFormula(formula, obj);
+          const calculatedVal = evaluateCustomFormula(formula, obj);
+          if (obj[meta.element] !== calculatedVal) {
+            obj[meta.element] = calculatedVal;
+          }
           return;
         }
 
@@ -2326,18 +2326,23 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         if (childList) {
           childList.forEach(childItem => processContainer(childItem));
 
+          let calculatedVal = 0;
           if (fn === 'COUNT') {
-            obj[meta.element] = childList.length;
+            calculatedVal = childList.length;
           } else if (fn === 'SUM' && col) {
             const total = childList.reduce((sum, child) => {
               const val = parseFloat(child[col]);
               return sum + (isNaN(val) ? 0 : val);
             }, 0);
-            obj[meta.element] = Math.round(total * 100) / 100;
+            calculatedVal = Math.round(total * 100) / 100;
           } else if (fn === 'AVG' && col) {
             const numbers = childList.map(c => parseFloat(c[col])).filter(n => !isNaN(n));
             const avg = numbers.length > 0 ? numbers.reduce((a, b) => a + b, 0) / numbers.length : 0;
-            obj[meta.element] = Math.round(avg * 100) / 100;
+            calculatedVal = Math.round(avg * 100) / 100;
+          }
+
+          if (obj[meta.element] !== calculatedVal) {
+            obj[meta.element] = calculatedVal;
           }
         }
       });

@@ -17,10 +17,19 @@ const isExcelLoaded = computed(() => !!store.excelJsonData);
 const viewMode = ref('compact'); // 'complete' or 'compact' (default: compact)
 const selectedCompactSheet = ref('');
 
+let isEvaluating = false;
+
 // Auto-initialize selectedCompactSheet and open root sheets when data loads
 watch(() => store.excelJsonData, (newVal) => {
-  if (newVal) {
-    evaluateComputedFields(newVal);
+  if (newVal && !isEvaluating) {
+    isEvaluating = true;
+    try {
+      evaluateComputedFields(newVal);
+    } finally {
+      nextTick(() => {
+        isEvaluating = false;
+      });
+    }
     const keys = Object.keys(newVal).filter(k => k !== 'editor_metadata' && k !== '_hierarchy_schema');
     if (keys.length > 0) {
       if (!selectedCompactSheet.value) {
