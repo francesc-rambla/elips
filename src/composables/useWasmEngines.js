@@ -1748,7 +1748,7 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         def _normalize_markdown_headings(text):
             if not text:
                 return text
-            lines = text.split('\n')
+            lines = text.split('\\n')
             out = []
             for i, line in enumerate(lines):
                 stripped = line.lstrip()
@@ -1756,7 +1756,7 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
                     if out and out[-1].strip() != '':
                         out.append('')
                 out.append(line)
-            return '\n'.join(out)
+            return '\\n'.join(out)
 
         # Pass 1: Clean Context without HTML links (for Pandoc / Word export)
         clean_ctx = _wrap_safe(doc, '')
