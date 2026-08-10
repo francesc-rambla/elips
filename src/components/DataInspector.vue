@@ -650,6 +650,76 @@ const getFieldLabel = (groupName, elementName) => {
   return elementName;
 };
 
+const getAvailableChildVectorsForGroup = (groupName) => {
+  if (!store.excelJsonData) return [];
+  let sampleParentRow = null;
+  const sheetData = store.excelJsonData[groupName];
+
+  if (Array.isArray(sheetData) && sheetData.length > 0) {
+    sampleParentRow = sheetData[0];
+  } else if (sheetData && typeof sheetData === 'object') {
+    sampleParentRow = sheetData;
+  }
+
+  if (!sampleParentRow) {
+    const searchObj = (container) => {
+      if (!container || typeof container !== 'object') return null;
+      if (container[groupName]) return container[groupName];
+      for (const k of Object.keys(container)) {
+        if (typeof container[k] === 'object') {
+          const res = searchObj(container[k]);
+          if (res) return res;
+        }
+      }
+      return null;
+    };
+    const found = searchObj(store.excelJsonData);
+    if (found) sampleParentRow = Array.isArray(found) ? found[0] : found;
+  }
+
+  if (sampleParentRow && typeof sampleParentRow === 'object') {
+    return Object.keys(sampleParentRow).filter(k => Array.isArray(sampleParentRow[k]));
+  }
+  return [];
+};
+
+const getChildTableColumns = (groupName, vectorName) => {
+  if (!vectorName || !store.excelJsonData) return [];
+  let sampleChildItem = null;
+
+  const checkObj = (obj) => {
+    if (obj && Array.isArray(obj[vectorName]) && obj[vectorName].length > 0 && typeof obj[vectorName][0] === 'object') {
+      sampleChildItem = obj[vectorName][0];
+      return true;
+    }
+    return false;
+  };
+
+  const searchRecursive = (container) => {
+    if (!container || typeof container !== 'object' || sampleChildItem) return;
+    if (Array.isArray(container)) {
+      container.forEach(item => {
+        if (item && typeof item === 'object') {
+          if (checkObj(item)) return;
+          searchRecursive(item);
+        }
+      });
+    } else {
+      if (checkObj(container)) return;
+      Object.keys(container).forEach(k => {
+        if (typeof container[k] === 'object') searchRecursive(container[k]);
+      });
+    }
+  };
+
+  searchRecursive(store.excelJsonData);
+
+  if (sampleChildItem && typeof sampleChildItem === 'object') {
+    return Object.keys(sampleChildItem);
+  }
+  return [];
+};
+
 const openGroupConfig = (groupName, sheetData) => {
   activeConfigGroup.value = groupName;
   const isKv = getSheetType(sheetData) === 'kv';
@@ -667,7 +737,10 @@ const openGroupConfig = (groupName, sheetData) => {
       displayField: meta.displayField || '',
       valueField: meta.valueField || '',
       multiple: !!meta.multiple,
-      width: meta.width || ''
+      width: meta.width || '',
+      calcFn: meta.calcFn || 'SUM',
+      calcVector: meta.calcVector || '',
+      calcTargetCol: meta.calcTargetCol || ''
     };
   });
   
@@ -706,7 +779,10 @@ const addNewFieldToConfig = () => {
       displayField: '',
       valueField: '',
       multiple: false,
-      width: ''
+      width: '',
+      calcFn: 'SUM',
+      calcVector: '',
+      calcTargetCol: ''
     });
   }
 };
@@ -739,6 +815,11 @@ const saveGroupConfig = () => {
         meta.options = item.optionsRaw.split(',').map(x => x.trim()).filter(x => x);
       }
     }
+    if (item.type === 'Computed') {
+      meta.calcFn = item.calcFn || 'SUM';
+      meta.calcVector = item.calcVector || '';
+      meta.calcTargetCol = item.calcTargetCol || '';
+    }
     if (item.width) {
       meta.width = item.width;
     }
@@ -748,10 +829,11 @@ const saveGroupConfig = () => {
   // Update parent JSON metadata key to keep in sync
   if (store.excelJsonData) {
     store.excelJsonData.editor_metadata = store.editorMetadata;
+    evaluateComputedFields(store.excelJsonData);
   }
   
   isConfigModalOpen.value = false;
-  store.addLog(`Configuració de tipus de dades per al grup '${groupName}' desada correctament.`, 'success');
+  store.addLog(`Configuració de tipus de dades per al grup '${groupName}' desada i valors calculats avaluats.`, 'success');
 };
 
 const handleCellKeyDown = (e) => {
@@ -1335,6 +1417,7 @@ onMounted(() => {
                     <option value="Date">Date (Data)</option>
                     <option value="Boolean">Boolean (Lògic)</option>
                     <option value="Select">Select (Desplegable)</option>
+                    <option value="Computed">Calculat (Computed: SUM, COUNT, AVG)</option>
                   </select>
                 </td>
                 <td style="padding: 4px; vertical-align: top;">
@@ -1387,6 +1470,41 @@ onMounted(() => {
                       <span>Selecció múltiple</span>
                     </label>
                   </template>
+
+                  <!-- Computed Configuration -->
+                  <template v-else-if="item.type === 'Computed'">
+                    <div style="display: flex; flex-direction: column; gap: 4px; padding: 2px 0;">
+                      <div style="display: flex; gap: 4px; align-items: center;">
+                        <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Funció:</span>
+                        <select v-model="item.calcFn" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
+                          <option value="SUM">SUM (Suma)</option>
+                          <option value="COUNT">COUNT (Recompte)</option>
+                          <option value="AVG">AVG (Mitjana)</option>
+                        </select>
+                      </div>
+
+                      <div style="display: flex; gap: 4px; align-items: center;">
+                        <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Sub-taula:</span>
+                        <select v-model="item.calcVector" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
+                          <option value="">-- Sub-taula --</option>
+                          <option v-for="vec in getAvailableChildVectorsForGroup(activeConfigGroup)" :key="vec" :value="vec">
+                            {{ vec }}
+                          </option>
+                        </select>
+                      </div>
+
+                      <div v-if="item.calcFn !== 'COUNT' && item.calcVector" style="display: flex; gap: 4px; align-items: center;">
+                        <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Columna:</span>
+                        <select v-model="item.calcTargetCol" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
+                          <option value="">-- Columna --</option>
+                          <option v-for="col in getChildTableColumns(activeConfigGroup, item.calcVector)" :key="col" :value="col">
+                            {{ col }}
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+                  </template>
+
                   <template v-else>
                     <span style="color: var(--text-muted); font-size: 0.8rem;">No aplicable</span>
                   </template>

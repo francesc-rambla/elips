@@ -2195,6 +2195,66 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     return new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   };
 
+  const evaluateComputedFields = (data) => {
+    if (!data || !store.editorMetadata || !Array.isArray(store.editorMetadata) || store.editorMetadata.length === 0) return;
+
+    const computedMetas = store.editorMetadata.filter(m => m.type === 'Computed');
+    if (computedMetas.length === 0) return;
+
+    const processContainer = (container) => {
+      if (!container || typeof container !== 'object') return;
+      if (Array.isArray(container)) {
+        container.forEach(item => processRowOrDict(item));
+      } else {
+        processRowOrDict(container);
+      }
+    };
+
+    const processRowOrDict = (obj) => {
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
+
+      computedMetas.forEach(meta => {
+        const targetVec = meta.calcVector;
+        const fn = (meta.calcFn || 'SUM').toUpperCase();
+        const col = meta.calcTargetCol;
+
+        if (targetVec && Array.isArray(obj[targetVec])) {
+          const childList = obj[targetVec];
+          childList.forEach(childItem => processContainer(childItem));
+
+          if (fn === 'COUNT') {
+            obj[meta.element] = childList.length;
+          } else if (fn === 'SUM' && col) {
+            const total = childList.reduce((sum, child) => {
+              const val = parseFloat(child[col]);
+              return sum + (isNaN(val) ? 0 : val);
+            }, 0);
+            obj[meta.element] = Math.round(total * 100) / 100;
+          } else if (fn === 'AVG' && col) {
+            const numbers = childList.map(c => parseFloat(c[col])).filter(n => !isNaN(n));
+            const avg = numbers.length > 0 ? numbers.reduce((a, b) => a + b, 0) / numbers.length : 0;
+            obj[meta.element] = Math.round(avg * 100) / 100;
+          }
+        }
+      });
+
+      Object.keys(obj).forEach(key => {
+        if (key !== '_sheet_info' && key !== '_hierarchy_schema' && key !== 'editor_metadata') {
+          const val = obj[key];
+          if (val && typeof val === 'object') {
+            processContainer(val);
+          }
+        }
+      });
+    };
+
+    Object.keys(data).forEach(key => {
+      if (key !== '_sheet_info' && key !== '_hierarchy_schema' && key !== 'editor_metadata') {
+        processContainer(data[key]);
+      }
+    });
+  };
+
   const saveExcelHierarchy = async (renamesMap) => {
     if (!_pyodide) throw new Error("Pyodide no està disponible.");
     const pName = store.currentProjectName || localStorage.getItem('currentProjectName') || 'Default';
@@ -2233,6 +2293,7 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     compileDocx,
     saveExcelData,
     saveExcelHierarchy,
+    evaluateComputedFields,
     writeVirtualExcel,
     isLoading
   };
