@@ -1602,14 +1602,22 @@ def render_json_text(excel_path, date_format='iso', strict=False):
     doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
     return json.dumps(doc, ensure_ascii=False, indent=2)
 
-def _filter_empty_rows(data):
+def _filter_empty_rows(data, visited=None):
+    if visited is None:
+        visited = set()
+    if isinstance(data, (dict, list)):
+        data_id = id(data)
+        if data_id in visited:
+            return data
+        visited.add(data_id)
+
     if isinstance(data, dict):
         new_dict = {}
         for k, v in data.items():
             if k in ('editor_metadata', '_hierarchy_schema'):
                 new_dict[k] = v
             else:
-                new_dict[k] = _filter_empty_rows(v)
+                new_dict[k] = _filter_empty_rows(v, visited)
         return new_dict
     elif isinstance(data, list):
         filtered_list = []
@@ -1618,22 +1626,24 @@ def _filter_empty_rows(data):
                 primitive_vals = [v for k, v in item.items() if not isinstance(v, (list, dict))]
                 is_empty = all(v in (0, 0.0, '', None, False) for v in primitive_vals) if primitive_vals else False
                 if not is_empty:
-                    filtered_list.append(_filter_empty_rows(item))
+                    filtered_list.append(_filter_empty_rows(item, visited))
             else:
-                filtered_list.append(_filter_empty_rows(item))
+                filtered_list.append(_filter_empty_rows(item, visited))
         return filtered_list
     return data
 
-def _wrap_tracked(val, path='', enable_links=True):
+def _wrap_tracked(val, path='', enable_links=True, visited=None):
+    if visited is None:
+        visited = set()
+    if isinstance(val, (dict, list)):
+        val_id = id(val)
+        if val_id in visited:
+            return val
+        visited.add(val_id)
+
     if isinstance(val, dict):
         if isinstance(val, TrackedDict):
             return val
-        for k, v in list(val.items()):
-            if isinstance(v, dict):
-                for sub_k, sub_v in list(val.items()):
-                    if sub_k != k and isinstance(sub_v, list):
-                        if sub_k not in v:
-                            v[sub_k] = sub_v
         return TrackedDict(val, path, enable_links)
     elif isinstance(val, list):
         if isinstance(val, TrackedList):
@@ -1651,11 +1661,6 @@ class SafeDict(dict):
         self._path = path
         if isinstance(d, dict):
             for k, v in d.items():
-                if isinstance(v, dict):
-                    for sub_k, sub_v in d.items():
-                        if sub_k != k and isinstance(sub_v, list):
-                            if sub_k not in v:
-                                v[sub_k] = sub_v
                 self[k] = _wrap_safe(v, f"{path}.{k}" if path else k)
 
     def __getitem__(self, key):
@@ -1676,13 +1681,21 @@ class SafeDict(dict):
             return Placeholder(f"{self._path}.{key}" if self._path else str(key))
         return super().get(key, default)
 
-def _wrap_safe(val, path=''):
+def _wrap_safe(val, path='', visited=None):
+    if visited is None:
+        visited = set()
+    if isinstance(val, (dict, list)):
+        val_id = id(val)
+        if val_id in visited:
+            return val
+        visited.add(val_id)
+
     if isinstance(val, dict):
         if isinstance(val, SafeDict):
             return val
         return SafeDict(val, path)
     elif isinstance(val, list):
-        return [_wrap_safe(item, f"{path}.{idx}") for idx, item in enumerate(val)]
+        return [_wrap_safe(item, f"{path}.{idx}", visited) for idx, item in enumerate(val)]
     elif isinstance(val, Placeholder):
         return val
     return val
