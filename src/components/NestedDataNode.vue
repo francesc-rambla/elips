@@ -1098,8 +1098,13 @@ const getItemPath = (idx, fieldKey) => {
                   ? 'display: flex; align-items: center; gap: 6px;'
                   : 'width: 220px; min-width: 180px; display: flex; align-items: center; gap: 6px;'"
               >
-                <span style="font-weight: 600; font-size: 0.8rem; color: var(--text-primary);">{{ getFieldLabel(fKey) }}</span>
-                <code v-if="getFieldLabel(fKey) !== fKey" style="font-size: 0.7rem; color: var(--text-muted);">({{ fKey }})</code>
+                <span 
+                  style="font-weight: 600; font-size: 0.8rem; color: var(--text-primary);"
+                  :style="{ cursor: getFieldLabel(fKey) !== fKey ? 'help' : 'default' }"
+                  :title="getFieldLabel(fKey) !== fKey ? 'Clau de camp: ' + fKey : undefined"
+                >
+                  {{ getFieldLabel(fKey) }}
+                </span>
               </div>
 
               <!-- Input Controls -->
@@ -1224,7 +1229,13 @@ const getItemPath = (idx, fieldKey) => {
           <!-- HORIZONTAL LAYOUT (Grid View) -->
           <div v-else style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem; margin-bottom: 0.75rem;">
             <div v-for="(val, fKey) in getPrimitiveFields(item)" :key="fKey" style="display: flex; flex-direction: column; gap: 2px;">
-              <label style="font-size: 0.72rem; font-weight: 600; color: var(--text-muted); margin: 0;">{{ getFieldLabel(fKey) }}</label>
+              <label 
+                style="font-size: 0.72rem; font-weight: 600; color: var(--text-muted); margin: 0;"
+                :style="{ cursor: getFieldLabel(fKey) !== fKey ? 'help' : 'default' }"
+                :title="getFieldLabel(fKey) !== fKey ? 'Clau de camp: ' + fKey : undefined"
+              >
+                {{ getFieldLabel(fKey) }}
+              </label>
               
               <div style="display: flex; gap: 4px; align-items: stretch; width: 100%;">
                 <!-- Select Type -->

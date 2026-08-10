@@ -1364,8 +1364,13 @@ onMounted(() => {
                     : 'width: 240px; min-width: 200px; display: flex; justify-content: space-between; align-items: center;'"
                 >
                   <div>
-                    <span style="font-weight: 600; font-size: 0.82rem; color: var(--text-primary);">{{ getFieldLabel(name, key) }}</span>
-                    <code v-if="getFieldLabel(name, key) !== key" style="font-size: 0.7rem; color: var(--text-muted); margin-left: 6px;">({{ key }})</code>
+                    <span 
+                      style="font-weight: 600; font-size: 0.82rem; color: var(--text-primary);"
+                      :style="{ cursor: getFieldLabel(name, key) !== key ? 'help' : 'default' }"
+                      :title="getFieldLabel(name, key) !== key ? 'Clau de camp: ' + key : undefined"
+                    >
+                      {{ getFieldLabel(name, key) }}
+                    </span>
                   </div>
                   <button 
                     class="btn-icon-only text-danger" 
