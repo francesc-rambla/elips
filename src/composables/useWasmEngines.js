@@ -465,14 +465,6 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     else:
                         parent[sub_key] = data_to_set
 
-    # Auto-link top-level sub-tables to parent KV objects (e.g. pres -> parts)
-    for k, v in list(root.items()):
-        if isinstance(v, dict):
-            for sub_k, sub_v in list(root.items()):
-                if sub_k != k and isinstance(sub_v, list):
-                    if sub_k not in v:
-                        v[sub_k] = sub_v
-
     return {
         'data': root,
         'hierarchy_schema': hierarchy_schema
