@@ -420,19 +420,13 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     else:
                         parent[sub_key] = data_to_set
 
-    # Auto-link sub-tables to parent objects and recursively throughout the tree
+    # Auto-link top-level sub-tables to parent KV objects (e.g. pres -> parts)
     for k, v in list(root.items()):
         if isinstance(v, dict):
             for sub_k, sub_v in list(root.items()):
                 if sub_k != k and isinstance(sub_v, list):
                     if sub_k not in v:
                         v[sub_k] = sub_v
-                    for item in sub_v:
-                        if isinstance(item, dict):
-                            for sub2_k, sub2_v in list(root.items()):
-                                if sub2_k not in (k, sub_k) and isinstance(sub2_v, list):
-                                    if sub2_k not in item:
-                                        item[sub2_k] = sub2_v
 
     return {
         'data': root,
@@ -1596,7 +1590,9 @@ def _is_value_empty(val):
         return len(val) == 0
     return False
 
-def _is_row_empty(item, visited=None):
+def _is_row_empty(item, visited=None, depth=0, max_depth=15):
+    if depth > max_depth:
+        return False
     if visited is None:
         visited = set()
     if isinstance(item, (dict, list)):
@@ -1611,18 +1607,20 @@ def _is_row_empty(item, visited=None):
         if k in ('editor_metadata', '_hierarchy_schema', '_path'):
             continue
         if isinstance(v, list):
-            non_empty_children = [child for child in v if not _is_row_empty(child, visited)]
+            non_empty_children = [child for child in v if not _is_row_empty(child, visited, depth + 1, max_depth)]
             if non_empty_children:
                 return False
         elif isinstance(v, dict):
-            if not _is_row_empty(v, visited):
+            if not _is_row_empty(v, visited, depth + 1, max_depth):
                 return False
         else:
             if not _is_value_empty(v):
                 return False
     return True
 
-def _filter_empty_rows(data, visited=None):
+def _filter_empty_rows(data, visited=None, depth=0, max_depth=15):
+    if depth > max_depth:
+        return data
     if visited is None:
         visited = set()
     if isinstance(data, (dict, list)):
@@ -1637,17 +1635,17 @@ def _filter_empty_rows(data, visited=None):
             if k in ('editor_metadata', '_hierarchy_schema'):
                 new_dict[k] = v
             else:
-                new_dict[k] = _filter_empty_rows(v, visited)
+                new_dict[k] = _filter_empty_rows(v, visited, depth + 1, max_depth)
         return new_dict
     elif isinstance(data, list):
         filtered_list = []
         for item in data:
             if isinstance(item, dict):
-                if not _is_row_empty(item, visited.copy()):
-                    filtered_list.append(_filter_empty_rows(item, visited))
+                if not _is_row_empty(item, visited.copy(), depth + 1, max_depth):
+                    filtered_list.append(_filter_empty_rows(item, visited, depth + 1, max_depth))
             else:
                 if not _is_value_empty(item):
-                    filtered_list.append(_filter_empty_rows(item, visited))
+                    filtered_list.append(_filter_empty_rows(item, visited, depth + 1, max_depth))
         return filtered_list
     return data
 
