@@ -672,13 +672,15 @@ class TrackedValue:
         return TrackedValue(res, self._path, self.enable_links)
 
 class TrackedDict(dict):
-    def __init__(self, d, path, enable_links=True):
+    def __init__(self, d, path, enable_links=True, visited=None):
         super().__init__()
         self._path = path
         self.enable_links = enable_links
+        if visited is None:
+            visited = set()
         for k, v in d.items():
             sub_path = f"{path}.{k}" if path else k
-            self[k] = _wrap_tracked(v, sub_path, enable_links)
+            self[k] = _wrap_tracked(v, sub_path, enable_links, visited)
 
     def __getitem__(self, key):
         if key not in self:
@@ -701,23 +703,33 @@ class TrackedDict(dict):
         return super().get(key, default)
 
 class TrackedList(list):
-    def __init__(self, lst, path, enable_links=True):
+    def __init__(self, lst, path, enable_links=True, visited=None):
         super().__init__()
         self._path = path
         self.enable_links = enable_links
+        if visited is None:
+            visited = set()
         for idx, item in enumerate(lst):
             sub_path = f"{path}.{idx}"
-            self.append(_wrap_tracked(item, sub_path, enable_links))
+            self.append(_wrap_tracked(item, sub_path, enable_links, visited))
 
-def _wrap_tracked(val, path='', enable_links=True):
+def _wrap_tracked(val, path='', enable_links=True, visited=None):
+    if visited is None:
+        visited = set()
+    if isinstance(val, (dict, list)):
+        val_id = id(val)
+        if val_id in visited:
+            return val
+        visited.add(val_id)
+
     if isinstance(val, dict):
         if isinstance(val, TrackedDict):
             return val
-        return TrackedDict(val, path, enable_links)
+        return TrackedDict(val, path, enable_links, visited)
     elif isinstance(val, list):
         if isinstance(val, TrackedList):
             return val
-        return TrackedList(val, path, enable_links)
+        return TrackedList(val, path, enable_links, visited)
     elif isinstance(val, (SafeDict, Placeholder)):
         return val
     elif isinstance(val, TrackedValue):
@@ -1656,12 +1668,14 @@ def _wrap_tracked(val, path='', enable_links=True, visited=None):
     return TrackedValue(val, path, enable_links)
 
 class SafeDict(dict):
-    def __init__(self, d, path=''):
+    def __init__(self, d, path='', visited=None):
         super().__init__()
         self._path = path
+        if visited is None:
+            visited = set()
         if isinstance(d, dict):
             for k, v in d.items():
-                self[k] = _wrap_safe(v, f"{path}.{k}" if path else k)
+                self[k] = _wrap_safe(v, f"{path}.{k}" if path else k, visited)
 
     def __getitem__(self, key):
         if key not in self:
@@ -1693,7 +1707,7 @@ def _wrap_safe(val, path='', visited=None):
     if isinstance(val, dict):
         if isinstance(val, SafeDict):
             return val
-        return SafeDict(val, path)
+        return SafeDict(val, path, visited)
     elif isinstance(val, list):
         return [_wrap_safe(item, f"{path}.{idx}", visited) for idx, item in enumerate(val)]
     elif isinstance(val, Placeholder):
