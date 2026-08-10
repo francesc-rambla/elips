@@ -1596,18 +1596,26 @@ def _is_value_empty(val):
         return len(val) == 0
     return False
 
-def _is_row_empty(item):
+def _is_row_empty(item, visited=None):
+    if visited is None:
+        visited = set()
+    if isinstance(item, (dict, list)):
+        item_id = id(item)
+        if item_id in visited:
+            return True
+        visited.add(item_id)
+
     if not isinstance(item, dict):
         return _is_value_empty(item)
     for k, v in item.items():
         if k in ('editor_metadata', '_hierarchy_schema', '_path'):
             continue
         if isinstance(v, list):
-            non_empty_children = [child for child in v if not _is_row_empty(child)]
+            non_empty_children = [child for child in v if not _is_row_empty(child, visited)]
             if non_empty_children:
                 return False
         elif isinstance(v, dict):
-            if not _is_row_empty(v):
+            if not _is_row_empty(v, visited):
                 return False
         else:
             if not _is_value_empty(v):
@@ -1635,7 +1643,7 @@ def _filter_empty_rows(data, visited=None):
         filtered_list = []
         for item in data:
             if isinstance(item, dict):
-                if not _is_row_empty(item):
+                if not _is_row_empty(item, visited.copy()):
                     filtered_list.append(_filter_empty_rows(item, visited))
             else:
                 if not _is_value_empty(item):
