@@ -529,6 +529,8 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
         })
 
     root['_sheet_info'] = sheet_info_list
+    if 'editor_metadata' in parsed and isinstance(parsed['editor_metadata'][1], list):
+        root['editor_metadata'] = parsed['editor_metadata'][1]
 
     return {
         'data': root,
@@ -540,10 +542,23 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
     data = json.loads(json_str)
     
     valid_prefixes = ('OUT_', 'JSON_', 'EXPORT_')
-    has_prefixed_sheets = any(sheet.upper().startswith(valid_prefixes) for sheet in wb.sheetnames)
+    has_prefixed_sheets = any(sheet.upper().startswith(valid_prefixes) for sheet in wb.sheetnames if not sheet.startswith('_') and sheet != 'editor_metadata')
     
-    for sheet_name in wb.sheetnames:
+    internal_sheets = ('editor_metadata', 'editormetadata', '_sheet_info', '_hierarchy_schema', '_hierarchy_metadata', 'headers')
+
+    # Remove phantom sheets that shouldn't exist in the workbook
+    for s_name in list(wb.sheetnames):
+        s_lower = s_name.lower()
+        if s_lower in ('_sheet_info', '_sheet_info.headers', 'headers') or s_name.startswith('_sheet_info'):
+            del wb[s_name]
+
+    for sheet_name in list(wb.sheetnames):
         sheet_name_upper = sheet_name.upper()
+        sheet_id = sanitize_id(sheet_name)
+
+        if sheet_id in ('editor_metadata', 'editormetadata'):
+            continue  # Handled explicitly at the end
+
         if has_prefixed_sheets and not sheet_name_upper.startswith(valid_prefixes):
             continue
             
@@ -553,28 +568,6 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                 if sheet_name_upper.startswith(prefix):
                     stripped_name = sheet_name[len(prefix):]
                     break
-                    
-        sheet_id = sanitize_id(stripped_name)
-        
-        if sheet_id == 'editor_metadata':
-            ws = wb[sheet_name]
-            meta_data = data.get('editor_metadata', [])
-            ws.delete_rows(1, ws.max_row)
-            headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula']
-            for c_idx, h in enumerate(headers):
-                ws.cell(1, c_idx + 1).value = h
-            
-            for r_idx, row_obj in enumerate(meta_data):
-                excel_row = r_idx + 2
-                for c_idx, h in enumerate(headers):
-                    val = row_obj.get(h, '')
-                    if isinstance(val, list):
-                        val = ', '.join(str(x) for x in val)
-                    elif isinstance(val, bool):
-                        val = int(val)
-                    write_cell_value(ws, excel_row, c_idx + 1, val)
-            ws.sheet_state = 'hidden'
-            continue
             
         ws = wb[sheet_name]
         sheet_data = _extract_flat_rows_for_sheet(data, sheet_name, has_prefixed_sheets, valid_prefixes)
@@ -617,7 +610,7 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
             
             active_cols = []
             if sheet_data:
-                active_cols = [sanitize_id(k) for k in sheet_data[0].keys() if k]
+                active_cols = [sanitize_id(k) for k in sheet_data[0].keys() if k and k not in internal_sheets and not str(k).startswith('_')]
             
             for c_idx in range(len(excel_headers) - 1, -1, -1):
                 h = excel_headers[c_idx]
@@ -651,6 +644,29 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                         val = row_obj[matched_key]
                         if not isinstance(val, (list, dict)):
                             write_cell_value(ws, excel_row, c_idx + 1, val)
+
+    # EXPLICITLY write editor_metadata sheet with all 14 config columns regardless of prefixes!
+    meta_data = data.get('editor_metadata') or data.get('editorMetadata') or []
+    if 'editor_metadata' in wb.sheetnames:
+        ws = wb['editor_metadata']
+    else:
+        ws = wb.create_sheet(title='editor_metadata')
+
+    ws.delete_rows(1, max(ws.max_row, 1))
+    headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula']
+    for c_idx, h in enumerate(headers):
+        ws.cell(1, c_idx + 1).value = h
+    
+    for r_idx, row_obj in enumerate(meta_data):
+        excel_row = r_idx + 2
+        for c_idx, h in enumerate(headers):
+            val = row_obj.get(h, '')
+            if isinstance(val, list):
+                val = ', '.join(str(x) for x in val)
+            elif isinstance(val, bool):
+                val = int(val)
+            write_cell_value(ws, excel_row, c_idx + 1, val)
+    ws.sheet_state = 'hidden'
 
     wb.save(out_excel_path)
 
@@ -1213,62 +1229,36 @@ def create_default_workbook_from_json(json_str, out_path):
     if wb.active:
         wb.remove(wb.active)
         
-    sub_tables = {}
+    internal_keys = ('editor_metadata', 'editormetadata', '_sheet_info', '_hierarchy_schema', '_hierarchy_metadata', 'headers')
 
-    def collect_nested_lists(parent_path, item_obj):
-        if isinstance(item_obj, dict):
-            for k, v in item_obj.items():
-                if isinstance(v, list) and len(v) > 0:
-                    sub_key = f"{parent_path}.{k}" if parent_path else k
-                    if sub_key not in sub_tables:
-                        sub_tables[sub_key] = []
-                    if k not in sub_tables:
-                        sub_tables[k] = []
-                    for child in v:
-                        if isinstance(child, dict):
-                            flat_child = {ck: cv for ck, cv in child.items() if not isinstance(cv, (dict, list))}
-                            sub_tables[sub_key].append(flat_child)
-                            sub_tables[k].append(flat_child)
-                            collect_nested_lists(sub_key, child)
-
+    # Create primary data sheets only
     for sheet_name, sheet_content in data.items():
-        if sheet_name == 'editor_metadata':
+        if sheet_name in internal_keys or str(sheet_name).startswith('_'):
             continue
+            
         ws = wb.create_sheet(title=str(sheet_name))
         if isinstance(sheet_content, dict):
             ws.append(["Clau", "Valor"])
             for k, v in sheet_content.items():
-                if isinstance(v, (dict, list)):
-                    collect_nested_lists(sheet_name, {k: v})
+                if isinstance(v, (dict, list)) or k in internal_keys or str(k).startswith('_'):
                     continue
                 ws.append([str(k), "" if v is None else str(v)])
         elif isinstance(sheet_content, list) and len(sheet_content) > 0:
-            headers = [k for k in sheet_content[0].keys() if not isinstance(sheet_content[0][k], (dict, list))]
+            headers = [k for k in sheet_content[0].keys() if not isinstance(sheet_content[0][k], (dict, list)) and k not in internal_keys and not str(k).startswith('_')]
             ws.append(headers)
             for row in sheet_content:
-                ws.append(["" if row.get(h) is None else str(row.get(h)) for h in headers])
-                collect_nested_lists(sheet_name, row)
-        else:
-            ws.append(["Dada"])
-            ws.append([str(sheet_content)])
-            
-    for sub_name, sub_rows in sub_tables.items():
-        sheet_title = str(sub_name)[-31:]
-        if sheet_title in wb.sheetnames:
-            continue
-        ws = wb.create_sheet(title=sheet_title)
-        if sub_rows and isinstance(sub_rows[0], dict):
-            headers = list(sub_rows[0].keys())
-            ws.append(headers)
-            for r in sub_rows:
-                ws.append(["" if r.get(h) is None else str(r.get(h)) for h in headers])
+                if isinstance(row, dict):
+                    ws.append(["" if row.get(h) is None else str(row.get(h)) for h in headers])
 
-    if 'editor_metadata' in data:
+    # Write editor_metadata sheet cleanly with all 14 columns
+    editor_meta = data.get('editor_metadata') or data.get('editorMetadata') or []
+    if editor_meta:
         ws = wb.create_sheet(title='editor_metadata')
-        headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width']
+        headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula']
         ws.append(headers)
-        for row_obj in data['editor_metadata']:
-            ws.append(["" if row_obj.get(h) is None else str(row_obj.get(h)) for h in headers])
+        for row_obj in editor_meta:
+            if isinstance(row_obj, dict):
+                ws.append(["" if row_obj.get(h) is None else (", ".join(str(x) for x in row_obj[h]) if isinstance(row_obj[h], list) else str(row_obj[h])) for h in headers])
         ws.sheet_state = 'hidden'
 
     if not wb.sheetnames:
@@ -2132,7 +2122,15 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/in.xlsx')
     ensureWorkDir();
     
     // Write JSON to virtual FS
-    const dataToSave = jsonData || store.excelJsonData || {};
+    let dataToSave = jsonData || store.excelJsonData || {};
+    try {
+      dataToSave = JSON.parse(JSON.stringify(dataToSave));
+    } catch (_) {}
+
+    if (store.editorMetadata && Array.isArray(store.editorMetadata) && store.editorMetadata.length > 0) {
+      dataToSave.editor_metadata = store.editorMetadata;
+    }
+
     const jsonStr = JSON.stringify(dataToSave);
     _pyodide.FS.writeFile('/work/in.json', new TextEncoder().encode(jsonStr));
     
