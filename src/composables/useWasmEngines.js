@@ -446,21 +446,24 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                         data_to_set = data
                     
                     if isinstance(data_to_set, list):
-                        if not parent:
-                            parent[sub_key] = data_to_set
+                        if not parent or not data_to_set:
+                            parent[sub_key] = data_to_set if data_to_set is not None else []
                             continue
                         
-                        child_ref_key = headers[0] if headers else (next(iter(data_to_set[0].keys())) if data_to_set else None)
-                        
-                        if child_ref_key and child_ref_key in parent:
-                            groups = defaultdict(list)
-                            for child_row in data_to_set:
-                                ref_val = child_row.get(child_ref_key)
-                                clean_child = {k: v for k, v in child_row.items() if k != child_ref_key}
-                                groups[ref_val].append(clean_child)
-                                
-                            parent_ref_val = parent.get(child_ref_key)
-                            parent[sub_key] = groups.get(parent_ref_val, [])
+                        sample_child = data_to_set[0]
+                        if isinstance(sample_child, dict):
+                            common_keys = [k for k in sample_child.keys() if k in parent and parent[k] is not None and str(parent[k]).strip() != '']
+                            id_keys = [k for k in common_keys if any(term in k.lower() for term in ['id', 'codi', 'code', 'ref', 'key', 'num'])]
+                            matching_keys = id_keys if id_keys else common_keys
+                            
+                            if matching_keys:
+                                matched_children = [
+                                    c for c in data_to_set
+                                    if isinstance(c, dict) and all(str(c.get(k, '')).strip() == str(parent[k]).strip() for k in matching_keys)
+                                ]
+                                parent[sub_key] = matched_children
+                            else:
+                                parent[sub_key] = data_to_set
                         else:
                             parent[sub_key] = data_to_set
                     else:
