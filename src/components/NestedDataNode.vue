@@ -2,6 +2,8 @@
 import { computed, ref } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 
+import { useWasmEngines } from '../composables/useWasmEngines';
+
 const props = defineProps({
   parentObj: {
     type: Object,
@@ -26,6 +28,26 @@ const props = defineProps({
 });
 
 const store = useWorkspaceStore();
+const { evaluateComputedFields } = useWasmEngines();
+
+const getAvailableChildVectorsForGroup = () => {
+  if (!props.items || !Array.isArray(props.items) || props.items.length === 0) return [];
+  const sample = props.items[0];
+  if (sample && typeof sample === 'object') {
+    return Object.keys(sample).filter(k => Array.isArray(sample[k]));
+  }
+  return [];
+};
+
+const getChildTableColumns = (vectorName) => {
+  if (!vectorName || !props.items || !Array.isArray(props.items)) return [];
+  for (const item of props.items) {
+    if (item && Array.isArray(item[vectorName]) && item[vectorName].length > 0 && typeof item[vectorName][0] === 'object') {
+      return Object.keys(item[vectorName][0]);
+    }
+  }
+  return [];
+};
 
 const cleanPath = (p) => {
   if (!p) return '';
@@ -338,6 +360,10 @@ const activeCellInfo = ref(null);
 const cellTextValue = ref('');
 
 const openCellEditor = (item, fieldKey) => {
+  if (getElementType(fieldKey) === 'Computed') {
+    store.addLog("Aquest camp és calculat automàticament i no es pot editar manualment.", "info");
+    return;
+  }
   activeCellInfo.value = { item, fieldKey };
   cellTextValue.value = String(item[fieldKey] || '');
   isCellModalOpen.value = true;
@@ -399,7 +425,10 @@ const openGroupConfig = () => {
       displayField: meta.displayField || '',
       valueField: meta.valueField || '',
       multiple: !!meta.multiple,
-      width: meta.width || ''
+      width: meta.width || '',
+      calcFn: meta.calcFn || 'SUM',
+      calcVector: meta.calcVector || '',
+      calcTargetCol: meta.calcTargetCol || ''
     };
   });
   isConfigModalOpen.value = true;
@@ -433,7 +462,10 @@ const addNewFieldToConfig = () => {
       displayField: '',
       valueField: '',
       multiple: false,
-      width: ''
+      width: '',
+      calcFn: 'SUM',
+      calcVector: '',
+      calcTargetCol: ''
     });
   }
 };
@@ -469,6 +501,11 @@ const saveGroupConfig = () => {
         meta.options = item.optionsRaw.split(',').map(x => x.trim()).filter(x => x);
       }
     }
+    if (item.type === 'Computed') {
+      meta.calcFn = item.calcFn || 'SUM';
+      meta.calcVector = item.calcVector || '';
+      meta.calcTargetCol = item.calcTargetCol || '';
+    }
     if (item.width) {
       meta.width = item.width;
     }
@@ -477,10 +514,11 @@ const saveGroupConfig = () => {
   
   if (store.excelJsonData) {
     store.excelJsonData.editor_metadata = store.editorMetadata;
+    evaluateComputedFields(store.excelJsonData);
   }
   
   isConfigModalOpen.value = false;
-  store.addLog(`Configuració de tipus de dades i disposició (${selectedLayout.value}) per al grup '${props.arrayKey}' desada correctament.`, 'success');
+  store.addLog(`Configuració de tipus de dades per al grup '${props.arrayKey}' desada i valors calculats avaluats.`, 'success');
 };
 
 const addNestedItem = () => {
@@ -725,6 +763,19 @@ const getItemPath = (idx, fieldKey) => {
                     </select>
                   </template>
 
+                  <!-- Computed Type (Non-editable) -->
+                  <div 
+                    v-else-if="getElementType(h) === 'Computed'" 
+                    :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
+                    :data-path="getItemPath(rIdx, h)"
+                    style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 28px; padding: 2px 8px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.78rem; font-weight: 600; cursor: not-allowed;" 
+                    title="🔒 Camp calculat automàticament"
+                  >
+                    <span style="font-size: 0.82rem;">🧮</span>
+                    <span style="flex-grow: 1;">{{ row[h] !== undefined ? row[h] : 0 }}</span>
+                    <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
+                  </div>
+
                   <!-- Date Type -->
                   <input 
                     v-else-if="getElementType(h) === 'Date'"
@@ -927,6 +978,19 @@ const getItemPath = (idx, fieldKey) => {
                       </select>
                     </template>
                     
+                    <!-- Computed Type (Non-editable) -->
+                    <div 
+                      v-else-if="getElementType(fKey) === 'Computed'" 
+                      :id="'data-field-' + fullPath + '-' + idx + '-' + fKey"
+                      :data-path="getItemPath(idx, fKey)"
+                      style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 32px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.85rem; font-weight: 600; cursor: not-allowed;" 
+                      title="🔒 Camp calculat automàticament"
+                    >
+                      <span style="font-size: 0.9rem;">🧮</span>
+                      <span style="flex-grow: 1;">{{ item[fKey] !== undefined ? item[fKey] : 0 }}</span>
+                      <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px;">Calculat</span>
+                    </div>
+
                     <!-- Date Type -->
                     <input 
                       v-else-if="getElementType(fKey) === 'Date'"
@@ -1171,6 +1235,7 @@ const getItemPath = (idx, fieldKey) => {
                     <option value="Date">Data</option>
                     <option value="Number">Nombre</option>
                     <option value="Boolean">Booleà</option>
+                    <option value="Computed">Calculat (Computed: SUM, COUNT, AVG)</option>
                   </select>
                 </td>
                 <td style="padding: 6px 8px; vertical-align: top;">
@@ -1219,6 +1284,41 @@ const getItemPath = (idx, fieldKey) => {
                       <span>Selecció múltiple</span>
                     </label>
                   </template>
+
+                  <!-- Computed Configuration for Nested Level -->
+                  <template v-else-if="item.type === 'Computed'">
+                    <div style="display: flex; flex-direction: column; gap: 4px; padding: 2px 0;">
+                      <div style="display: flex; gap: 4px; align-items: center;">
+                        <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Funció:</span>
+                        <select v-model="item.calcFn" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
+                          <option value="SUM">SUM (Suma)</option>
+                          <option value="COUNT">COUNT (Recompte)</option>
+                          <option value="AVG">AVG (Mitjana)</option>
+                        </select>
+                      </div>
+
+                      <div style="display: flex; gap: 4px; align-items: center;">
+                        <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Sub-taula:</span>
+                        <select v-model="item.calcVector" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
+                          <option value="">-- Sub-taula --</option>
+                          <option v-for="vec in getAvailableChildVectorsForGroup()" :key="vec" :value="vec">
+                            {{ vec }}
+                          </option>
+                        </select>
+                      </div>
+
+                      <div v-if="item.calcFn !== 'COUNT' && item.calcVector" style="display: flex; gap: 4px; align-items: center;">
+                        <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Columna:</span>
+                        <select v-model="item.calcTargetCol" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
+                          <option value="">-- Columna --</option>
+                          <option v-for="col in getChildTableColumns(item.calcVector)" :key="col" :value="col">
+                            {{ col }}
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+                  </template>
+
                   <template v-else>
                     <span style="color: var(--text-muted); font-size: 0.8rem;">No aplicable</span>
                   </template>

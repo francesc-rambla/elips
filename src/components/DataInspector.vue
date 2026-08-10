@@ -377,6 +377,11 @@ const cellTextValue = ref('');
 const activeCellInfo = ref({ sheet: '', keyOrIdx: '', col: null, isKv: true });
 
 const openCellEditor = (sheet, keyOrIdx, col, isKv) => {
+  const colName = isKv ? keyOrIdx : col;
+  if (getElementType(sheet, colName) === 'Computed') {
+    store.addLog("Aquest camp és calculat automàticament i no es pot editar manualment.", "info");
+    return;
+  }
   activeCellInfo.value = { sheet, keyOrIdx, col, isKv };
   const val = isKv 
     ? store.excelJsonData[sheet][keyOrIdx] 
@@ -1100,6 +1105,19 @@ onMounted(() => {
                           </select>
                         </template>
                         
+                        <!-- Computed Type (Non-editable) -->
+                        <div 
+                          v-else-if="getElementType(name, col) === 'Computed'" 
+                          :id="'data-field-' + name + '-' + idx + '-' + col"
+                          :data-path="name + '.' + idx + '.' + col"
+                          style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 32px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.82rem; font-weight: 600; cursor: not-allowed;" 
+                          title="🔒 Camp calculat automàticament"
+                        >
+                          <span style="font-size: 0.85rem;">🧮</span>
+                          <span style="flex-grow: 1;">{{ store.excelJsonData[name][idx][col] !== undefined ? store.excelJsonData[name][idx][col] : 0 }}</span>
+                          <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
+                        </div>
+
                         <!-- Date Type -->
                         <input 
                           v-else-if="getElementType(name, col) === 'Date'"
@@ -1267,6 +1285,19 @@ onMounted(() => {
                         </select>
                       </template>
                       
+                      <!-- Computed Type (Non-editable) -->
+                      <div 
+                        v-else-if="getElementType(name, key) === 'Computed'" 
+                        :id="'data-field-' + name + '-' + key"
+                        :data-path="name + '.' + key"
+                        style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 28px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: not-allowed;" 
+                        title="🔒 Camp calculat automàticament"
+                      >
+                        <span style="font-size: 0.85rem;">🧮</span>
+                        <span style="flex-grow: 1;">{{ store.excelJsonData[name][key] !== undefined ? store.excelJsonData[name][key] : 0 }}</span>
+                        <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
+                      </div>
+
                       <!-- Date Type -->
                       <input 
                         v-else-if="getElementType(name, key) === 'Date'"
