@@ -1580,6 +1580,38 @@ def render_json_text(excel_path, date_format='iso', strict=False):
     doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
     return json.dumps(doc, ensure_ascii=False, indent=2)
 
+def _is_value_empty(val):
+    if val is None or val is False:
+        return True
+    if isinstance(val, (int, float, Decimal)):
+        return val == 0
+    if isinstance(val, str):
+        s = val.strip()
+        if not s or s in ('0', '0.0', '0.00', '0,00', 'None', 'null', 'false', 'FALSE'):
+            return True
+        return False
+    if isinstance(val, (list, dict)):
+        return len(val) == 0
+    return False
+
+def _is_row_empty(item):
+    if not isinstance(item, dict):
+        return _is_value_empty(item)
+    for k, v in item.items():
+        if k in ('editor_metadata', '_hierarchy_schema', '_path'):
+            continue
+        if isinstance(v, list):
+            non_empty_children = [child for child in v if not _is_row_empty(child)]
+            if non_empty_children:
+                return False
+        elif isinstance(v, dict):
+            if not _is_row_empty(v):
+                return False
+        else:
+            if not _is_value_empty(v):
+                return False
+    return True
+
 def _filter_empty_rows(data, visited=None):
     if visited is None:
         visited = set()
@@ -1601,12 +1633,11 @@ def _filter_empty_rows(data, visited=None):
         filtered_list = []
         for item in data:
             if isinstance(item, dict):
-                primitive_vals = [v for k, v in item.items() if not isinstance(v, (list, dict))]
-                is_empty = all(v in (0, 0.0, '', None, False) for v in primitive_vals) if primitive_vals else False
-                if not is_empty:
+                if not _is_row_empty(item):
                     filtered_list.append(_filter_empty_rows(item, visited))
             else:
-                filtered_list.append(_filter_empty_rows(item, visited))
+                if not _is_value_empty(item):
+                    filtered_list.append(_filter_empty_rows(item, visited))
         return filtered_list
     return data
 
