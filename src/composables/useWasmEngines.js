@@ -2290,81 +2290,109 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     const computedMetas = store.editorMetadata.filter(m => m.type === 'Computed');
     if (computedMetas.length === 0) return;
 
-    const processContainer = (container) => {
+    const customMetas = computedMetas.filter(m => (m.calcFn || '').toUpperCase() === 'CUSTOM' && m.calcFormula);
+    const aggMetas = computedMetas.filter(m => (m.calcFn || '').toUpperCase() !== 'CUSTOM');
+
+    // Helper to evaluate CUSTOM formulas on a container (bottom-up)
+    const runCustomPass = (container, groupHint = '') => {
       if (!container || typeof container !== 'object') return;
+
       if (Array.isArray(container)) {
-        container.forEach(item => processRowOrDict(item));
-      } else {
-        processRowOrDict(container);
+        container.forEach(item => runCustomPass(item, groupHint));
+        return;
       }
-    };
 
-    const processRowOrDict = (obj) => {
-      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
-
-      // 1. FIRST recurse into all child arrays and sub-objects (BOTTOM-UP traversal)
-      Object.keys(obj).forEach(key => {
-        if (key !== '_sheet_info' && key !== '_hierarchy_schema' && key !== 'editor_metadata') {
-          const val = obj[key];
+      // First recurse into child objects/arrays (bottom-up)
+      Object.keys(container).forEach(k => {
+        if (k !== '_sheet_info' && k !== '_hierarchy_schema' && k !== 'editor_metadata') {
+          const val = container[k];
           if (val && typeof val === 'object') {
-            processContainer(val);
+            runCustomPass(val, Array.isArray(val) ? k : groupHint);
           }
         }
       });
 
-      // 2. THEN evaluate computed fields for the current node
-      computedMetas.forEach(meta => {
+      // Evaluate CUSTOM formulas for this node
+      customMetas.forEach(meta => {
+        if (!meta.group || meta.group === groupHint || (meta.element in container)) {
+          const calculatedVal = evaluateCustomFormula(meta.calcFormula, container);
+          if (container[meta.element] !== calculatedVal) {
+            container[meta.element] = calculatedVal;
+          }
+        }
+      });
+    };
+
+    // Helper to evaluate Aggregation (SUM, COUNT, AVG) formulas on a container (bottom-up)
+    const runAggPass = (container, groupHint = '') => {
+      if (!container || typeof container !== 'object') return;
+
+      if (Array.isArray(container)) {
+        container.forEach(item => runAggPass(item, groupHint));
+        return;
+      }
+
+      // First recurse into child objects/arrays (bottom-up)
+      Object.keys(container).forEach(k => {
+        if (k !== '_sheet_info' && k !== '_hierarchy_schema' && k !== 'editor_metadata') {
+          const val = container[k];
+          if (val && typeof val === 'object') {
+            runAggPass(val, Array.isArray(val) ? k : groupHint);
+          }
+        }
+      });
+
+      // Evaluate Aggregation formulas for this node
+      aggMetas.forEach(meta => {
         const targetVec = meta.calcVector;
         const fn = (meta.calcFn || 'SUM').toUpperCase();
         const col = meta.calcTargetCol;
-        const formula = meta.calcFormula;
 
-        if (fn === 'CUSTOM' && formula) {
-          const calculatedVal = evaluateCustomFormula(formula, obj);
-          if (obj[meta.element] !== calculatedVal) {
-            obj[meta.element] = calculatedVal;
-          }
-          return;
-        }
-
-        let childList = null;
-        if (targetVec && Array.isArray(obj[targetVec])) {
-          childList = obj[targetVec];
-        } else if (targetVec && data[targetVec] && Array.isArray(data[targetVec])) {
-          childList = data[targetVec];
-        }
-
-        if (childList) {
-          let calculatedVal = 0;
-          if (fn === 'COUNT') {
-            calculatedVal = childList.length;
-          } else if (fn === 'SUM' && col) {
-            const total = childList.reduce((sum, child) => {
-              const val = parseFloat(child[col]);
-              return sum + (isNaN(val) ? 0 : val);
-            }, 0);
-            calculatedVal = Math.round(total * 100) / 100;
-          } else if (fn === 'AVG' && col) {
-            const numbers = childList.map(c => parseFloat(c[col])).filter(n => !isNaN(n));
-            const avg = numbers.length > 0 ? numbers.reduce((a, b) => a + b, 0) / numbers.length : 0;
-            calculatedVal = Math.round(avg * 100) / 100;
+        if (!meta.group || meta.group === groupHint || (targetVec && container[targetVec]) || (meta.element in container)) {
+          let childList = null;
+          if (targetVec && Array.isArray(container[targetVec])) {
+            childList = container[targetVec];
+          } else if (targetVec && data[targetVec] && Array.isArray(data[targetVec])) {
+            childList = data[targetVec];
           }
 
-          if (obj[meta.element] !== calculatedVal) {
-            obj[meta.element] = calculatedVal;
+          if (childList) {
+            let calculatedVal = 0;
+            if (fn === 'COUNT') {
+              calculatedVal = childList.length;
+            } else if (fn === 'SUM' && col) {
+              const total = childList.reduce((sum, child) => {
+                const val = parseFloat(child[col]);
+                return sum + (isNaN(val) ? 0 : val);
+              }, 0);
+              calculatedVal = Math.round(total * 100) / 100;
+            } else if (fn === 'AVG' && col) {
+              const numbers = childList.map(c => parseFloat(c[col])).filter(n => !isNaN(n));
+              const avg = numbers.length > 0 ? numbers.reduce((a, b) => a + b, 0) / numbers.length : 0;
+              calculatedVal = Math.round(avg * 100) / 100;
+            }
+
+            if (container[meta.element] !== calculatedVal) {
+              container[meta.element] = calculatedVal;
+            }
           }
         }
       });
     };
 
-    // Run 2 passes to ensure any cross-level dependencies resolve cleanly
-    for (let pass = 0; pass < 2; pass++) {
-      Object.keys(data).forEach(key => {
-        if (key !== '_sheet_info' && key !== '_hierarchy_schema' && key !== 'editor_metadata') {
-          processContainer(data[key]);
-        }
-      });
-    }
+    // PHASE 1: Run CUSTOM formulas across all sheets & sub-tables (bottom-up)
+    Object.keys(data).forEach(key => {
+      if (key !== '_sheet_info' && key !== '_hierarchy_schema' && key !== 'editor_metadata') {
+        runCustomPass(data[key], key);
+      }
+    });
+
+    // PHASE 2: Run SUM/COUNT/AVG aggregations across all sheets & sub-tables (bottom-up)
+    Object.keys(data).forEach(key => {
+      if (key !== '_sheet_info' && key !== '_hierarchy_schema' && key !== 'editor_metadata') {
+        runAggPass(data[key], key);
+      }
+    });
   };
 
   const saveExcelHierarchy = async (renamesMap) => {
