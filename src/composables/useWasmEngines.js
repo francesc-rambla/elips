@@ -561,15 +561,6 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
 # -------------------- Jinja: recuperació d'errors --------------------
 RE_DOTTED = re.compile(r"\\b([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+)\\b")
 
-def _wrap_safe(val, path):
-    if isinstance(val, dict):
-        if isinstance(val, SafeDict):
-            return val
-        return SafeDict(val, path)
-    elif isinstance(val, list):
-        return [_wrap_safe(item, f"{path}[{idx}]") for idx, item in enumerate(val)]
-    return val
-
 class TrackedValue:
     def __init__(self, val, path, enable_links=True):
         self.val = val
@@ -735,31 +726,6 @@ def _wrap_tracked(val, path='', enable_links=True, visited=None):
     elif isinstance(val, TrackedValue):
         return val
     return TrackedValue(val, path, enable_links)
-
-class SafeDict(dict):
-    def __init__(self, d, path):
-        super().__init__()
-        self._path = path
-        for k, v in d.items():
-            self[k] = _wrap_safe(v, f"{path}.{k}")
-
-    def __getitem__(self, key):
-        if key not in self:
-            return Placeholder(f"{self._path}.{key}")
-        return super().__getitem__(key)
-
-    def __getattr__(self, name):
-        if name.startswith('_') or name in ('get', 'keys', 'items', 'values'):
-            raise AttributeError(name)
-        try:
-            return self[name]
-        except KeyError:
-            raise AttributeError(name)
-
-    def get(self, key, default=None):
-        if key not in self:
-            return Placeholder(f"{self._path}.{key}")
-        return super().get(key, default)
 
 class Placeholder:
     def __init__(self, path):
@@ -1656,11 +1622,11 @@ def _wrap_tracked(val, path='', enable_links=True, visited=None):
     if isinstance(val, dict):
         if isinstance(val, TrackedDict):
             return val
-        return TrackedDict(val, path, enable_links)
+        return TrackedDict(val, path, enable_links, visited)
     elif isinstance(val, list):
         if isinstance(val, TrackedList):
             return val
-        return TrackedList(val, path, enable_links)
+        return TrackedList(val, path, enable_links, visited)
     elif isinstance(val, (SafeDict, Placeholder)):
         return val
     elif isinstance(val, TrackedValue):
