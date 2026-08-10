@@ -469,6 +469,32 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     else:
                         parent[sub_key] = data_to_set
 
+    sheet_info_list = []
+    for raw_name in sorted_raw_names:
+        if raw_name == 'editor_metadata':
+            continue
+        kind, data, headers = parsed[raw_name]
+        stripped = raw_name
+        pfx = ''
+        if has_prefixed_sheets:
+            for p in valid_prefixes:
+                if raw_name.upper().startswith(p):
+                    pfx = p
+                    stripped = raw_name[len(p):]
+                    break
+        parts = [sanitize_id(p) for p in stripped.split('.')]
+        sheet_info_list.append({
+            'raw_name': raw_name,
+            'prefix': pfx,
+            'clean_name': parts[-1],
+            'parent_path': '.'.join(parts[:-1]),
+            'full_path': '.'.join(parts),
+            'kind': kind,
+            'headers': headers or []
+        })
+
+    root['_sheet_info'] = sheet_info_list
+
     return {
         'data': root,
         'hierarchy_schema': hierarchy_schema
@@ -592,6 +618,15 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                             write_cell_value(ws, excel_row, c_idx + 1, val)
 
     wb.save(out_excel_path)
+
+def update_excel_hierarchy(excel_path, hierarchy_config_json, out_excel_path):
+    wb = load_workbook(excel_path)
+    config = json.loads(hierarchy_config_json)
+    for old_sheet, new_name in config.items():
+        if old_sheet in wb.sheetnames and new_name and old_sheet != new_name:
+            wb[old_sheet].title = new_name
+    wb.save(out_excel_path)
+    return True
 
 # -------------------- Jinja: recuperació d'errors --------------------
 RE_DOTTED = re.compile(r"\\b([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+)\\b")
@@ -2109,12 +2144,44 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     return new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   };
 
+  const saveExcelHierarchy = async (renamesMap) => {
+    if (!_pyodide) throw new Error("Pyodide no està disponible.");
+    const pName = store.currentProjectName || localStorage.getItem('currentProjectName') || 'Default';
+    const buffer = await getBinaryFile(`${pName}:excelFileBuffer`);
+    if (!buffer) throw new Error("No s'ha trobat el fitxer Excel a l'emmagatzematge local.");
+
+    ensureWorkDir();
+    _pyodide.FS.writeFile('/work/in.xlsx', new Uint8Array(buffer));
+    const jsonConfig = JSON.stringify(renamesMap);
+
+    const fn = _pyodide.globals.get('update_excel_hierarchy');
+    fn('/work/in.xlsx', jsonConfig, '/work/out_hierarchy.xlsx');
+    fn.destroy();
+
+    const newBytes = _pyodide.FS.readFile('/work/out_hierarchy.xlsx');
+    const newBuffer = newBytes.buffer;
+
+    // Save updated ArrayBuffer back into IndexedDB & update store.excelFile
+    await saveBinaryFile(`${pName}:excelFileBuffer`, newBuffer);
+    const fileName = store.excelFileName || `${pName}.xlsx`;
+    store.excelFile = new File([newBytes], fileName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    store.excelFileSize = newBuffer.byteLength;
+
+    // Re-parse the updated Excel file
+    const parsedData = await parseExcel(newBuffer);
+    store.excelJsonData = parsedData;
+
+    store.addLog("Esquema de relacions i jerarquia d'Excel actualitzat correctament al full de càlcul.", "success");
+    return parsedData;
+  };
+
   return {
     initEngines,
     parseExcel,
     renderMarkdown,
     compileDocx,
     saveExcelData,
+    saveExcelHierarchy,
     writeVirtualExcel,
     isLoading
   };

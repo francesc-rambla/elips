@@ -13,7 +13,7 @@ import TerminalLog from './components/TerminalLog.vue';
 import SettingsModal from './components/SettingsModal.vue';
 
 const store = useWorkspaceStore();
-const { initEngines, parseExcel, renderMarkdown, compileDocx, saveExcelData, writeVirtualExcel, isLoading } = useWasmEngines();
+const { initEngines, parseExcel, renderMarkdown, compileDocx, saveExcelData, saveExcelHierarchy, writeVirtualExcel, isLoading } = useWasmEngines();
 
 const isSettingsOpen = ref(false);
 const isThemeDark = ref(localStorage.getItem('theme') === 'dark');
@@ -746,6 +746,8 @@ onMounted(async () => {
     }
   });
 
+  window.__openExcelHierarchyModal = openHierarchyModal;
+
   // Inicialitza automàticament els motors WASM al carregar la pàgina
   try {
     await initEngines();
@@ -830,6 +832,87 @@ const bindExcelAsTemplateOnly = async (file) => {
   pendingFile.value = null;
 };
 
+const isHierarchyModalOpen = ref(false);
+const hierarchyRows = ref([]);
+const savingHierarchy = ref(false);
+
+const openHierarchyModal = () => {
+  if (!store.excelJsonData) {
+    alert("Primer heu de carregar un fitxer Excel.");
+    return;
+  }
+  const infoList = store.excelJsonData._sheet_info;
+  if (infoList && Array.isArray(infoList)) {
+    hierarchyRows.value = infoList.map(item => ({
+      raw_name: item.raw_name,
+      prefix: item.prefix || '',
+      clean_name: item.clean_name || '',
+      parent_path: item.parent_path || '',
+      kind: item.kind || 'tabular',
+      headers: item.headers || []
+    }));
+  } else {
+    const keys = Object.keys(store.excelJsonData).filter(k => k !== 'editor_metadata' && k !== '_hierarchy_schema' && k !== '_sheet_info');
+    hierarchyRows.value = keys.map(k => {
+      const parts = k.split('.');
+      return {
+        raw_name: k,
+        prefix: k.toUpperCase().startsWith('OUT_') ? 'OUT_' : '',
+        clean_name: parts[parts.length - 1],
+        parent_path: parts.slice(0, -1).join('.'),
+        kind: Array.isArray(store.excelJsonData[k]) ? 'tabular' : 'kv',
+        headers: []
+      };
+    });
+  }
+  isHierarchyModalOpen.value = true;
+};
+
+const getAvailableParents = (currentRawName) => {
+  return hierarchyRows.value
+    .filter(row => row.raw_name !== currentRawName)
+    .map(row => {
+      const full = row.parent_path ? `${row.parent_path}.${row.clean_name}` : row.clean_name;
+      return {
+        path: full,
+        label: `${row.clean_name} (${full})`
+      };
+    });
+};
+
+const computeJinjaPath = (row) => {
+  if (!row.clean_name) return '';
+  return row.parent_path ? `${row.parent_path}.${row.clean_name}` : row.clean_name;
+};
+
+const applyHierarchyChanges = async () => {
+  savingHierarchy.value = true;
+  try {
+    const renamesMap = {};
+    for (const item of hierarchyRows.value) {
+      const fullPath = item.parent_path ? `${item.parent_path}.${item.clean_name}` : item.clean_name;
+      const expectedRaw = item.prefix ? `${item.prefix}${fullPath}` : fullPath;
+      if (expectedRaw !== item.raw_name) {
+        renamesMap[item.raw_name] = expectedRaw;
+      }
+    }
+    
+    if (Object.keys(renamesMap).length > 0) {
+      await saveExcelHierarchy(renamesMap);
+      saveCurrentProject();
+      store.addLog(`S'ha desat la nova jerarquia d'Excel (${Object.keys(renamesMap).length} fulls reanomenats a les pestanyes de l'Excel).`, "success");
+    } else {
+      store.addLog("No s'han detectat canvis en la jerarquia de l'Excel.", "info");
+    }
+    isHierarchyModalOpen.value = false;
+  } catch (e) {
+    store.addLog(`Error desant la jerarquia de l'Excel: ${e.message}`, "error");
+    alert(`Error desant la jerarquia de l'Excel: ${e.message}`);
+  } finally {
+    savingHierarchy.value = false;
+  }
+};
+
 const processExcelFile = async (file) => {
   store.setExcelFile(file);
   const buffer = await file.arrayBuffer();
@@ -845,6 +928,11 @@ const processExcelFile = async (file) => {
       store.excelJsonData = parsedData;
       saveCurrentProject();
       store.addLog("Dades de l'Excel interpretades correctament. Podeu consultar l'esquema.", "success");
+      
+      // Auto open hierarchy modal so user can review/edit detected relationships
+      if (parsedData._sheet_info && parsedData._sheet_info.length > 0) {
+        openHierarchyModal();
+      }
     } catch (e) {
       store.addLog(`Error parsejant Excel: ${e.message}`, "error");
     }
@@ -1440,6 +1528,10 @@ const generateDocuments = async () => {
             <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.72rem; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;" @click="loadDemo" :disabled="loadingDemo" title="✨ Carrega fitxers de demostració per provar l'aplicació">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3z"/></svg>
               <span v-if="store.config.showButtonTexts">Carrega Demo</span>
+            </button>
+            <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.72rem; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;" @click="openHierarchyModal" :disabled="!store.excelJsonData" title="⚙️ Configura les relacions pare-fill i la jerarquia dels fulls d'Excel">
+              <span style="font-size: 1.1rem; color: var(--color-primary);">⚙️</span>
+              <span v-if="store.config.showButtonTexts">Relacions Excel</span>
             </button>
             <button class="btn btn-primary" style="padding: 4px 10px; font-size: 0.72rem; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;" @click="downloadAllProjectFiles" title="📥 Descarrega el paquet ZIP del projecte sencer">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -2084,6 +2176,72 @@ const generateDocuments = async () => {
           <button class="btn btn-primary" @click="store.clearConversionError()">
             Tancar i revisar plantilla
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hierarchy & Relationship Configuration Modal -->
+    <div class="modal-overlay" :style="{ display: isHierarchyModalOpen ? 'flex' : 'none' }" style="z-index: 1050;">
+      <div class="modal-content" style="max-width: 850px; width: 95%; max-height: 85vh; display: flex; flex-direction: column;">
+        <div class="modal-header">
+          <h3 style="border: none; padding-bottom: 0; margin: 0; display: flex; align-items: center; gap: 8px;">
+            <span style="color: var(--color-primary); font-size: 1.2rem;">⚙️</span>
+            <span>Configuració i Reconciliació de Relacions d'Excel</span>
+          </h3>
+          <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isHierarchyModalOpen = false">&times;</button>
+        </div>
+        
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 1rem; overflow-y: auto; padding: 1rem 0;">
+          <div style="padding: 10px 14px; background: rgba(0, 122, 255, 0.08); border: 1px solid rgba(0, 122, 255, 0.25); border-radius: 8px; font-size: 0.82rem; color: var(--text-primary); line-height: 1.5;">
+            ℹ️ <b>Reconciliació de Relacions Pare-Fill:</b> Comprova i ajusta la jerarquia detectada entre els fulls de l'Excel. Si un full és una taula aniuada d'un altre (ex: <i>activitats</i> dins de <i>parts</i>), selecciona la seva <b>Entitat Pare</b>. En desar, l'aplicació actualitzarà automàticament els noms de les pestanyes del teu fitxer Excel (ex: <code>OUT_pres.parts.activitats</code>) per garantir una vinculació impecable.
+          </div>
+
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
+            <thead>
+              <tr style="background: var(--bg-tertiary); text-align: left;">
+                <th style="padding: 8px; border: 1px solid var(--border-color);">Full Originari a l'Excel</th>
+                <th style="padding: 8px; border: 1px solid var(--border-color);">Nom Entitat</th>
+                <th style="padding: 8px; border: 1px solid var(--border-color);">Tipus de Dades</th>
+                <th style="padding: 8px; border: 1px solid var(--border-color);">Entitat Pare (Nivell Superior)</th>
+                <th style="padding: 8px; border: 1px solid var(--border-color);">Ruta Jinja2 Computada</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in hierarchyRows" :key="item.raw_name">
+                <td style="padding: 8px; border: 1px solid var(--border-color); font-family: var(--font-mono); font-weight: 600;">
+                  {{ item.raw_name }}
+                </td>
+                <td style="padding: 8px; border: 1px solid var(--border-color);">
+                  <input type="text" v-model="item.clean_name" style="width: 100%; padding: 4px 6px; font-family: var(--font-mono); font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--border-color);">
+                </td>
+                <td style="padding: 8px; border: 1px solid var(--border-color);">
+                  <span v-if="item.kind === 'kv'" style="padding: 2px 6px; background: rgba(59, 130, 246, 0.15); color: #2563eb; border-radius: 4px; font-weight: 600; font-size: 0.75rem;">🔑 Clau-Valor</span>
+                  <span v-else style="padding: 2px 6px; background: rgba(16, 185, 129, 0.15); color: #059669; border-radius: 4px; font-weight: 600; font-size: 0.75rem;">📊 Tabular</span>
+                </td>
+                <td style="padding: 8px; border: 1px solid var(--border-color);">
+                  <select v-model="item.parent_path" style="width: 100%; padding: 4px 6px; font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
+                    <option value="">-- Primer Nivell (Arrel) --</option>
+                    <option v-for="p in getAvailableParents(item.raw_name)" :key="p.path" :value="p.path">
+                      {{ p.label }}
+                    </option>
+                  </select>
+                </td>
+                <td style="padding: 8px; border: 1px solid var(--border-color); font-family: var(--font-mono); font-weight: bold; color: var(--color-primary);">
+                  {{ computeJinjaPath(item) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem;">
+          <span style="font-size: 0.75rem; color: var(--text-muted);">Els canvis es desaran directament a les pestanyes del full d'Excel (.xlsx).</span>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-secondary" style="width: auto;" @click="isHierarchyModalOpen = false">Cancel·lar</button>
+            <button class="btn btn-primary" style="width: auto; display: flex; align-items: center; gap: 6px;" @click="applyHierarchyChanges" :disabled="savingHierarchy">
+              <span>💾 Desar Canvis a l'Excel (.xlsx) i Re-aplicar</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
