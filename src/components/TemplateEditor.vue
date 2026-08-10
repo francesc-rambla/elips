@@ -65,6 +65,47 @@ const blockType = ref('if'); // 'if', 'for', 'elif'
 const modalExpr = ref('');
 const modalFilter = ref('');
 
+// Advanced Filter Selection State
+const selectedFilterType = ref(''); // '', 'coin', 'number', 'words', 'prefix', 'upper', 'lower', 'capitalize', 'title', 'default', 'length', 'replace', 'trim', 'custom'
+const filterParamFallback = ref('de');
+const filterParamElided = ref("d'");
+const filterParamDefault = ref('Sense dades');
+const filterParamReplaceOld = ref('');
+const filterParamReplaceNew = ref('');
+const filterCustomText = ref('');
+
+const computedModalFilter = computed(() => {
+  const t = selectedFilterType.value;
+  if (!t) return '';
+  if (t === 'coin') return 'coin';
+  if (t === 'number') return 'number';
+  if (t === 'words') return 'words';
+  if (t === 'prefix') {
+    const f = filterParamFallback.value || 'de';
+    const e = filterParamElided.value || "d'";
+    return `prefix('${f}', "${e}")`;
+  }
+  if (t === 'upper') return 'upper';
+  if (t === 'lower') return 'lower';
+  if (t === 'capitalize') return 'capitalize';
+  if (t === 'title') return 'title';
+  if (t === 'default') {
+    const d = filterParamDefault.value || '';
+    return `default('${d}')`;
+  }
+  if (t === 'length') return 'length';
+  if (t === 'trim') return 'trim';
+  if (t === 'replace') {
+    const o = filterParamReplaceOld.value || '';
+    const n = filterParamReplaceNew.value || '';
+    return `replace('${o}', '${n}')`;
+  }
+  if (t === 'custom') {
+    return filterCustomText.value;
+  }
+  return t;
+});
+
 // FOR loop separate inputs
 const forItemVar = ref('item');
 const forArrayVar = ref('');
@@ -960,19 +1001,77 @@ const formatBlock = (headerTag) => {
 const openVarModal = (node = null) => {
   saveSelection();
   activeLoopContext.value = getActiveLoopContext(node);
+  let rawFilter = '';
   if (node && node.tagName === 'SPAN') {
     activeEditNode = node;
     const raw = node.getAttribute('data-raw') || '';
     const parts = raw.split('|');
     modalExpr.value = parts[0].trim();
-    modalFilter.value = parts.slice(1).join('|').trim();
+    rawFilter = parts.slice(1).join('|').trim();
+    modalFilter.value = rawFilter;
     modalTitle.value = "Editar Variable";
   } else {
     activeEditNode = null;
     modalExpr.value = '';
+    rawFilter = '';
     modalFilter.value = '';
     modalTitle.value = "Inserir Variable";
   }
+
+  // Parse rawFilter to set selectedFilterType and param inputs
+  if (!rawFilter) {
+    selectedFilterType.value = '';
+  } else if (rawFilter === 'coin') {
+    selectedFilterType.value = 'coin';
+  } else if (rawFilter === 'number') {
+    selectedFilterType.value = 'number';
+  } else if (rawFilter === 'words') {
+    selectedFilterType.value = 'words';
+  } else if (rawFilter === 'upper') {
+    selectedFilterType.value = 'upper';
+  } else if (rawFilter === 'lower') {
+    selectedFilterType.value = 'lower';
+  } else if (rawFilter === 'capitalize') {
+    selectedFilterType.value = 'capitalize';
+  } else if (rawFilter === 'title') {
+    selectedFilterType.value = 'title';
+  } else if (rawFilter === 'length') {
+    selectedFilterType.value = 'length';
+  } else if (rawFilter === 'trim') {
+    selectedFilterType.value = 'trim';
+  } else if (rawFilter.startsWith('prefix')) {
+    selectedFilterType.value = 'prefix';
+    const match = rawFilter.match(/prefix\(\s*['"](.*?)['"]\s*,\s*['"](.*?)['"]\s*\)/);
+    if (match) {
+      filterParamFallback.value = match[1];
+      filterParamElided.value = match[2];
+    } else {
+      filterParamFallback.value = 'de';
+      filterParamElided.value = "d'";
+    }
+  } else if (rawFilter.startsWith('default')) {
+    selectedFilterType.value = 'default';
+    const match = rawFilter.match(/default\(\s*['"](.*?)['"]\s*\)/);
+    if (match) {
+      filterParamDefault.value = match[1];
+    } else {
+      filterParamDefault.value = 'Sense dades';
+    }
+  } else if (rawFilter.startsWith('replace')) {
+    selectedFilterType.value = 'replace';
+    const match = rawFilter.match(/replace\(\s*['"](.*?)['"]\s*,\s*['"](.*?)['"]\s*\)/);
+    if (match) {
+      filterParamReplaceOld.value = match[1];
+      filterParamReplaceNew.value = match[2];
+    } else {
+      filterParamReplaceOld.value = '';
+      filterParamReplaceNew.value = '';
+    }
+  } else {
+    selectedFilterType.value = 'custom';
+    filterCustomText.value = rawFilter;
+  }
+
   isVarModalOpen.value = true;
 };
 
@@ -1410,7 +1509,7 @@ const applyTableModal = () => {
 // Apply Variable Chip to canvas or textarea
 const applyVariable = () => {
   const expr = modalExpr.value.trim();
-  const filter = modalFilter.value.trim();
+  const filter = computedModalFilter.value.trim();
   if (!expr) {
     if (activeEditNode) {
       activeEditNode.remove();
@@ -3515,22 +3614,92 @@ onUnmounted(() => {
 
     <!-- 1. Variable Configuration Modal -->
     <div class="modal-overlay" :style="{ display: isVarModalOpen ? 'flex' : 'none' }">
-      <div class="modal-content" style="max-width: 400px;">
+      <div class="modal-content" style="max-width: 500px; width: 95%;">
         <div class="modal-header">
           <h3 style="border: none; padding-bottom: 0; margin: 0;">{{ modalTitle }}</h3>
           <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem;" @click="isVarModalOpen = false">&times;</button>
         </div>
-        <div class="modal-body">
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 1rem;">
           <div class="form-row">
-            <label>Ruta de la Variable</label>
-            <input type="text" v-model="modalExpr" placeholder="meta.expedient" style="font-family: monospace;">
+            <label style="font-weight: bold; font-size: 0.8rem; margin-bottom: 4px; display: block;">Ruta de la Variable</label>
+            <input type="text" v-model="modalExpr" placeholder="meta.expedient" style="font-family: var(--font-mono); width: 100%; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.85rem;">
           </div>
+
           <div class="form-row">
-            <label>Filtre Jinja2 (Opcional)</label>
-            <input type="text" v-model="modalFilter" placeholder="upper, lower, length, default('N/A')">
+            <label style="font-weight: bold; font-size: 0.8rem; margin-bottom: 4px; display: block;">Filtre Jinja2 (Opcional)</label>
+            <select v-model="selectedFilterType" style="width: 100%; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.85rem; background: var(--bg-primary); color: var(--text-primary);">
+              <option value="">-- Sense filtre --</option>
+              <optgroup label="Formats Numèrics i Moneda">
+                <option value="coin">💶 coin — Format Moneda (ex: 15.250,50 €)</option>
+                <option value="number">🔢 number — Format Numèric (ex: 15.250,50)</option>
+                <option value="words">🔤 words — Número a Text en Català (ex: 3 -> tres)</option>
+              </optgroup>
+              <optgroup label="Gramàtica i Text en Català">
+                <option value="prefix">🔤 prefix — Apostrofació Automàtica (de / d')</option>
+                <option value="upper">🔠 upper — Tot Majúscules</option>
+                <option value="lower">🔡 lower — Tot Minúscules</option>
+                <option value="capitalize">Capitalize — Primera lletra majúscula</option>
+                <option value="title">Title — Majúscula per cada paraula</option>
+                <option value="replace">🔄 replace — Reemplaçar text</option>
+                <option value="trim">✂️ trim — Eliminar espais en blanc</option>
+              </optgroup>
+              <optgroup label="Control i Altres">
+                <option value="default">❓ default — Valor alternatiu si està buit</option>
+                <option value="length">📏 length — Comptar caràcters o elements</option>
+                <option value="custom">✏️ custom — Personalitzat / Codi lliure</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <!-- Parameter Inputs Based on Selected Filter -->
+          <div v-if="selectedFilterType === 'prefix'" style="padding: 10px; background: var(--bg-tertiary, #f8f9fa); border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
+            <div style="font-size: 0.75rem; font-weight: bold; color: var(--color-primary);">PARÀMETRES D'APOSTROFACIÓ</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+              <div>
+                <label style="font-size: 0.7rem; color: var(--text-muted); display: block;">Prefix Normal</label>
+                <input type="text" v-model="filterParamFallback" placeholder="de" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
+              </div>
+              <div>
+                <label style="font-size: 0.7rem; color: var(--text-muted); display: block;">Prefix Apostrofat</label>
+                <input type="text" v-model="filterParamElided" placeholder="d'" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
+              </div>
+            </div>
+          </div>
+
+          <div v-if="selectedFilterType === 'default'" style="padding: 10px; background: var(--bg-tertiary, #f8f9fa); border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
+            <div style="font-size: 0.75rem; font-weight: bold; color: var(--color-primary);">VALOR PER DEFECTE</div>
+            <div>
+              <label style="font-size: 0.7rem; color: var(--text-muted); display: block;">Text o valor si la variable és buida</label>
+              <input type="text" v-model="filterParamDefault" placeholder="Sense dades" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
+            </div>
+          </div>
+
+          <div v-if="selectedFilterType === 'replace'" style="padding: 10px; background: var(--bg-tertiary, #f8f9fa); border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
+            <div style="font-size: 0.75rem; font-weight: bold; color: var(--color-primary);">PARÀMETRES DE REEMPLAÇAMENT</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+              <div>
+                <label style="font-size: 0.7rem; color: var(--text-muted); display: block;">Text a Cerca</label>
+                <input type="text" v-model="filterParamReplaceOld" placeholder="Text vell" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
+              </div>
+              <div>
+                <label style="font-size: 0.7rem; color: var(--text-muted); display: block;">Nou Text</label>
+                <input type="text" v-model="filterParamReplaceNew" placeholder="Nou text" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
+              </div>
+            </div>
+          </div>
+
+          <div v-if="selectedFilterType === 'custom'" style="padding: 10px; background: var(--bg-tertiary, #f8f9fa); border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
+            <div style="font-size: 0.75rem; font-weight: bold; color: var(--color-primary);">FILTRE PERSONALITZAT / COMBINAT</div>
+            <input type="text" v-model="filterCustomText" placeholder="upper | default('N/A')" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
+          </div>
+
+          <!-- Live Code Preview -->
+          <div style="padding: 8px 12px; background: rgba(0, 122, 255, 0.08); border: 1px solid rgba(0, 122, 255, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 0.72rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase;">Vista Prèvia Jinja2:</span>
+            <code style="font-family: var(--font-mono); font-size: 0.82rem; font-weight: bold; color: var(--text-primary);">&#123;&#123; {{ modalExpr || 'variable' }}{{ computedModalFilter ? ' | ' + computedModalFilter : '' }} &#125;&#125;</code>
           </div>
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" style="margin-top: 1rem;">
           <button class="btn btn-secondary" style="width: auto;" @click="isVarModalOpen = false">Cancel·lar</button>
           <button class="btn btn-primary" style="width: auto;" @click="applyVariable">Aplicar</button>
         </div>
