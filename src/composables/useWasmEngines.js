@@ -653,7 +653,7 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
         ws = wb.create_sheet(title='editor_metadata')
 
     ws.delete_rows(1, max(ws.max_row, 1))
-    headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula']
+    headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula', 'gridRow', 'gridOrder']
     for c_idx, h in enumerate(headers):
         ws.cell(1, c_idx + 1).value = h
     
@@ -1076,11 +1076,11 @@ def create_default_workbook_from_json(json_str, out_path):
                 if isinstance(row, dict):
                     ws.append(["" if row.get(h) is None else str(row.get(h)) for h in headers])
 
-    # Write editor_metadata sheet cleanly with all 14 columns
+    # Write editor_metadata sheet cleanly with all 16 columns
     editor_meta = data.get('editor_metadata') or data.get('editorMetadata') or []
     if editor_meta:
         ws = wb.create_sheet(title='editor_metadata')
-        headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula']
+        headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula', 'gridRow', 'gridOrder']
         ws.append(headers)
         for row_obj in editor_meta:
             if isinstance(row_obj, dict):

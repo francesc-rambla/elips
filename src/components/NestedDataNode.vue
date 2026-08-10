@@ -308,7 +308,45 @@ const getPrimitiveFields = (item) => {
       res[k] = item[k];
     }
   });
-  return res;
+
+  const keys = Object.keys(res);
+  keys.sort((a, b) => {
+    const metaA = getElementMetadata(a);
+    const metaB = getElementMetadata(b);
+    
+    const rA = (metaA?.gridRow !== undefined && metaA?.gridRow !== '') ? parseInt(metaA.gridRow, 10) : 9999;
+    const rB = (metaB?.gridRow !== undefined && metaB?.gridRow !== '') ? parseInt(metaB.gridRow, 10) : 9999;
+    if (rA !== rB) return rA - rB;
+    
+    const oA = (metaA?.gridOrder !== undefined && metaA?.gridOrder !== '') ? parseInt(metaA.gridOrder, 10) : 9999;
+    const oB = (metaB?.gridOrder !== undefined && metaB?.gridOrder !== '') ? parseInt(metaB.gridOrder, 10) : 9999;
+    if (oA !== oB) return oA - oB;
+    
+    return 0;
+  });
+
+  const sortedRes = {};
+  keys.forEach(k => {
+    sortedRes[k] = res[k];
+  });
+  return sortedRes;
+};
+
+const getFieldCardStyle = (fKey) => {
+  const meta = getElementMetadata(fKey);
+  const isTop = store.config.labelPosition === 'top';
+  
+  let baseStyle = isTop 
+    ? 'display: flex; flex-direction: column; gap: 4px; background: var(--bg-card); padding: 8px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-sm);' 
+    : 'display: flex; align-items: center; gap: 10px; padding: 4px 6px; border-bottom: 1px solid var(--border-color);';
+  
+  if (meta?.gridRow) {
+    baseStyle += ` grid-row: ${meta.gridRow};`;
+  }
+  if (meta?.gridOrder) {
+    baseStyle += ` order: ${meta.gridOrder};`;
+  }
+  return baseStyle;
 };
 
 const getLeafTableHeaders = computed(() => {
@@ -893,7 +931,7 @@ const getItemPath = (idx, fieldKey) => {
                     style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 28px; padding: 2px 8px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.78rem; font-weight: 600; cursor: not-allowed;" 
                     title="🔒 Camp calculat automàticament"
                   >
-                    <span style="font-size: 0.82rem;">🧮</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary); flex-shrink: 0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
                     <span style="flex-grow: 1;">{{ row[h] !== undefined ? row[h] : 0 }}</span>
                     <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
                   </div>
@@ -1052,9 +1090,7 @@ const getItemPath = (idx, fieldKey) => {
             <div 
               v-for="(val, fKey) in getPrimitiveFields(item)" 
               :key="fKey"
-              :style="store.config.labelPosition === 'top' 
-                ? 'display: flex; flex-direction: column; gap: 4px; background: var(--bg-card); padding: 8px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-sm);' 
-                : 'display: flex; align-items: center; gap: 10px; padding: 4px 6px; border-bottom: 1px solid var(--border-color);'"
+              :style="getFieldCardStyle(fKey)"
             >
               <!-- Label Header -->
               <div 
@@ -1119,7 +1155,7 @@ const getItemPath = (idx, fieldKey) => {
                   style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 32px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.85rem; font-weight: 600; cursor: not-allowed;" 
                   title="🔒 Camp calculat automàticament"
                 >
-                  <span style="font-size: 0.9rem;">🧮</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary); flex-shrink: 0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
                   <span style="flex-grow: 1;">{{ item[fKey] !== undefined ? item[fKey] : 0 }}</span>
                   <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px;">Calculat</span>
                 </div>
