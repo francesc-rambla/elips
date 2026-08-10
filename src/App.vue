@@ -836,6 +836,28 @@ const isHierarchyModalOpen = ref(false);
 const hierarchyRows = ref([]);
 const savingHierarchy = ref(false);
 
+const getRowHeaders = (row) => {
+  if (row.headers && row.headers.length > 0) return row.headers;
+  if (!store.excelJsonData) return [];
+  const fullPath = row.parent_path ? `${row.parent_path}.${row.clean_name}` : row.clean_name;
+  const data = store.excelJsonData[fullPath] || store.excelJsonData[row.raw_name];
+  if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object') {
+    return Object.keys(data[0]);
+  } else if (data && typeof data === 'object' && !Array.isArray(data)) {
+    return Object.keys(data);
+  }
+  return [];
+};
+
+const getParentHeadersFor = (row) => {
+  if (!row.parent_path) return [];
+  const parentRow = hierarchyRows.value.find(p => {
+    const pFull = p.parent_path ? `${p.parent_path}.${p.clean_name}` : p.clean_name;
+    return pFull === row.parent_path;
+  });
+  return parentRow ? getRowHeaders(parentRow) : [];
+};
+
 const openHierarchyModal = () => {
   if (!store.excelJsonData) {
     alert("Primer heu de carregar un fitxer Excel.");
@@ -849,7 +871,9 @@ const openHierarchyModal = () => {
       clean_name: item.clean_name || '',
       parent_path: item.parent_path || '',
       kind: item.kind || 'tabular',
-      headers: item.headers || []
+      headers: item.headers || [],
+      parent_ref_key: item.parent_ref_key || '',
+      child_ref_key: item.child_ref_key || ''
     }));
   } else {
     const keys = Object.keys(store.excelJsonData).filter(k => k !== 'editor_metadata' && k !== '_hierarchy_schema' && k !== '_sheet_info');
@@ -861,10 +885,43 @@ const openHierarchyModal = () => {
         clean_name: parts[parts.length - 1],
         parent_path: parts.slice(0, -1).join('.'),
         kind: Array.isArray(store.excelJsonData[k]) ? 'tabular' : 'kv',
-        headers: []
+        headers: [],
+        parent_ref_key: '',
+        child_ref_key: ''
       };
     });
   }
+
+  // Auto-detect default parent and child ref keys if not explicitly set
+  hierarchyRows.value.forEach(row => {
+    if (row.parent_path) {
+      const parentRow = hierarchyRows.value.find(p => {
+        const pFull = p.parent_path ? `${p.parent_path}.${p.clean_name}` : p.clean_name;
+        return pFull === row.parent_path;
+      });
+      
+      if (parentRow) {
+        const parentHeaders = getRowHeaders(parentRow);
+        const childHeaders = row.headers || [];
+        
+        if (!row.parent_ref_key && parentHeaders.length > 0) {
+          const common = childHeaders.filter(ch => parentHeaders.includes(ch));
+          const idCommon = common.filter(ch => ['id', 'codi', 'code', 'ref', 'key', 'num'].some(t => ch.toLowerCase().includes(t)));
+          row.parent_ref_key = idCommon[0] || common[0] || parentHeaders[0] || '';
+        }
+        if (!row.child_ref_key && childHeaders.length > 0) {
+          if (childHeaders.includes(row.parent_ref_key)) {
+            row.child_ref_key = row.parent_ref_key;
+          } else {
+            const common = childHeaders.filter(ch => parentHeaders.includes(ch));
+            const idCommon = common.filter(ch => ['id', 'codi', 'code', 'ref', 'key', 'num'].some(t => ch.toLowerCase().includes(t)));
+            row.child_ref_key = idCommon[0] || common[0] || childHeaders[0] || '';
+          }
+        }
+      }
+    }
+  });
+
   isHierarchyModalOpen.value = true;
 };
 
@@ -889,21 +946,31 @@ const applyHierarchyChanges = async () => {
   savingHierarchy.value = true;
   try {
     const renamesMap = {};
+    const customKeysMap = {};
+
     for (const item of hierarchyRows.value) {
       const fullPath = item.parent_path ? `${item.parent_path}.${item.clean_name}` : item.clean_name;
       const expectedRaw = item.prefix ? `${item.prefix}${fullPath}` : fullPath;
       if (expectedRaw !== item.raw_name) {
         renamesMap[item.raw_name] = expectedRaw;
       }
+
+      if (item.parent_path && item.parent_ref_key && item.child_ref_key) {
+        customKeysMap[fullPath] = {
+          parent_key: item.parent_ref_key,
+          child_key: item.child_ref_key
+        };
+      }
     }
     
-    if (Object.keys(renamesMap).length > 0) {
-      await saveExcelHierarchy(renamesMap);
-      saveCurrentProject();
-      store.addLog(`S'ha desat la nova jerarquia d'Excel (${Object.keys(renamesMap).length} fulls reanomenats a les pestanyes de l'Excel).`, "success");
-    } else {
-      store.addLog("No s'han detectat canvis en la jerarquia de l'Excel.", "info");
-    }
+    const configPayload = {
+      renames: renamesMap,
+      custom_keys: customKeysMap
+    };
+
+    await saveExcelHierarchy(configPayload);
+    saveCurrentProject();
+    store.addLog("S'ha desat la nova jerarquia i les relacions de columnes pare-fill a l'Excel.", "success");
     isHierarchyModalOpen.value = false;
   } catch (e) {
     store.addLog(`Error desant la jerarquia de l'Excel: ${e.message}`, "error");
@@ -2182,7 +2249,7 @@ const generateDocuments = async () => {
 
     <!-- Hierarchy & Relationship Configuration Modal -->
     <div class="modal-overlay" :style="{ display: isHierarchyModalOpen ? 'flex' : 'none' }" style="z-index: 1050;">
-      <div class="modal-content" style="max-width: 850px; width: 95%; max-height: 85vh; display: flex; flex-direction: column;">
+      <div class="modal-content" style="max-width: 960px; width: 95%; max-height: 88vh; display: flex; flex-direction: column;">
         <div class="modal-header">
           <h3 style="border: none; padding-bottom: 0; margin: 0; display: flex; align-items: center; gap: 8px;">
             <span style="color: var(--color-primary); font-size: 1.2rem;">⚙️</span>
@@ -2193,17 +2260,17 @@ const generateDocuments = async () => {
         
         <div class="modal-body" style="display: flex; flex-direction: column; gap: 1rem; overflow-y: auto; padding: 1rem 0;">
           <div style="padding: 10px 14px; background: rgba(0, 122, 255, 0.08); border: 1px solid rgba(0, 122, 255, 0.25); border-radius: 8px; font-size: 0.82rem; color: var(--text-primary); line-height: 1.5;">
-            ℹ️ <b>Reconciliació de Relacions Pare-Fill:</b> Comprova i ajusta la jerarquia detectada entre els fulls de l'Excel. Si un full és una taula aniuada d'un altre (ex: <i>activitats</i> dins de <i>parts</i>), selecciona la seva <b>Entitat Pare</b>. En desar, l'aplicació actualitzarà automàticament els noms de les pestanyes del teu fitxer Excel (ex: <code>OUT_pres.parts.activitats</code>) per garantir una vinculació impecable.
+            ℹ️ <b>Reconciliació de Relacions Pare-Fill i Columnes de Vinculació:</b> Selecciona l'<b>Entitat Pare</b> per a cada full i indica quina <b>Columna Pare</b> es relaciona amb quina <b>Columna Fill</b> (ex: <i>idPartida</i> ➔ <i>idPartida</i> o <i>refPartida</i>). En desar, els canvis es gravaran directament a les pestanyes i metadades del teu full d'Excel (.xlsx).
           </div>
 
           <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
             <thead>
               <tr style="background: var(--bg-tertiary); text-align: left;">
-                <th style="padding: 8px; border: 1px solid var(--border-color);">Full Originari a l'Excel</th>
-                <th style="padding: 8px; border: 1px solid var(--border-color);">Nom Entitat</th>
-                <th style="padding: 8px; border: 1px solid var(--border-color);">Tipus de Dades</th>
-                <th style="padding: 8px; border: 1px solid var(--border-color);">Entitat Pare (Nivell Superior)</th>
-                <th style="padding: 8px; border: 1px solid var(--border-color);">Ruta Jinja2 Computada</th>
+                <th style="padding: 8px; border: 1px solid var(--border-color); width: 140px;">Full a l'Excel</th>
+                <th style="padding: 8px; border: 1px solid var(--border-color); width: 100px;">Nom Entitat</th>
+                <th style="padding: 8px; border: 1px solid var(--border-color); width: 150px;">Entitat Pare</th>
+                <th style="padding: 8px; border: 1px solid var(--border-color);">Relació de Columnes (Pare ➔ Fill)</th>
+                <th style="padding: 8px; border: 1px solid var(--border-color); width: 160px;">Ruta Jinja2</th>
               </tr>
             </thead>
             <tbody>
@@ -2215,16 +2282,30 @@ const generateDocuments = async () => {
                   <input type="text" v-model="item.clean_name" style="width: 100%; padding: 4px 6px; font-family: var(--font-mono); font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--border-color);">
                 </td>
                 <td style="padding: 8px; border: 1px solid var(--border-color);">
-                  <span v-if="item.kind === 'kv'" style="padding: 2px 6px; background: rgba(59, 130, 246, 0.15); color: #2563eb; border-radius: 4px; font-weight: 600; font-size: 0.75rem;">🔑 Clau-Valor</span>
-                  <span v-else style="padding: 2px 6px; background: rgba(16, 185, 129, 0.15); color: #059669; border-radius: 4px; font-weight: 600; font-size: 0.75rem;">📊 Tabular</span>
-                </td>
-                <td style="padding: 8px; border: 1px solid var(--border-color);">
                   <select v-model="item.parent_path" style="width: 100%; padding: 4px 6px; font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
                     <option value="">-- Primer Nivell (Arrel) --</option>
                     <option v-for="p in getAvailableParents(item.raw_name)" :key="p.path" :value="p.path">
                       {{ p.label }}
                     </option>
                   </select>
+                </td>
+                <td style="padding: 8px; border: 1px solid var(--border-color);">
+                  <div v-if="item.parent_path" style="display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;">
+                    <select v-model="item.parent_ref_key" style="flex: 1; padding: 4px 6px; font-size: 0.78rem; font-family: var(--font-mono); border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);" title="Columna Clau de l'Entitat Pare">
+                      <option value="">-- Columna Pare --</option>
+                      <option v-for="col in getParentHeadersFor(item)" :key="col" :value="col">{{ col }}</option>
+                    </select>
+
+                    <span style="font-weight: bold; color: var(--color-primary); font-size: 0.9rem;">➔</span>
+
+                    <select v-model="item.child_ref_key" style="flex: 1; padding: 4px 6px; font-size: 0.78rem; font-family: var(--font-mono); border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);" title="Columna Clau de l'Entitat Fill">
+                      <option value="">-- Columna Fill --</option>
+                      <option v-for="col in getRowHeaders(item)" :key="col" :value="col">{{ col }}</option>
+                    </select>
+                  </div>
+                  <div v-else style="color: var(--text-muted); font-size: 0.75rem; font-style: italic;">
+                    -- Primer Nivell (Sense pare) --
+                  </div>
                 </td>
                 <td style="padding: 8px; border: 1px solid var(--border-color); font-family: var(--font-mono); font-weight: bold; color: var(--color-primary);">
                   {{ computeJinjaPath(item) }}
@@ -2235,7 +2316,7 @@ const generateDocuments = async () => {
         </div>
 
         <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem;">
-          <span style="font-size: 0.75rem; color: var(--text-muted);">Els canvis es desaran directament a les pestanyes del full d'Excel (.xlsx).</span>
+          <span style="font-size: 0.75rem; color: var(--text-muted);">Els canvis es desaran directament a les pestanyes i metadades del full d'Excel (.xlsx).</span>
           <div style="display: flex; gap: 8px;">
             <button class="btn btn-secondary" style="width: auto;" @click="isHierarchyModalOpen = false">Cancel·lar</button>
             <button class="btn btn-primary" style="width: auto; display: flex; align-items: center; gap: 6px;" @click="applyHierarchyChanges" :disabled="savingHierarchy">

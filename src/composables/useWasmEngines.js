@@ -365,6 +365,21 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     break
         return (s.count('.'), len(s))
 
+    custom_hierarchy_keys = {}
+    if "_hierarchy_metadata" in wb.sheetnames:
+        try:
+            ws_meta = wb["_hierarchy_metadata"]
+            rows = list(ws_meta.iter_rows(values_only=True))
+            if len(rows) > 1:
+                for r in rows[1:]:
+                    if r and len(r) >= 3 and r[0]:
+                        custom_hierarchy_keys[str(r[0]).strip()] = {
+                            'parent_key': str(r[1] or '').strip(),
+                            'child_key': str(r[2] or '').strip()
+                        }
+        except Exception:
+            pass
+
     sorted_raw_names = sorted(parsed.keys(), key=_sheet_depth)
     
     root = {}
@@ -433,6 +448,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
         else:
             parent_parts = parts[:-1]
             sub_key = parts[-1]
+            curr_sub_path = '.'.join(parts)
             
             parents = _get_nested_containers(root, parent_parts)
             if not parents:
@@ -452,6 +468,20 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                         
                         sample_child = data_to_set[0]
                         if isinstance(sample_child, dict):
+                            # Check explicit user-defined foreign keys first
+                            c_custom = custom_hierarchy_keys.get(curr_sub_path) if custom_hierarchy_keys else None
+                            if c_custom and c_custom.get('parent_key') and c_custom.get('child_key'):
+                                pk = c_custom['parent_key']
+                                ck = c_custom['child_key']
+                                if pk in parent:
+                                    p_val = str(parent[pk]).strip()
+                                    matched_children = [
+                                        c for c in data_to_set
+                                        if isinstance(c, dict) and str(c.get(ck, '')).strip() == p_val
+                                    ]
+                                    parent[sub_key] = matched_children
+                                    continue
+
                             common_keys = [k for k in sample_child.keys() if k in parent and parent[k] is not None and str(parent[k]).strip() != '']
                             id_keys = [k for k in common_keys if any(term in k.lower() for term in ['id', 'codi', 'code', 'ref', 'key', 'num'])]
                             matching_keys = id_keys if id_keys else common_keys
@@ -471,7 +501,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
 
     sheet_info_list = []
     for raw_name in sorted_raw_names:
-        if raw_name == 'editor_metadata':
+        if raw_name in ('editor_metadata', '_hierarchy_metadata'):
             continue
         kind, data, headers = parsed[raw_name]
         stripped = raw_name
@@ -483,14 +513,19 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     stripped = raw_name[len(p):]
                     break
         parts = [sanitize_id(p) for p in stripped.split('.')]
+        full_path = '.'.join(parts)
+        
+        c_custom = custom_hierarchy_keys.get(full_path, {})
         sheet_info_list.append({
             'raw_name': raw_name,
             'prefix': pfx,
             'clean_name': parts[-1],
             'parent_path': '.'.join(parts[:-1]),
-            'full_path': '.'.join(parts),
+            'full_path': full_path,
             'kind': kind,
-            'headers': headers or []
+            'headers': headers or [],
+            'parent_ref_key': c_custom.get('parent_key', ''),
+            'child_ref_key': c_custom.get('child_key', '')
         })
 
     root['_sheet_info'] = sheet_info_list
@@ -622,9 +657,25 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
 def update_excel_hierarchy(excel_path, hierarchy_config_json, out_excel_path):
     wb = load_workbook(excel_path)
     config = json.loads(hierarchy_config_json)
-    for old_sheet, new_name in config.items():
+    
+    renames = config.get("renames", {}) if isinstance(config, dict) else (config if isinstance(config, dict) else {})
+    for old_sheet, new_name in renames.items():
         if old_sheet in wb.sheetnames and new_name and old_sheet != new_name:
             wb[old_sheet].title = new_name
+            
+    custom_keys = config.get("custom_keys", {}) if isinstance(config, dict) else {}
+    if custom_keys:
+        if "_hierarchy_metadata" in wb.sheetnames:
+            ws_meta = wb["_hierarchy_metadata"]
+            ws_meta.delete_rows(1, ws_meta.max_row)
+        else:
+            ws_meta = wb.create_sheet("_hierarchy_metadata")
+        ws_meta.append(["sub_path", "parent_key", "child_key"])
+        for sub_path, k_dict in custom_keys.items():
+            if isinstance(k_dict, dict) and (k_dict.get("parent_key") or k_dict.get("child_key")):
+                ws_meta.append([sub_path, k_dict.get("parent_key", ""), k_dict.get("child_key", "")])
+        ws_meta.sheet_state = "hidden"
+
     wb.save(out_excel_path)
     return True
 
