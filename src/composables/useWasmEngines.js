@@ -546,11 +546,40 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
     
     internal_sheets = ('editor_metadata', 'editormetadata', '_sheet_info', '_hierarchy_schema', '_hierarchy_metadata', 'headers')
 
-    # Remove phantom sheets that shouldn't exist in the workbook
+    # Build clean names map for all sheets in workbook
+    sheet_info_map = []
     for s_name in list(wb.sheetnames):
+        clean = s_name
+        for pfx in valid_prefixes:
+            if s_name.upper().startswith(pfx):
+                clean = s_name[len(pfx):]
+                break
+        sheet_info_map.append((s_name, clean))
+
+    # Purge phantom / duplicate sheets
+    for s_name, clean in sheet_info_map:
+        if s_name not in wb.sheetnames:
+            continue
         s_lower = s_name.lower()
-        if s_lower in ('_sheet_info', '_sheet_info.headers', 'headers') or s_name.startswith('_sheet_info'):
+
+        # 1. Delete phantom system sheets
+        if s_lower in ('_sheet_info', '_sheet_info.headers', 'headers') or s_lower.startswith('_sheet_info'):
             del wb[s_name]
+            continue
+
+        if s_lower in internal_sheets:
+            continue
+
+        # 2. If workbook has prefixed sheets (e.g. OUT_), delete non-prefixed data sheets
+        if has_prefixed_sheets and not s_name.upper().startswith(valid_prefixes):
+            del wb[s_name]
+            continue
+
+        # 3. Delete short duplicate sheets (e.g. 'parts' or 'activitats') if full path sheet exists ('OUT_pres.parts')
+        if '.' not in clean:
+            if any(other_clean != clean and (other_clean.endswith('.' + clean) or other_clean.endswith('_' + clean)) for _, other_clean in sheet_info_map if _ in wb.sheetnames):
+                del wb[s_name]
+                continue
 
     for sheet_name in list(wb.sheetnames):
         sheet_name_upper = sheet_name.upper()
@@ -1837,6 +1866,10 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
 
     if (parsedData && parsedData._hierarchy_schema) {
       delete parsedData._hierarchy_schema;
+    }
+
+    if (parsedData && parsedData.editor_metadata && Array.isArray(parsedData.editor_metadata)) {
+      store.editorMetadata = parsedData.editor_metadata;
     }
 
     store.excelJsonData = parsedData;
