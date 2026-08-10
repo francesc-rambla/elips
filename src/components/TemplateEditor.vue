@@ -59,6 +59,7 @@ const isVarModalOpen = ref(false);
 const isBlockModalOpen = ref(false);
 const isMathModalOpen = ref(false);
 const isTableModalOpen = ref(false);
+const isSpecialCharModalOpen = ref(false);
 
 const modalTitle = ref('');
 const blockType = ref('if'); // 'if', 'for', 'elif'
@@ -3292,9 +3293,104 @@ const applyMetadataModal = () => {
   store.addLog("Bloc de metadades Pandoc actualitzat a la plantilla.", "success");
 };
 
+// Special Characters Configuration & Handler
+const specialCharCategories = [
+  {
+    name: 'Puntuació i Tipografia',
+    chars: [
+      { char: '—', name: 'Guió llarg (Em Dash)', code: '&mdash;' },
+      { char: '–', name: 'Guió mitjà (En Dash)', code: '&ndash;' },
+      { char: '\u00A0', label: '[Espai No Sep.]', name: 'Espai no separable', code: '&nbsp;' },
+      { char: '‑', label: '[Guió No Sep.]', name: 'Guió no separable', code: '&#8209;' },
+      { char: '…', name: 'Punts suspensius', code: '&hellip;' },
+      { char: '•', name: 'Punt de llista (Bullet)', code: '&bull;' },
+      { char: '§', name: 'Secció / Article', code: '&sect;' },
+      { char: '¶', name: 'Símbol de paràgraf', code: '&para;' },
+    ]
+  },
+  {
+    name: 'Cometes i Marques',
+    chars: [
+      { char: '«', name: 'Cometa llatina esquerra', code: '&laquo;' },
+      { char: '»', name: 'Cometa llatina dreta', code: '&raquo;' },
+      { char: '“', name: 'Cometa doble esquerra', code: '&ldquo;' },
+      { char: '”', name: 'Cometa doble dreta', code: '&rdquo;' },
+      { char: '‘', name: 'Cometa simple esquerra', code: '&lsquo;' },
+      { char: '’', name: 'Cometa simple dreta', code: '&rsquo;' },
+      { char: '©', name: 'Copyright', code: '&copy;' },
+      { char: '®', name: 'Marca registrada', code: '&reg;' },
+      { char: '™', name: 'Trademark', code: '&trade;' },
+    ]
+  },
+  {
+    name: 'Matemàtics i Símbols',
+    chars: [
+      { char: '€', name: 'Euro', code: '&euro;' },
+      { char: '°', name: 'Grau', code: '&deg;' },
+      { char: '±', name: 'Més/Menys', code: '&plusmn;' },
+      { char: '×', name: 'Multiplicació', code: '&times;' },
+      { char: '÷', name: 'Divisió', code: '&divide;' },
+      { char: '≠', name: 'No igual', code: '&ne;' },
+      { char: '≤', name: 'Menor o igual', code: '&le;' },
+      { char: '≥', name: 'Major o igual', code: '&ge;' },
+      { char: '≈', name: 'Aproximadament igual', code: '&asymp;' },
+      { char: '‰', name: 'Per mil', code: '&permil;' },
+    ]
+  }
+];
+
+const openSpecialCharModal = () => {
+  saveSelection();
+  isSpecialCharModalOpen.value = true;
+};
+
+const insertSpecialChar = (item) => {
+  const char = item.char;
+  if (activeEditorTab.value === 'visual') {
+    restoreSelection();
+    document.execCommand('insertText', false, char);
+    saveSelection();
+    syncVisualToCode();
+  } else {
+    if (textareaRef.value) {
+      const el = textareaRef.value;
+      el.focus();
+      const start = el.selectionStart || 0;
+      const end = el.selectionEnd || 0;
+      const text = editorText.value || '';
+      editorText.value = text.substring(0, start) + char + text.substring(end);
+      nextTick(() => {
+        el.setSelectionRange(start + char.length, start + char.length);
+        syncCodeToVisual();
+      });
+    }
+  }
+  isSpecialCharModalOpen.value = false;
+};
+
 // Initialize canvas on mount
 const handleGlobalKeyDown = (e) => {
-  const isAnyModalOpen = isVarModalOpen.value || isBlockModalOpen.value || isMathModalOpen.value || isTableModalOpen.value || isMetadataModalOpen.value;
+  const isAnyModalOpen = isVarModalOpen.value || isBlockModalOpen.value || isMathModalOpen.value || isTableModalOpen.value || isMetadataModalOpen.value || isSpecialCharModalOpen.value;
+
+  // Handle Ctrl+1 .. Ctrl+6 shortcuts for Headings H1..H6 and Ctrl+B / Ctrl+I
+  if ((e.ctrlKey || e.metaKey) && !isAnyModalOpen) {
+    if (['1', '2', '3', '4', '5', '6'].includes(e.key)) {
+      e.preventDefault();
+      formatBlock(`H${e.key}`);
+      return;
+    }
+    if (e.key.toLowerCase() === 'b') {
+      e.preventDefault();
+      formatDoc('bold');
+      return;
+    }
+    if (e.key.toLowerCase() === 'i') {
+      e.preventDefault();
+      formatDoc('italic');
+      return;
+    }
+  }
+
   if (!isAnyModalOpen) return;
   
   if (e.key === 'Escape') {
@@ -3304,6 +3400,7 @@ const handleGlobalKeyDown = (e) => {
     isMathModalOpen.value = false;
     isTableModalOpen.value = false;
     isMetadataModalOpen.value = false;
+    isSpecialCharModalOpen.value = false;
   } else if (e.key === 'Enter') {
     if (isVarModalOpen.value) {
       e.preventDefault();
@@ -3469,6 +3566,7 @@ onMounted(() => {
     openBlockModal: (type) => openBlockModal(type),
     openMathModal: () => openMathModal(),
     openVarModal: () => openVarModal(),
+    openSpecialCharModal: () => openSpecialCharModal(),
     emitGenerate: () => emitGenerate(),
     getActiveTab: () => activeEditorTab.value,
   };
@@ -4167,6 +4265,42 @@ onUnmounted(() => {
         <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 0.5rem; padding-top: 0.75rem; border-top: 1px solid var(--border-color); margin-top: 0.5rem;">
           <button class="btn btn-secondary" style="width: auto;" @click="isMetadataModalOpen = false">Cancel·lar</button>
           <button class="btn btn-primary" style="width: auto;" @click="applyMetadataModal">Aplicar Metadades a la Plantilla</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Special Characters Modal -->
+    <div class="modal-overlay" :style="{ display: isSpecialCharModalOpen ? 'flex' : 'none' }">
+      <div class="modal-content" style="max-width: 580px; width: 95%;">
+        <div class="modal-header">
+          <h3 style="border: none; padding-bottom: 0; margin: 0; display: flex; align-items: center; gap: 8px;">
+            <span style="color: var(--color-primary); font-size: 1.1rem; font-weight: bold;">Ω</span>
+            <span>Caràcters Especials</span>
+          </h3>
+          <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem;" @click="isSpecialCharModalOpen = false">&times;</button>
+        </div>
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 1.2rem; max-height: 420px; overflow-y: auto;">
+          <div v-for="cat in specialCharCategories" :key="cat.name" style="display: flex; flex-direction: column; gap: 6px;">
+            <div style="font-size: 0.75rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase; border-bottom: 1px solid var(--border-color); padding-bottom: 3px;">
+              {{ cat.name }}
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px;">
+              <button 
+                v-for="item in cat.chars" 
+                :key="item.name" 
+                class="btn btn-secondary" 
+                style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; font-size: 0.8rem; height: auto; text-align: left;"
+                @click="insertSpecialChar(item)"
+                :title="`${item.name} (${item.code})`"
+              >
+                <span style="font-weight: bold; font-size: 1.1rem; color: var(--text-primary); font-family: var(--font-mono);">{{ item.label || item.char }}</span>
+                <span style="font-size: 0.65rem; color: var(--text-muted); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 75px;">{{ item.name }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer" style="margin-top: 1rem;">
+          <button class="btn btn-secondary" style="width: auto;" @click="isSpecialCharModalOpen = false">Tancar</button>
         </div>
       </div>
     </div>
