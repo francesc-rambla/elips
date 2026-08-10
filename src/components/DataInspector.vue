@@ -774,6 +774,43 @@ const getChildTableColumns = (groupName, vectorName) => {
   return Array.from(cols);
 };
 
+const isFormulaModalOpen = ref(false);
+const editingFormulaItem = ref(null);
+const formulaTextBuffer = ref('');
+const availableFormulaFields = ref([]);
+const formulaTextareaRef = ref(null);
+
+const openFormulaModal = (item, fields) => {
+  editingFormulaItem.value = item;
+  formulaTextBuffer.value = item.calcFormula || '';
+  availableFormulaFields.value = (fields || []).filter(f => f !== item.element);
+  isFormulaModalOpen.value = true;
+};
+
+const insertTokenIntoFormula = (token) => {
+  if (!formulaTextareaRef.value) {
+    formulaTextBuffer.value += token;
+    return;
+  }
+  const el = formulaTextareaRef.value;
+  const start = el.selectionStart || formulaTextBuffer.value.length;
+  const end = el.selectionEnd || formulaTextBuffer.value.length;
+  const val = formulaTextBuffer.value;
+  formulaTextBuffer.value = val.substring(0, start) + token + val.substring(end);
+  nextTick(() => {
+    el.focus();
+    const newPos = start + token.length;
+    el.setSelectionRange(newPos, newPos);
+  });
+};
+
+const saveFormulaModal = () => {
+  if (editingFormulaItem.value) {
+    editingFormulaItem.value.calcFormula = formulaTextBuffer.value;
+  }
+  isFormulaModalOpen.value = false;
+};
+
 const openGroupConfig = (groupName, sheetData) => {
   activeConfigGroup.value = groupName;
   const isKv = getSheetType(sheetData) === 'kv';
@@ -1579,6 +1616,16 @@ onMounted(() => {
                               style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1; font-family: var(--font-mono);"
                               title="Ex: preu * unitats o SI(unitats > 10; preu * 0.9; preu * unitats)"
                             />
+                            <button 
+                              type="button" 
+                              class="btn btn-secondary" 
+                              style="padding: 2px 8px; height: 26px; font-size: 0.72rem; width: auto; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;"
+                              @click="openFormulaModal(item, groupConfigList.map(x => x.element))"
+                              title="Obre l'editor ampliat de fórmules"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                              <span>Amplia</span>
+                            </button>
                           </div>
                           <span style="font-size: 0.68rem; color: var(--text-muted);">
                             Operadors: +, -, *, /, %, ^ | Condició: SI(condició; cert; fals)
@@ -1702,6 +1749,71 @@ onMounted(() => {
         
         <div class="modal-footer" style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem; display: flex; justify-content: flex-end;">
           <button class="btn btn-primary" style="width: auto;" @click="isMultiSelectModalOpen = false">Fet</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dedicated Formula Editor Modal -->
+    <div class="modal-overlay" v-if="isFormulaModalOpen" style="display: flex; z-index: 1100;">
+      <div class="modal-content" style="max-width: 650px; width: 90%; display: flex; flex-direction: column; gap: 12px;">
+        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+          <h3 style="margin: 0; font-size: 1.05rem; display: flex; align-items: center; gap: 6px;">
+            <span>🧮 Editor Ampliat de Fórmula: <strong style="color: var(--color-primary);">{{ editingFormulaItem?.element }}</strong></span>
+          </h3>
+          <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isFormulaModalOpen = false">&times;</button>
+        </div>
+
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 10px;">
+          <!-- Field Insert Badges -->
+          <div>
+            <span style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Camps de la fila disponibles (Clica per inserir):</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+              <button 
+                v-for="col in availableFormulaFields" 
+                :key="col" 
+                type="button" 
+                class="btn btn-secondary" 
+                style="padding: 3px 8px; font-size: 0.75rem; font-family: var(--font-mono); width: auto; background: var(--bg-tertiary);"
+                @click="insertTokenIntoFormula(col)"
+              >
+                + {{ col }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Quick Operators & Functions -->
+          <div>
+            <span style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Operadors i Funcions:</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' + ')">+</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' - ')">-</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' * ')">*</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' / ')">/</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' % ')">%</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' ^ ')">^</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' ( ')">(</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' ) ')">)</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto; font-weight: bold; color: var(--color-primary);" @click="insertTokenIntoFormula('SI(condició; expressió_cert; expressió_fals)')">SI(condició; cert; fals)</button>
+            </div>
+          </div>
+
+          <!-- Multi-line Textarea -->
+          <div>
+            <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-primary); display: block; margin-bottom: 4px;">Expressió de la Fórmula:</label>
+            <textarea 
+              ref="formulaTextareaRef"
+              v-model="formulaTextBuffer" 
+              rows="5"
+              class="data-input" 
+              style="width: 100%; font-family: var(--font-mono); font-size: 0.9rem; padding: 8px; line-height: 1.4; resize: vertical;"
+              placeholder="ex: SI(persones > 0; persones * unitats * preu; unitats * preu)"
+            ></textarea>
+          </div>
+        </div>
+
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
+          <button type="button" class="btn btn-secondary" style="width: auto;" @click="isFormulaModalOpen = false">Cancel·la</button>
+          <button type="button" class="btn btn-primary" style="width: auto;" @click="saveFormulaModal">Desa la Fórmula</button>
         </div>
       </div>
     </div>
