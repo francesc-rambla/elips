@@ -1701,77 +1701,91 @@ def _wrap_safe(val, path='', visited=None):
     return val
 
 def render_md_two_pass_with_report(excel_path, template_path, date_format='iso', strict=False):
-    raw_doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
-    doc = _filter_empty_rows(raw_doc)
-
-    # Merge latest JSON from /work/in.json if present
+    import traceback
     try:
-        if os.path.exists('/work/in.json'):
-            with open('/work/in.json', 'r', encoding='utf-8') as f:
-                json_data = json.load(f)
-                if isinstance(json_data, dict):
-                    for k, v in json_data.items():
-                        if k not in doc or not doc[k]:
-                            doc[k] = v
-                        elif isinstance(v, dict) and isinstance(doc[k], dict):
-                            for sub_k, sub_v in v.items():
-                                if sub_k not in doc[k] or not doc[k][sub_k]:
-                                    doc[k][sub_k] = sub_v
-    except Exception:
-        pass
+        raw_doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
+        doc = _filter_empty_rows(raw_doc)
 
-    with open(template_path, 'r', encoding='utf-8') as f:
-        tpl_src = f.read()
+        # Merge latest JSON from /work/in.json if present
+        try:
+            if os.path.exists('/work/in.json'):
+                with open('/work/in.json', 'r', encoding='utf-8') as f:
+                    json_data = json.load(f)
+                    if isinstance(json_data, dict):
+                        for k, v in json_data.items():
+                            if k not in doc or not doc[k]:
+                                doc[k] = v
+                            elif isinstance(v, dict) and isinstance(doc[k], dict):
+                                for sub_k, sub_v in v.items():
+                                    if sub_k not in doc[k] or not doc[k][sub_k]:
+                                        doc[k][sub_k] = sub_v
+        except Exception:
+            pass
 
-    # Pass 1: Clean Context without HTML links (for Pandoc / Word export)
-    clean_ctx = _wrap_safe(doc, '')
-    if 'doc' not in clean_ctx:
-        clean_ctx['doc'] = clean_ctx
+        with open(template_path, 'r', encoding='utf-8') as f:
+            tpl_src = f.read()
 
-    env_clean = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
-    env_clean.filters['coin'] = filter_coin
-    env_clean.filters['number'] = filter_number
-    env_clean.filters['words'] = filter_words
-    env_clean.filters['prefix'] = filter_prefix
-    env_clean.globals['TRUE'] = True
-    env_clean.globals['FALSE'] = False
-    env_clean.globals['true'] = True
-    env_clean.globals['false'] = False
+        # Pass 1: Clean Context without HTML links (for Pandoc / Word export)
+        clean_ctx = _wrap_safe(doc, '')
+        if 'doc' not in clean_ctx:
+            clean_ctx['doc'] = clean_ctx
 
-    out1_clean, issues1 = render_with_recovery(env_clean, tpl_src, clean_ctx, 'primera')
-    if '{{' in out1_clean or '{%' in out1_clean:
-        out2_clean, issues2 = render_with_recovery(env_clean, out1_clean, clean_ctx, 'segona')
-    else:
-        out2_clean = out1_clean
-        issues2 = []
-    all_issues = issues1 + issues2
+        env_clean = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
+        env_clean.filters['coin'] = filter_coin
+        env_clean.filters['number'] = filter_number
+        env_clean.filters['words'] = filter_words
+        env_clean.filters['prefix'] = filter_prefix
+        env_clean.globals['TRUE'] = True
+        env_clean.globals['FALSE'] = False
+        env_clean.globals['true'] = True
+        env_clean.globals['false'] = False
 
-    # Pass 2: Tracked Context with HTML links (for HTML preview)
-    html_ctx = _wrap_tracked(doc, '', enable_links=True)
-    if 'doc' not in html_ctx:
-        html_ctx['doc'] = html_ctx
+        out1_clean, issues1 = render_with_recovery(env_clean, tpl_src, clean_ctx, 'primera')
+        if '{{' in out1_clean or '{%' in out1_clean:
+            out2_clean, issues2 = render_with_recovery(env_clean, out1_clean, clean_ctx, 'segona')
+        else:
+            out2_clean = out1_clean
+            issues2 = []
+        all_issues = issues1 + issues2
 
-    env_html = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
-    env_html.filters['coin'] = filter_coin
-    env_html.filters['number'] = filter_number
-    env_html.filters['words'] = filter_words
-    env_html.filters['prefix'] = filter_prefix
-    env_html.globals['TRUE'] = True
-    env_html.globals['FALSE'] = False
-    env_html.globals['true'] = True
-    env_html.globals['false'] = False
+        # Pass 2: Tracked Context with HTML links (for HTML preview)
+        html_ctx = _wrap_tracked(doc, '', enable_links=True)
+        if 'doc' not in html_ctx:
+            html_ctx['doc'] = html_ctx
 
-    out1_html, _ = render_with_recovery(env_html, tpl_src, html_ctx, 'primera_html')
-    if '{{' in out1_html or '{%' in out1_html:
-        out2_html, _ = render_with_recovery(env_html, out1_html, html_ctx, 'segona_html')
-    else:
-        out2_html = out1_html
+        env_html = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
+        env_html.filters['coin'] = filter_coin
+        env_html.filters['number'] = filter_number
+        env_html.filters['words'] = filter_words
+        env_html.filters['prefix'] = filter_prefix
+        env_html.globals['TRUE'] = True
+        env_html.globals['FALSE'] = False
+        env_html.globals['true'] = True
+        env_html.globals['false'] = False
 
-    return json.dumps({
-        'markdown': out2_clean,
-        'htmlMarkdown': out2_html,
-        'issues': all_issues
-    }, ensure_ascii=False)
+        out1_html, _ = render_with_recovery(env_html, tpl_src, html_ctx, 'primera_html')
+        if '{{' in out1_html or '{%' in out1_html:
+            out2_html, _ = render_with_recovery(env_html, out1_html, html_ctx, 'segona_html')
+        else:
+            out2_html = out1_html
+
+        return json.dumps({
+            'success': True,
+            'markdown': out2_clean,
+            'htmlMarkdown': out2_html,
+            'issues': all_issues
+        }, ensure_ascii=False)
+    except Exception as ex:
+        tb_str = traceback.format_exc()
+        lineno = getattr(ex, 'lineno', None)
+        msg = str(ex)
+        return json.dumps({
+            'success': False,
+            'error': f"Error de conversió Jinja2: {msg}",
+            'message': msg,
+            'traceback': tb_str,
+            'line': lineno
+        }, ensure_ascii=False)
       `;
       await _pyodide.runPythonAsync(pyCode);
       store.addLog("Motor de dades Python vinculat correctament a Pyodide.", 'success');

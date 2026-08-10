@@ -908,15 +908,55 @@ const isGenerateReady = computed(() => {
   return (store.excelFile || store.excelJsonData) && store.templateText.trim().length > 0 && store.enginesReady;
 });
 
+const errorCopied = ref(false);
+const copyErrorToClipboard = async () => {
+  if (!store.lastConversionError) return;
+  const err = store.lastConversionError;
+  const textToCopy = `[ERROR CONVERSIÓ JINJA2 - ELIPS]\nTítol: ${err.title}\nMissatge: ${err.message}\nLínia afectada: ${err.line || 'N/A'}\n\nTraceback Tècnic:\n${err.traceback}`;
+  try {
+    await navigator.clipboard.writeText(textToCopy);
+    errorCopied.value = true;
+    setTimeout(() => {
+      errorCopied.value = false;
+    }, 2500);
+  } catch (e) {
+    console.error("Error en copiar al portaretalls:", e);
+  }
+};
+
 const generateDocuments = async () => {
   store.generating = true;
   store.clearLogs();
+  store.clearConversionError();
   store.addLog("Iniciant pipeline de generació automatitzada de contractes públics...", "info");
   
   try {
     // 1. Jinja2 Compile
     store.addLog("Processant codi Jinja2 en dues passades...", "info");
-    const payload = await renderMarkdown(store.templateText);
+    const resPayload = await renderMarkdown(store.templateText);
+    let payload = null;
+    if (typeof resPayload === 'string') {
+      try {
+        payload = JSON.parse(resPayload);
+      } catch (_) {
+        payload = { success: true, markdown: resPayload, htmlMarkdown: resPayload, issues: [] };
+      }
+    } else {
+      payload = resPayload || {};
+    }
+
+    if (payload.success === false) {
+      const errMsg = payload.error || payload.message || "Error desconegut en la conversió de Jinja2";
+      store.addLog(`Error de conversió Jinja2: ${errMsg}`, "error");
+      store.setConversionError({
+        title: "Error de renderitzat / conversió Jinja2",
+        message: payload.message || errMsg,
+        traceback: payload.traceback || errMsg,
+        line: payload.line || null
+      });
+      return;
+    }
+
     store.renderedMarkdown = payload.htmlMarkdown || payload.markdown;
     store.cleanMarkdown = payload.markdown;
     store.issues = payload.issues || [];
@@ -959,7 +999,14 @@ const generateDocuments = async () => {
     store.activeTab = 'preview';
     
   } catch (e) {
-    store.addLog(`El procés ha fallat catastròficament: ${e.message}`, "error");
+    const errText = e.message || String(e);
+    store.addLog(`El procés ha fallat catastròficament: ${errText}`, "error");
+    store.setConversionError({
+      title: "Fallada en la generació del document",
+      message: errText,
+      traceback: e.stack || errText,
+      line: null
+    });
   } finally {
     store.generating = false;
   }
@@ -1965,6 +2012,50 @@ const generateDocuments = async () => {
       </div>
     </div>
 
+    <!-- Conversion Error Modal with Copy to Clipboard -->
+    <div v-if="store.isConversionErrorModalOpen && store.lastConversionError" class="modal-overlay error-modal-overlay" @click.self="store.clearConversionError()">
+      <div class="modal-card conversion-error-card">
+        <div class="modal-header conversion-error-header">
+          <div class="error-header-title">
+            <span class="error-icon">⚠️</span>
+            <h3>{{ store.lastConversionError.title || 'Error de conversió Jinja2' }}</h3>
+          </div>
+          <button class="btn-icon" style="background:none; border:none; font-size:1.4rem; cursor:pointer;" @click="store.clearConversionError()" title="Tancar">✕</button>
+        </div>
+
+        <div class="modal-body conversion-error-body">
+          <div v-if="store.lastConversionError.line" class="error-line-badge">
+            📍 Línia afectada a la plantilla: <strong>Línia {{ store.lastConversionError.line }}</strong>
+          </div>
+
+          <div class="error-message-box">
+            <p class="error-message-text">{{ store.lastConversionError.message }}</p>
+          </div>
+
+          <div class="error-traceback-section">
+            <div class="traceback-header">
+              <span>Detall tècnic de l'error (Traceback Python):</span>
+              <button class="btn btn-sm btn-secondary copy-error-btn" @click="copyErrorToClipboard">
+                <span v-if="errorCopied">✓ Copiat al portaretalls!</span>
+                <span v-else>📋 Copiar error al portaretalls</span>
+              </button>
+            </div>
+            <pre class="traceback-content"><code>{{ store.lastConversionError.traceback }}</code></pre>
+          </div>
+        </div>
+
+        <div class="modal-footer conversion-error-footer">
+          <button class="btn btn-secondary" @click="copyErrorToClipboard">
+            <span v-if="errorCopied">✓ Error Copiat</span>
+            <span v-else>📋 Copiar al portaretalls</span>
+          </button>
+          <button class="btn btn-primary" @click="store.clearConversionError()">
+            Tancar i revisar plantilla
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Ultra-Compact Minimal Footer -->
     <footer style="text-align: left; padding: 2px 0.75rem; font-size: 0.65rem; color: var(--text-muted); border-top: 1px solid var(--border-color); background: var(--bg-secondary); margin-top: auto; display: flex; align-items: center; justify-content: flex-start; flex-shrink: 0; min-height: 20px; height: 20px; box-sizing: border-box;">
       <span style="font-family: monospace; font-weight: 600; color: var(--text-muted); font-size: 0.65rem; display: inline-flex; align-items: center; gap: 4px;" title="Codi de compilació d'elips">
@@ -1989,6 +2080,139 @@ const generateDocuments = async () => {
   z-index: 99999;
   font-family: system-ui, -apple-system, sans-serif;
   color: #f8fafc;
+}
+
+.error-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(6px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10000;
+}
+
+.conversion-error-card {
+  background: var(--bg-card, #1e293b);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 680px;
+  max-height: 85vh;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.conversion-error-header {
+  background: rgba(239, 68, 68, 0.1);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.25);
+  padding: 1rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.error-header-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.error-header-title h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  color: #ef4444;
+  font-weight: 700;
+}
+
+.error-icon {
+  font-size: 1.4rem;
+}
+
+.conversion-error-body {
+  padding: 1.25rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.error-line-badge {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #f59e0b;
+  padding: 0.5rem 0.85rem;
+  border-radius: 8px;
+  font-size: 0.88rem;
+}
+
+.error-message-box {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+}
+
+.error-message-text {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--text-color, #f8fafc);
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.error-traceback-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.traceback-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
+}
+
+.copy-error-btn {
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.traceback-content {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 1rem;
+  border-radius: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.conversion-error-footer {
+  padding: 0.85rem 1.25rem;
+  border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  background: var(--bg-secondary, #0f172a);
 }
 
 .loading-card {

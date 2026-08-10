@@ -82,6 +82,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       { time: new Date().toLocaleTimeString(), text: 'Preparat. Pugeu fitxers d\'entrada per començar.', type: 'info' }
     ],
     issues: [],
+    lastConversionError: null,
+    isConversionErrorModalOpen: false,
     
     // Output names configurations
     outNameDocx: 'memoria_justificativa.docx',
@@ -183,6 +185,16 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.refDocFileName = '';
       this.refDocFileSize = 0;
       this.addLog('S\'ha restablert el document de referència al corporatiu.', 'info');
+    },
+
+    setConversionError(errData) {
+      this.lastConversionError = errData;
+      this.isConversionErrorModalOpen = !!errData;
+    },
+
+    clearConversionError() {
+      this.lastConversionError = null;
+      this.isConversionErrorModalOpen = false;
     },
     
     formatBytes(bytes) {
