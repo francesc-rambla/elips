@@ -2302,6 +2302,17 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     const processRowOrDict = (obj) => {
       if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
 
+      // 1. FIRST recurse into all child arrays and sub-objects (BOTTOM-UP traversal)
+      Object.keys(obj).forEach(key => {
+        if (key !== '_sheet_info' && key !== '_hierarchy_schema' && key !== 'editor_metadata') {
+          const val = obj[key];
+          if (val && typeof val === 'object') {
+            processContainer(val);
+          }
+        }
+      });
+
+      // 2. THEN evaluate computed fields for the current node
       computedMetas.forEach(meta => {
         const targetVec = meta.calcVector;
         const fn = (meta.calcFn || 'SUM').toUpperCase();
@@ -2324,8 +2335,6 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         }
 
         if (childList) {
-          childList.forEach(childItem => processContainer(childItem));
-
           let calculatedVal = 0;
           if (fn === 'COUNT') {
             calculatedVal = childList.length;
@@ -2346,22 +2355,16 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
           }
         }
       });
-
-      Object.keys(obj).forEach(key => {
-        if (key !== '_sheet_info' && key !== '_hierarchy_schema' && key !== 'editor_metadata') {
-          const val = obj[key];
-          if (val && typeof val === 'object') {
-            processContainer(val);
-          }
-        }
-      });
     };
 
-    Object.keys(data).forEach(key => {
-      if (key !== '_sheet_info' && key !== '_hierarchy_schema' && key !== 'editor_metadata') {
-        processContainer(data[key]);
-      }
-    });
+    // Run 2 passes to ensure any cross-level dependencies resolve cleanly
+    for (let pass = 0; pass < 2; pass++) {
+      Object.keys(data).forEach(key => {
+        if (key !== '_sheet_info' && key !== '_hierarchy_schema' && key !== 'editor_metadata') {
+          processContainer(data[key]);
+        }
+      });
+    }
   };
 
   const saveExcelHierarchy = async (renamesMap) => {
