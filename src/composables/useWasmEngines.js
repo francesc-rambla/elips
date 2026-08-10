@@ -2218,8 +2218,14 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         const fn = (meta.calcFn || 'SUM').toUpperCase();
         const col = meta.calcTargetCol;
 
+        let childList = null;
         if (targetVec && Array.isArray(obj[targetVec])) {
-          const childList = obj[targetVec];
+          childList = obj[targetVec];
+        } else if (targetVec && data[targetVec] && Array.isArray(data[targetVec])) {
+          childList = data[targetVec];
+        }
+
+        if (childList) {
           childList.forEach(childItem => processContainer(childItem));
 
           if (fn === 'COUNT') {

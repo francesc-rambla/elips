@@ -7,7 +7,7 @@ import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
 
 const store = useWorkspaceStore();
-const { saveExcelData } = useWasmEngines();
+const { saveExcelData, evaluateComputedFields } = useWasmEngines();
 const showJsonView = ref(false);
 const openSheets = ref({});
 const savingExcel = ref(false);
@@ -20,6 +20,7 @@ const selectedCompactSheet = ref('');
 // Auto-initialize selectedCompactSheet and open root sheets when data loads
 watch(() => store.excelJsonData, (newVal) => {
   if (newVal) {
+    evaluateComputedFields(newVal);
     const keys = Object.keys(newVal).filter(k => k !== 'editor_metadata' && k !== '_hierarchy_schema');
     if (keys.length > 0) {
       if (!selectedCompactSheet.value) {
