@@ -176,6 +176,50 @@ def _parse_kv(rows, start_row=0):
         out[sanitize_id(k)] = v
     return out
 
+def _is_value_empty(val):
+    if val is None:
+        return True
+    if isinstance(val, bool):
+        return not val
+    if isinstance(val, (int, float, Decimal)):
+        return val == 0
+    if isinstance(val, str):
+        s = val.strip()
+        if not s or s in ('0', '0.0', '0.00', '0,00', 'None', 'null', 'false', 'FALSE'):
+            return True
+        return False
+    if isinstance(val, (list, dict)):
+        return len(val) == 0
+    return False
+
+def _is_row_empty(item, visited=None, depth=0, max_depth=15):
+    if depth > max_depth:
+        return False
+    if visited is None:
+        visited = set()
+    if isinstance(item, (dict, list)):
+        item_id = id(item)
+        if item_id in visited:
+            return True
+        visited.add(item_id)
+
+    if not isinstance(item, dict):
+        return _is_value_empty(item)
+    for k, v in item.items():
+        if k in ('editor_metadata', '_hierarchy_schema', '_path'):
+            continue
+        if isinstance(v, list):
+            non_empty_children = [child for child in v if not _is_row_empty(child, visited, depth + 1, max_depth)]
+            if non_empty_children:
+                return False
+        elif isinstance(v, dict):
+            if not _is_row_empty(v, visited, depth + 1, max_depth):
+                return False
+        else:
+            if not _is_value_empty(v):
+                return False
+    return True
+
 def _parse_table(rows):
     if not rows:
         return []
@@ -189,7 +233,8 @@ def _parse_table(rows):
             if h in (None, ''):
                 continue
             obj[h] = rr[i] if i < len(rr) else None
-        out.append(obj)
+        if not _is_row_empty(obj):
+            out.append(obj)
     return out
 
 def _parse_sheet(ws, date_format='iso'):
@@ -1573,50 +1618,6 @@ def filter_prefix(value, fallback, elided):
 def render_json_text(excel_path, date_format='iso', strict=False):
     doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
     return json.dumps(doc, ensure_ascii=False, indent=2)
-
-def _is_value_empty(val):
-    if val is None:
-        return True
-    if isinstance(val, bool):
-        return not val
-    if isinstance(val, (int, float, Decimal)):
-        return val == 0
-    if isinstance(val, str):
-        s = val.strip()
-        if not s or s in ('0', '0.0', '0.00', '0,00', 'None', 'null', 'false', 'FALSE'):
-            return True
-        return False
-    if isinstance(val, (list, dict)):
-        return len(val) == 0
-    return False
-
-def _is_row_empty(item, visited=None, depth=0, max_depth=15):
-    if depth > max_depth:
-        return False
-    if visited is None:
-        visited = set()
-    if isinstance(item, (dict, list)):
-        item_id = id(item)
-        if item_id in visited:
-            return True
-        visited.add(item_id)
-
-    if not isinstance(item, dict):
-        return _is_value_empty(item)
-    for k, v in item.items():
-        if k in ('editor_metadata', '_hierarchy_schema', '_path'):
-            continue
-        if isinstance(v, list):
-            non_empty_children = [child for child in v if not _is_row_empty(child, visited, depth + 1, max_depth)]
-            if non_empty_children:
-                return False
-        elif isinstance(v, dict):
-            if not _is_row_empty(v, visited, depth + 1, max_depth):
-                return False
-        else:
-            if not _is_value_empty(v):
-                return False
-    return True
 
 def _filter_empty_rows(data, visited=None, depth=0, max_depth=15):
     if depth > max_depth:
