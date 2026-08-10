@@ -1581,8 +1581,10 @@ def render_json_text(excel_path, date_format='iso', strict=False):
     return json.dumps(doc, ensure_ascii=False, indent=2)
 
 def _is_value_empty(val):
-    if val is None or val is False:
+    if val is None:
         return True
+    if isinstance(val, bool):
+        return not val
     if isinstance(val, (int, float, Decimal)):
         return val == 0
     if isinstance(val, str):
