@@ -861,15 +861,97 @@ const restoreSelection = () => {
   }
 };
 
-// Formatting commands
-const formatCmd = (cmd, arg = null) => {
-  document.execCommand(cmd, false, arg);
+// Formatting commands for Code Mode
+const formatCodeText = (cmd, arg = null) => {
+  const el = textareaRef.value;
+  if (!el) return;
+  el.focus();
+  const start = el.selectionStart || 0;
+  const end = el.selectionEnd || 0;
+  const fullText = editorText.value || '';
+  const selectedText = fullText.substring(start, end);
+
+  let replacement = '';
+  let newCursorPos = start;
+
+  if (cmd === 'bold') {
+    replacement = `**${selectedText || 'negreta'}**`;
+    newCursorPos = selectedText ? start + replacement.length : start + 2;
+  } else if (cmd === 'italic') {
+    replacement = `*${selectedText || 'cursiva'}*`;
+    newCursorPos = selectedText ? start + replacement.length : start + 1;
+  } else if (cmd === 'insertUnorderedList') {
+    const lines = (selectedText || 'Element de llista').split('\n');
+    replacement = lines.map(line => line.startsWith('- ') ? line : `- ${line}`).join('\n');
+    newCursorPos = start + replacement.length;
+  } else if (cmd === 'insertOrderedList') {
+    const lines = (selectedText || 'Element de llista').split('\n');
+    replacement = lines.map((line, i) => /^\d+\.\s/.test(line) ? line : `${i + 1}. ${line}`).join('\n');
+    newCursorPos = start + replacement.length;
+  } else if (cmd === 'formatBlock') {
+    const tag = (arg || '').toUpperCase().replace(/[<>]/g, '');
+    const prefixes = { 'H1': '# ', 'H2': '## ', 'H3': '### ', 'H4': '#### ', 'H5': '##### ', 'H6': '###### ', 'P': '' };
+    const pfx = prefixes[tag] !== undefined ? prefixes[tag] : '';
+    const lines = (selectedText || 'Títol').split('\n');
+    replacement = lines.map(line => {
+      const clean = line.replace(/^#{1,6}\s*/, '');
+      return pfx ? `${pfx}${clean}` : clean;
+    }).join('\n');
+    newCursorPos = start + replacement.length;
+  }
+
+  if (replacement) {
+    editorText.value = fullText.substring(0, start) + replacement + fullText.substring(end);
+    nextTick(() => {
+      el.focus();
+      el.setSelectionRange(newCursorPos, newCursorPos);
+      syncCodeToVisual();
+    });
+  }
+};
+
+const formatDoc = (cmd) => {
+  if (activeEditorTab.value === 'code') {
+    formatCodeText(cmd);
+    return;
+  }
+  if (canvasRef.value) {
+    canvasRef.value.focus();
+    restoreSelection();
+  }
+  document.execCommand(cmd, false, null);
+  saveSelection();
+  syncVisualToCode();
+};
+
+const insertList = (type) => {
+  const cmd = (type === 'ordered' || type === 'insertOrderedList') ? 'insertOrderedList' : 'insertUnorderedList';
+  if (activeEditorTab.value === 'code') {
+    formatCodeText(cmd);
+    return;
+  }
+  if (canvasRef.value) {
+    canvasRef.value.focus();
+    restoreSelection();
+  }
+  document.execCommand(cmd, false, null);
   saveSelection();
   syncVisualToCode();
 };
 
 const formatBlock = (headerTag) => {
-  document.execCommand('formatBlock', false, headerTag);
+  if (!headerTag) return;
+  if (activeEditorTab.value === 'code') {
+    formatCodeText('formatBlock', headerTag);
+    return;
+  }
+  if (canvasRef.value) {
+    canvasRef.value.focus();
+    restoreSelection();
+  }
+  const cleanTag = headerTag.toUpperCase().replace(/[<>]/g, '');
+  const tag = `<${cleanTag}>`;
+  document.execCommand('formatBlock', false, tag);
   saveSelection();
   syncVisualToCode();
 };
