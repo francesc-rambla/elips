@@ -116,7 +116,7 @@ const createNewProject = () => {
   store.addLog(`Projecte '${cleanName}' creat i seleccionat correctament.`, 'success');
 };
 
-const loadProject = (name) => {
+const loadProject = async (name) => {
   if (name === currentProjectName.value) return;
   
   // Save current project and active doc state before switching
@@ -126,7 +126,6 @@ const loadProject = (name) => {
   currentProjectName.value = name;
   localStorage.setItem('currentProjectName', name);
   
-  // Load the new project's document list and active document
   const list = localStorage.getItem(`${name}:documentsList`);
   documentsList.value = list ? JSON.parse(list) : ['Document Principal'];
   localStorage.setItem(`${name}:documentsList`, JSON.stringify(documentsList.value));
@@ -139,23 +138,32 @@ const loadProject = (name) => {
   const excelJsonData = localStorage.getItem(`${name}:excelJsonData`);
   const excelFileName = localStorage.getItem(`${name}:excelFileName`) || '';
   const excelFileSize = parseInt(localStorage.getItem(`${name}:excelFileSize`) || '0', 10);
-  const excelB64 = localStorage.getItem(`${name}:excelFileBase64`);
   const editorMetadata = localStorage.getItem(`${name}:editorMetadata`);
   
   // Set Pinia store values
   store.excelJsonData = excelJsonData ? JSON.parse(excelJsonData) : null;
   store.excelFileName = excelFileName;
   store.excelFileSize = excelFileSize;
-  if (excelB64) {
-    try {
-      store.excelFile = dataURLtoFile(excelB64, excelFileName);
-    } catch (_) {
+  store.editorMetadata = editorMetadata ? JSON.parse(editorMetadata) : [];
+
+  // Restore raw Excel File object from IndexedDB
+  try {
+    const excelBuf = await getBinaryFile(`${name}:excelFileBuffer`);
+    if (excelBuf) {
+      const fName = store.excelFileName || `${name}.xlsx`;
+      store.excelFileName = fName;
+      store.excelFileSize = excelBuf.byteLength;
+      store.excelFile = new File([excelBuf], fName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      if (store.enginesReady) {
+        writeVirtualExcel(excelBuf);
+      }
+    } else {
       store.excelFile = null;
     }
-  } else {
+  } catch (e) {
+    console.warn("Error restaurant Excel des d'IndexedDB:", e);
     store.excelFile = null;
   }
-  store.editorMetadata = editorMetadata ? JSON.parse(editorMetadata) : [];
   
   // Now load the active document configuration
   loadDocumentConfig(name, aDoc);
@@ -677,15 +685,25 @@ onMounted(async () => {
   // Restore active document states immediately (template text, ref document)
   loadDocumentConfig(pName, aDoc);
   
+  // Restore Excel fields for current project
+  const excelFileName = localStorage.getItem(`${pName}:excelFileName`) || '';
+  const excelFileSize = parseInt(localStorage.getItem(`${pName}:excelFileSize`) || '0', 10);
+  store.excelFileName = excelFileName;
+  store.excelFileSize = excelFileSize;
+
   // Restore Excel sheets JSON data
   const excelJsonData = localStorage.getItem(`${pName}:excelJsonData`);
   if (excelJsonData) {
-    store.excelJsonData = JSON.parse(excelJsonData);
+    try {
+      store.excelJsonData = JSON.parse(excelJsonData);
+    } catch (_) {}
   }
   
   const editorMetadata = localStorage.getItem(`${pName}:editorMetadata`);
   if (editorMetadata) {
-    store.editorMetadata = JSON.parse(editorMetadata);
+    try {
+      store.editorMetadata = JSON.parse(editorMetadata);
+    } catch (_) {}
   }
 
   // Restore active document states (template text, ref document)
@@ -694,9 +712,15 @@ onMounted(async () => {
   // Restore raw Excel File object from IndexedDB
   try {
     const excelBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
-    if (excelBuf && store.excelFileName) {
-      const file = new File([excelBuf], store.excelFileName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    if (excelBuf) {
+      const fName = store.excelFileName || `${pName}.xlsx`;
+      store.excelFileName = fName;
+      store.excelFileSize = excelBuf.byteLength;
+      const file = new File([excelBuf], fName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       store.excelFile = file;
+      if (store.enginesReady) {
+        writeVirtualExcel(excelBuf);
+      }
     }
   } catch (e) {
     console.warn("Error restaurant Excel des d'IndexedDB:", e);
@@ -792,6 +816,7 @@ const bindExcelAsTemplateOnly = async (file) => {
   
   // Save raw ArrayBuffer in IndexedDB
   await saveBinaryFile(`${pName}:excelFileBuffer`, buffer);
+  saveCurrentProject();
   
   if (store.enginesReady) {
     try {
@@ -812,11 +837,13 @@ const processExcelFile = async (file) => {
   
   // Store raw ArrayBuffer in IndexedDB for 100% persistent reload
   await saveBinaryFile(`${pName}:excelFileBuffer`, buffer);
+  saveCurrentProject();
 
   if (store.enginesReady) {
     try {
       const parsedData = await parseExcel(buffer);
       store.excelJsonData = parsedData;
+      saveCurrentProject();
       store.addLog("Dades de l'Excel interpretades correctament. Podeu consultar l'esquema.", "success");
     } catch (e) {
       store.addLog(`Error parsejant Excel: ${e.message}`, "error");

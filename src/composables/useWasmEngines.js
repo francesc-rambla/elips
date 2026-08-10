@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import * as pandocModule from '../vendor/pandoc/pandoc.js';
+import { saveBinaryFile, getBinaryFile } from '../utils/db';
 
 // Save WebAssembly engine instances outside vue reactiveness scope for speed
 let _pyodide = null;
@@ -1836,6 +1837,14 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         _pyodide.FS.writeFile('/work/in.json', new TextEncoder().encode(JSON.stringify(store.excelJsonData)));
         store.addLog("Dades de la sessió restaurada carregades en el sistema de fitxers de Pyodide.", 'info');
       }
+
+      const pName = localStorage.getItem('currentProjectName') || 'Default';
+      try {
+        const buf = await getBinaryFile(`${pName}:excelFileBuffer`);
+        if (buf) {
+          _pyodide.FS.writeFile('/work/in.xlsx', new Uint8Array(buf));
+        }
+      } catch (_) {}
 
       store.enginesReady = true;
       store.addLog("Tots els motors WASM s'han carregat correctament.", 'success');
