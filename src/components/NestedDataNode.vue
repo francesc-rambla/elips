@@ -510,7 +510,8 @@ const openGroupConfig = () => {
       width: meta.width || '',
       calcFn: meta.calcFn || 'SUM',
       calcVector: meta.calcVector || '',
-      calcTargetCol: meta.calcTargetCol || ''
+      calcTargetCol: meta.calcTargetCol || '',
+      calcFormula: meta.calcFormula || ''
     };
   });
   isConfigModalOpen.value = true;
@@ -547,7 +548,8 @@ const addNewFieldToConfig = () => {
       width: '',
       calcFn: 'SUM',
       calcVector: '',
-      calcTargetCol: ''
+      calcTargetCol: '',
+      calcFormula: ''
     });
   }
 };
@@ -587,6 +589,7 @@ const saveGroupConfig = () => {
       meta.calcFn = item.calcFn || 'SUM';
       meta.calcVector = item.calcVector || '';
       meta.calcTargetCol = item.calcTargetCol || '';
+      meta.calcFormula = item.calcFormula || '';
     }
     if (item.width) {
       meta.width = item.width;
@@ -1373,31 +1376,53 @@ const getItemPath = (idx, fieldKey) => {
                       <div style="display: flex; gap: 4px; align-items: center;">
                         <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Funció:</span>
                         <select v-model="item.calcFn" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
-                          <option value="SUM">SUM (Suma)</option>
-                          <option value="COUNT">COUNT (Recompte)</option>
-                          <option value="AVG">AVG (Mitjana)</option>
+                          <option value="SUM">SUM (Suma sub-taula)</option>
+                          <option value="COUNT">COUNT (Recompte sub-taula)</option>
+                          <option value="AVG">AVG (Mitjana sub-taula)</option>
+                          <option value="CUSTOM">CUSTOM (Fórmula personalitzada)</option>
                         </select>
                       </div>
 
-                      <div style="display: flex; gap: 4px; align-items: center;">
-                        <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Sub-taula:</span>
-                        <select v-model="item.calcVector" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
-                          <option value="">-- Sub-taula --</option>
-                          <option v-for="vec in getAvailableChildVectorsForGroup()" :key="vec" :value="vec">
-                            {{ vec }}
-                          </option>
-                        </select>
-                      </div>
+                      <template v-if="item.calcFn === 'CUSTOM'">
+                        <div style="display: flex; flex-direction: column; gap: 3px; margin-top: 2px;">
+                          <div style="display: flex; gap: 4px; align-items: center;">
+                            <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Fórmula:</span>
+                            <input 
+                              type="text" 
+                              v-model="item.calcFormula" 
+                              class="data-input" 
+                              placeholder="ex: preu * unitats o SI(unitats > 10; preu * 0.9; preu)"
+                              style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1; font-family: var(--font-mono);"
+                              title="Ex: preu * unitats o SI(unitats > 10; preu * 0.9; preu * unitats)"
+                            />
+                          </div>
+                          <span style="font-size: 0.68rem; color: var(--text-muted);">
+                            Operadors: +, -, *, /, %, ^ | Condició: SI(condició; cert; fals)
+                          </span>
+                        </div>
+                      </template>
 
-                      <div v-if="item.calcFn !== 'COUNT' && item.calcVector" style="display: flex; gap: 4px; align-items: center;">
-                        <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Columna:</span>
-                        <select v-model="item.calcTargetCol" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
-                          <option value="">-- Columna --</option>
-                          <option v-for="col in getChildTableColumns(item.calcVector)" :key="col" :value="col">
-                            {{ col }}
-                          </option>
-                        </select>
-                      </div>
+                      <template v-else>
+                        <div style="display: flex; gap: 4px; align-items: center;">
+                          <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Sub-taula:</span>
+                          <select v-model="item.calcVector" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
+                            <option value="">-- Sub-taula --</option>
+                            <option v-for="vec in getAvailableChildVectorsForGroup()" :key="vec" :value="vec">
+                              {{ vec }}
+                            </option>
+                          </select>
+                        </div>
+
+                        <div v-if="item.calcFn !== 'COUNT' && item.calcVector" style="display: flex; gap: 4px; align-items: center;">
+                          <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Columna:</span>
+                          <select v-model="item.calcTargetCol" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
+                            <option value="">-- Columna --</option>
+                            <option v-for="col in getChildTableColumns(item.calcVector)" :key="col" :value="col">
+                              {{ col }}
+                            </option>
+                          </select>
+                        </div>
+                      </template>
                     </div>
                   </template>
 

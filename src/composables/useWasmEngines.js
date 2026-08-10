@@ -560,7 +560,7 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
             ws = wb[sheet_name]
             meta_data = data.get('editor_metadata', [])
             ws.delete_rows(1, ws.max_row)
-            headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width']
+            headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula']
             for c_idx, h in enumerate(headers):
                 ws.cell(1, c_idx + 1).value = h
             
@@ -2195,6 +2195,98 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     return new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   };
 
+  const evaluateCustomFormula = (formulaStr, row) => {
+    if (!formulaStr || typeof formulaStr !== 'string' || !row) return 0;
+
+    try {
+      let expr = formulaStr.trim();
+
+      // Parse nested SI(...) / IF(...) function calls into JavaScript ternary operators: ( (cond) ? (true_val) : (false_val) )
+      const parseNestedIf = (s) => {
+        const regex = /(?:SI|IF)\s*\(/gi;
+        let match;
+        while ((match = regex.exec(s)) !== null) {
+          const startIdx = match.index;
+          const openParenIdx = startIdx + match[0].length - 1;
+          let parenCount = 1;
+          let closeParenIdx = -1;
+          let topArgs = [];
+          let currentArg = '';
+
+          for (let i = openParenIdx + 1; i < s.length; i++) {
+            const char = s[i];
+            if (char === '(') parenCount++;
+            else if (char === ')') {
+              parenCount--;
+              if (parenCount === 0) {
+                closeParenIdx = i;
+                topArgs.push(currentArg);
+                break;
+              }
+            }
+            if ((char === ';' || char === ',') && parenCount === 1) {
+              topArgs.push(currentArg);
+              currentArg = '';
+            } else {
+              currentArg += char;
+            }
+          }
+
+          if (closeParenIdx !== -1 && topArgs.length >= 3) {
+            const cond = parseNestedIf(topArgs[0]);
+            const tVal = parseNestedIf(topArgs[1]);
+            const fVal = parseNestedIf(topArgs.slice(2).join(';'));
+            const replacement = `( (${cond}) ? (${tVal}) : (${fVal}) )`;
+            s = s.substring(0, startIdx) + replacement + s.substring(closeParenIdx + 1);
+            regex.lastIndex = 0;
+          }
+        }
+        return s;
+      };
+
+      expr = parseNestedIf(expr);
+
+      // Operator normalizations
+      expr = expr.replace(/(^|[^<>=!])=([^=])/g, '$1==$2');
+      expr = expr.replace(/<>/g, '!=');
+      expr = expr.replace(/\^/g, '**');
+
+      // Sort keys descending by length so longer variable names match first
+      const keys = Object.keys(row).sort((a, b) => b.length - a.length);
+      keys.forEach(key => {
+        if (key === '_hierarchy_schema' || key === 'editor_metadata' || key === '_sheet_info') return;
+        const rawVal = row[key];
+        let valNum = 0;
+        if (typeof rawVal === 'number') {
+          valNum = rawVal;
+        } else if (typeof rawVal === 'string' && rawVal.trim() !== '') {
+          const parsed = parseFloat(rawVal.replace(',', '.'));
+          valNum = isNaN(parsed) ? `"${rawVal.replace(/"/g, '\\"')}"` : parsed;
+        } else if (typeof rawVal === 'boolean') {
+          valNum = rawVal;
+        }
+
+        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const varRegex = new RegExp(`\\b${escapedKey}\\b`, 'g');
+        expr = expr.replace(varRegex, typeof valNum === 'string' ? valNum : `(${valNum})`);
+      });
+
+      const safeEval = new Function(`"use strict"; return (${expr});`);
+      const result = safeEval();
+
+      if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
+        return Math.round(result * 100) / 100;
+      } else if (typeof result === 'boolean') {
+        return result;
+      } else if (result !== undefined && result !== null) {
+        return String(result);
+      }
+      return 0;
+    } catch (err) {
+      return row[formulaStr] !== undefined ? row[formulaStr] : 0;
+    }
+  };
+
   const evaluateComputedFields = (data) => {
     if (!data || !store.editorMetadata || !Array.isArray(store.editorMetadata) || store.editorMetadata.length === 0) return;
 
@@ -2217,6 +2309,12 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         const targetVec = meta.calcVector;
         const fn = (meta.calcFn || 'SUM').toUpperCase();
         const col = meta.calcTargetCol;
+        const formula = meta.calcFormula;
+
+        if (fn === 'CUSTOM' && formula) {
+          obj[meta.element] = evaluateCustomFormula(formula, obj);
+          return;
+        }
 
         let childList = null;
         if (targetVec && Array.isArray(obj[targetVec])) {
