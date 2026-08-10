@@ -658,72 +658,111 @@ const getFieldLabel = (groupName, elementName) => {
 
 const getAvailableChildVectorsForGroup = (groupName) => {
   if (!store.excelJsonData) return [];
-  let sampleParentRow = null;
-  const sheetData = store.excelJsonData[groupName];
+  const result = new Set();
 
-  if (Array.isArray(sheetData) && sheetData.length > 0) {
-    sampleParentRow = sheetData[0];
-  } else if (sheetData && typeof sheetData === 'object') {
-    sampleParentRow = sheetData;
+  const searchInObj = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) {
+      obj.forEach(item => {
+        if (item && typeof item === 'object') {
+          Object.keys(item).forEach(k => {
+            if (Array.isArray(item[k])) result.add(k);
+          });
+        }
+      });
+    } else {
+      Object.keys(obj).forEach(k => {
+        if (Array.isArray(obj[k])) result.add(k);
+      });
+    }
+  };
+
+  const sheetData = store.excelJsonData[groupName];
+  if (sheetData) {
+    searchInObj(sheetData);
   }
 
-  if (!sampleParentRow) {
-    const searchObj = (container) => {
-      if (!container || typeof container !== 'object') return null;
-      if (container[groupName]) return container[groupName];
-      for (const k of Object.keys(container)) {
-        if (typeof container[k] === 'object') {
-          const res = searchObj(container[k]);
-          if (res) return res;
+  // Fallback search across whole excelJsonData tree
+  if (result.size === 0) {
+    const searchRecursive = (container) => {
+      if (!container || typeof container !== 'object') return;
+      if (container[groupName]) {
+        searchInObj(container[groupName]);
+        return;
+      }
+      if (Array.isArray(container)) {
+        container.forEach(item => {
+          if (item && typeof item === 'object') {
+            if (item[groupName]) searchInObj(item[groupName]);
+            else Object.values(item).forEach(v => searchRecursive(v));
+          }
+        });
+      } else {
+        Object.values(container).forEach(v => searchRecursive(v));
+      }
+    };
+    searchRecursive(store.excelJsonData);
+  }
+
+  // Fallback to top-level sheet names if configuring root KV or root group
+  if (result.size === 0) {
+    Object.keys(store.excelJsonData).forEach(k => {
+      if (k !== groupName && k !== 'editor_metadata' && k !== '_hierarchy_schema' && k !== '_sheet_info') {
+        if (Array.isArray(store.excelJsonData[k])) {
+          result.add(k);
         }
       }
-      return null;
-    };
-    const found = searchObj(store.excelJsonData);
-    if (found) sampleParentRow = Array.isArray(found) ? found[0] : found;
+    });
   }
 
-  if (sampleParentRow && typeof sampleParentRow === 'object') {
-    return Object.keys(sampleParentRow).filter(k => Array.isArray(sampleParentRow[k]));
-  }
-  return [];
+  return Array.from(result);
 };
 
 const getChildTableColumns = (groupName, vectorName) => {
   if (!vectorName || !store.excelJsonData) return [];
-  let sampleChildItem = null;
+  const cols = new Set();
 
   const checkObj = (obj) => {
     if (obj && Array.isArray(obj[vectorName]) && obj[vectorName].length > 0 && typeof obj[vectorName][0] === 'object') {
-      sampleChildItem = obj[vectorName][0];
+      Object.keys(obj[vectorName][0]).forEach(k => {
+        if (k !== '_hierarchy_schema' && isPrimitive(obj[vectorName][0][k])) {
+          cols.add(k);
+        }
+      });
       return true;
     }
     return false;
   };
 
   const searchRecursive = (container) => {
-    if (!container || typeof container !== 'object' || sampleChildItem) return;
+    if (!container || typeof container !== 'object') return;
     if (Array.isArray(container)) {
       container.forEach(item => {
         if (item && typeof item === 'object') {
-          if (checkObj(item)) return;
+          checkObj(item);
           searchRecursive(item);
         }
       });
     } else {
-      if (checkObj(container)) return;
+      checkObj(container);
       Object.keys(container).forEach(k => {
         if (typeof container[k] === 'object') searchRecursive(container[k]);
       });
     }
   };
 
+  // Direct check top-level sheet
+  if (Array.isArray(store.excelJsonData[vectorName]) && store.excelJsonData[vectorName].length > 0 && typeof store.excelJsonData[vectorName][0] === 'object') {
+    Object.keys(store.excelJsonData[vectorName][0]).forEach(k => {
+      if (k !== '_hierarchy_schema' && isPrimitive(store.excelJsonData[vectorName][0][k])) {
+        cols.add(k);
+      }
+    });
+  }
+
   searchRecursive(store.excelJsonData);
 
-  if (sampleChildItem && typeof sampleChildItem === 'object') {
-    return Object.keys(sampleChildItem);
-  }
-  return [];
+  return Array.from(cols);
 };
 
 const openGroupConfig = (groupName, sheetData) => {

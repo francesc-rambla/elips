@@ -31,22 +31,104 @@ const store = useWorkspaceStore();
 const { evaluateComputedFields } = useWasmEngines();
 
 const getAvailableChildVectorsForGroup = () => {
-  if (!props.items || !Array.isArray(props.items) || props.items.length === 0) return [];
-  const sample = props.items[0];
-  if (sample && typeof sample === 'object') {
-    return Object.keys(sample).filter(k => Array.isArray(sample[k]));
+  const result = new Set();
+  
+  // 1. From childKeys computed property
+  if (Array.isArray(childKeys.value)) {
+    childKeys.value.forEach(k => result.add(k));
   }
-  return [];
+
+  // 2. From actual items data
+  if (items.value && Array.isArray(items.value)) {
+    items.value.forEach(item => {
+      if (item && typeof item === 'object') {
+        Object.keys(item).forEach(k => {
+          if (Array.isArray(item[k])) {
+            result.add(k);
+          }
+        });
+      }
+    });
+  }
+
+  // 3. From nodeSchema definition
+  if (nodeSchema.value && nodeSchema.value.children) {
+    const ch = nodeSchema.value.children;
+    if (Array.isArray(ch)) {
+      ch.forEach(k => result.add(k));
+    } else if (typeof ch === 'object') {
+      Object.keys(ch).forEach(k => result.add(k));
+    }
+  }
+
+  // 4. Fallback search inside excelJsonData
+  if (result.size === 0 && store.excelJsonData) {
+    const searchSub = (obj) => {
+      if (!obj || typeof obj !== 'object') return;
+      if (Array.isArray(obj)) {
+        obj.forEach(elem => {
+          if (elem && typeof elem === 'object') {
+            Object.keys(elem).forEach(k => {
+              if (Array.isArray(elem[k])) result.add(k);
+            });
+          }
+        });
+      }
+    };
+    searchSub(store.excelJsonData[props.arrayKey]);
+  }
+
+  return Array.from(result);
 };
 
 const getChildTableColumns = (vectorName) => {
-  if (!vectorName || !props.items || !Array.isArray(props.items)) return [];
-  for (const item of props.items) {
-    if (item && Array.isArray(item[vectorName]) && item[vectorName].length > 0 && typeof item[vectorName][0] === 'object') {
-      return Object.keys(item[vectorName][0]);
+  if (!vectorName) return [];
+  const cols = new Set();
+
+  // 1. Inspect actual rows in items.value
+  if (items.value && Array.isArray(items.value)) {
+    items.value.forEach(item => {
+      if (item && Array.isArray(item[vectorName]) && item[vectorName].length > 0 && typeof item[vectorName][0] === 'object') {
+        Object.keys(item[vectorName][0]).forEach(k => {
+          if (k !== '_hierarchy_schema' && isPrimitive(item[vectorName][0][k])) {
+            cols.add(k);
+          }
+        });
+      }
+    });
+  }
+
+  // 2. Inspect childSchemas
+  if (childSchemas.value && childSchemas.value[vectorName]) {
+    const s = childSchemas.value[vectorName];
+    if (Array.isArray(s.fields)) {
+      s.fields.forEach(f => cols.add(f));
     }
   }
-  return [];
+
+  // 3. Fallback search store.excelJsonData globally
+  if (cols.size === 0 && store.excelJsonData) {
+    const searchGlobal = (container) => {
+      if (!container || typeof container !== 'object') return;
+      if (Array.isArray(container)) {
+        container.forEach(item => {
+          if (item && typeof item === 'object') {
+            if (Array.isArray(item[vectorName]) && item[vectorName].length > 0 && typeof item[vectorName][0] === 'object') {
+              Object.keys(item[vectorName][0]).forEach(k => {
+                if (k !== '_hierarchy_schema' && isPrimitive(item[vectorName][0][k])) cols.add(k);
+              });
+            }
+            Object.values(item).forEach(v => searchGlobal(v));
+          }
+        });
+      } else {
+        Object.values(container).forEach(v => searchGlobal(v));
+      }
+    };
+    searchGlobal(store.excelJsonData);
+  }
+
+  return Array.from(cols);
 };
 
 const cleanPath = (p) => {
