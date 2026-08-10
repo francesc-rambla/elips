@@ -2220,7 +2220,8 @@ const parseHtmlToMarkdown = (sourceElement) => {
     markdown = markdown.replace(new RegExp(`__TABLE_PLACEHOLDER_${idx}__`, 'g'), () => mdTable);
   });
   
-  const cleanBody = markdown.replace(/\n{3,}/g, '\n\n').trim();
+  let cleanBody = markdown.replace(/\n{3,}/g, '\n\n').trim();
+  cleanBody = cleanBody.replace(/(?<!\n\n)\n(#{1,6}\s+.*)/g, '\n\n$1');
   return pandocYamlHeader ? pandocYamlHeader + cleanBody : cleanBody;
 };
 

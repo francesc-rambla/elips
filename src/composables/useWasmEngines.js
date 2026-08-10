@@ -888,7 +888,7 @@ def render_with_recovery(env, template_src, ctx, pass_label, max_fixes=50):
             continue
 
     # Fallback to non-strict environment if recovery loop gets stuck
-    env_lax = Environment(undefined=DebugUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
+    env_lax = Environment(undefined=DebugUndefined, autoescape=False, trim_blocks=False, lstrip_blocks=False)
     env_lax.filters.update(env.filters)
     env_lax.globals.update(env.globals)
     try:
@@ -1745,12 +1745,25 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         with open(template_path, 'r', encoding='utf-8') as f:
             tpl_src = f.read()
 
+        def _normalize_markdown_headings(text):
+            if not text:
+                return text
+            lines = text.split('\n')
+            out = []
+            for i, line in enumerate(lines):
+                stripped = line.lstrip()
+                if stripped.startswith('#') and i > 0:
+                    if out and out[-1].strip() != '':
+                        out.append('')
+                out.append(line)
+            return '\n'.join(out)
+
         # Pass 1: Clean Context without HTML links (for Pandoc / Word export)
         clean_ctx = _wrap_safe(doc, '')
         if 'doc' not in clean_ctx:
             clean_ctx['doc'] = clean_ctx
 
-        env_clean = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
+        env_clean = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=False, lstrip_blocks=False)
         env_clean.filters['coin'] = filter_coin
         env_clean.filters['number'] = filter_number
         env_clean.filters['words'] = filter_words
@@ -1773,7 +1786,7 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         if 'doc' not in html_ctx:
             html_ctx['doc'] = html_ctx
 
-        env_html = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
+        env_html = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=False, lstrip_blocks=False)
         env_html.filters['coin'] = filter_coin
         env_html.filters['number'] = filter_number
         env_html.filters['words'] = filter_words
@@ -1788,6 +1801,9 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
             out2_html, _ = render_with_recovery(env_html, out1_html, html_ctx, 'segona_html')
         else:
             out2_html = out1_html
+
+        out2_clean = _normalize_markdown_headings(out2_clean)
+        out2_html = _normalize_markdown_headings(out2_html)
 
         return json.dumps({
             'success': True,
