@@ -6,6 +6,16 @@ L'aplicació funciona **100% en l'entorn del navegador (client-side)** utilitzan
 
 ---
 
+## 📖 Manual d'Usuari i Guia de Referència
+
+Per a una guia detallada pas a pas sobre el funcionament de l'aplicació, consulteu el **[Manual d'Usuari d'elips (`manual.md`)](../manual.md)** (disponible també a `public/manual.md`).
+
+El manual inclou la documentació completa organitzada per perfils d'ús:
+- **[Perfil 1: Configurador/a de Plantilles i Model de Dades](../manual.md#3-perfil-1-guia-per-alla-configuradora-de-plantilles-i-model-administració--disseny)**: Disseny de plantilles Jinja2 (`.md.j2`), configuració de tipus de dades (`editor_metadata`), camps calculats i motor de fórmules (`SI/IF`), i distribució visual dels formularis (Grid Layout, etiquetes i tooltips).
+- **[Perfil 2: Redactor/a i Gestor/a d'Expedients](../manual.md#4-perfil-2-guia-per-alla-redactora-i-gestora-dexpedients-usuaria-final)**: Carrega de fitxers, navegació pel model de dades, ús de l'editor visual de cel·les de text ric (Markdown + Jinja2) i compilació/exportació de documents (DOCX, MD, XLSX).
+
+---
+
 ## 🎯 Finalitat del Projecte
 
 La finalitat d'**elips** és simplificar, automatitzar i estandarditzar la preparació de documentació administrativa i tècnica en la contractació pública:
