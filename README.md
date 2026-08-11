@@ -11,8 +11,8 @@ L'aplicació funciona **100% en l'entorn del navegador (client-side)** utilitzan
 Per a una guia detallada pas a pas sobre el funcionament de l'aplicació, consulteu el **[Manual d'usuari d'elips (`manual.md`)](../manual.md)** (disponible també a `public/manual.md`).
 
 El manual inclou la documentació completa organitzada per perfils d'ús:
-- **[Perfil 1: Configurador/a de plantilles i model de dades](../manual.md#3-perfil-1-guia-per-alla-configuradora-de-plantilles-i-model-administració--disseny)**: Disseny de plantilles Jinja2 (`.md.j2`), configuració de tipus de dades (`editor_metadata`), camps calculats i motor de fórmules (`SI/IF`), i distribució visual dels formularis (grid, etiquetes i consells).
-- **[Perfil 2: Redactor/a i gestor/a d'expedients](../manual.md#4-perfil-2-guia-per-alla-redactora-i-gestora-dexpedients-usuaria-final)**: Càrrega de fitxers, navegació pel model de dades, ús de l'editor visual de cel·les de text ric (Markdown + Jinja2) i compilació/exportació de documents (DOCX, MD, XLSX).
+- **[Perfil 1: Guia per al perfil de configuració del model de dades i de les plantilles](../manual.md#3-perfil-1-guia-per-al-perfil-de-configuració-del-model-de-dades-i-de-les-plantilles)**: Disseny de plantilles Jinja2 (`.md.j2`), configuració de tipus de dades (`editor_metadata`), camps calculats i motor de fórmules (`SI/IF`), i distribució visual dels formularis (grid, etiquetes i consells).
+- **[Perfil 2: Guia per al perfil tècnic usuari de l'aplicació](../manual.md#4-perfil-2-guia-per-al-perfil-tècnic-usuari-de-laplicació)**: Càrrega de fitxers, navegació pel model de dades, ús de l'editor visual de cel·les de text ric (Markdown + Jinja2) i compilació/exportació de documents (DOCX, MD, XLSX).
 
 ---
 

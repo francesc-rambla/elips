@@ -6,12 +6,12 @@
 ## 📑 Índex de continguts
 1. [Introducció i filosofia d'elips](#1-introducció-i-filosofia-delips)
 2. [Arquitectura del model de dades i jerarquia d'Excel](#2-arquitectura-del-model-de-dades-i-jerarquia-dexcel)
-3. [Perfil 1: Guia per al/la configurador/a de plantilles i model (administració / disseny)](#3-perfil-1-guia-per-alla-configuradora-de-plantilles-i-model-administració--disseny)
+3. [Perfil 1: Guia per al perfil de configuració del model de dades i de les plantilles](#3-perfil-1-guia-per-al-perfil-de-configuració-del-model-de-dades-i-de-les-plantilles)
    - [3.1 Disseny de les plantilles Jinja2 (`.md.j2`)](#31-disseny-de-les-plantilles-jinja2-mdj2)
    - [3.2 Configuració dels formularis i tipus de dades (`editor_metadata`)](#32-configuració-dels-formularis-i-tipus-de-dades-editor_metadata)
    - [3.3 Camps calculats (Computed) i motor de fórmules personalitzades (`SI/IF`)](#33-camps-calculats-computed-i-motor-de-fórmules-personalitzades-siif)
    - [3.4 Personalització del disseny visual dels formularis (grid, etiquetes i consells)](#34-personalització-del-disseny-visual-dels-formularis-grid-etiquetes-i-consells)
-4. [Perfil 2: Guia per al/la redactor/a i gestor/a d'expedients (usuari/a final)](#4-perfil-2-guia-per-alla-redactora-i-gestora-dexpedients-usuaria-final)
+4. [Perfil 2: Guia per al perfil tècnic usuari de l'aplicació](#4-perfil-2-guia-per-al-perfil-tècnic-usuari-de-laplicació)
    - [4.1 Càrrega i importació de dades d'expedient](#41-càrrega-i-importació-de-dades-dexpedient)
    - [4.2 Emplenat i edició de dades des de l'aplicació web](#42-emplenat-i-edició-de-dades-des-de-laplicació-web)
    - [4.3 L'editor visual per a cel·les de text ric (Markdown + Jinja2)](#43-leditor-visual-per-a-celles-de-text-ric-markdown--jinja2)
@@ -67,7 +67,7 @@ Tota la configuració de tipus de dades, opcions desplegables, fórmules i disse
 
 ---
 
-## 3. Perfil 1: Guia per al/la configurador/a de plantilles i model (administració / disseny)
+## 3. Perfil 1: Guia per al perfil de configuració del model de dades i de les plantilles
 
 Aquest perfil s'encarrega de dissenyar l'estructura de dades, configurar els formularis d'introducció de dades, definir les fórmules calculades i redactar la plantilla base en Jinja2.
 
@@ -184,7 +184,7 @@ Quan s'assigna una **Etiqueta al formulari** personalitzada (ex: *"Descripció d
 
 ---
 
-## 4. Perfil 2: Guia per al/la redactor/a i gestor/a d'expedients (usuari/a final)
+## 4. Perfil 2: Guia per al perfil tècnic usuari de l'aplicació
 
 Aquest perfil utilitza l'aplicació per introduir les dades específiques d'un contracte/expedient i generar la documentació final.
 
