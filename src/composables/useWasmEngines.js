@@ -1006,7 +1006,7 @@ def render_with_recovery(env, template_src, ctx, pass_label, max_fixes=50):
             if lineno and 1 <= lineno <= len(lines):
                 bad_line = lines[lineno - 1]
                 lines[lineno - 1] = bad_line.replace('{{', '&#123;&#123;').replace('}}', '&#125;&#125;').replace('{%', '&#123;&#37;').replace('%}', '&#37;&#125;')
-                current_src = '\n'.join(lines)
+                current_src = '\\n'.join(lines)
                 continue
             break
         except Exception as e:
