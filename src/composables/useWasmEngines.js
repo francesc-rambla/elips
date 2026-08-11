@@ -718,6 +718,31 @@ class TrackedValue:
     def __html__(self):
         return str(self)
 
+    def __getattr__(self, name):
+        if name.startswith('_') or name in ('val', 'enable_links', 'get', 'keys', 'items', 'values'):
+            raise AttributeError(name)
+        if name in ('value', 'val'):
+            return TrackedValue(self.val, f"{self._path}.{name}" if self._path else name, self.enable_links)
+        
+        # On-the-fly Foreign Key lookup: search global doc for matching row
+        if hasattr(self, '_doc_ref') and isinstance(self._doc_ref, dict) and self.val not in (None, ''):
+            val_str = str(self.val)
+            for sheet_name, sheet_data in self._doc_ref.items():
+                if isinstance(sheet_data, list):
+                    for row in sheet_data:
+                        if isinstance(row, dict):
+                            if any(str(v) == val_str for k_v, v in row.items() if not k_v.startswith('_')):
+                                if name in row:
+                                    return _wrap_tracked(row[name], f"{self._path}.{name}" if self._path else name, self.enable_links, doc_ref=self._doc_ref)
+        
+        return Placeholder(f"{self._path}.{name}" if self._path else name)
+
+    def __getitem__(self, item):
+        try:
+            return self.__getattr__(str(item))
+        except AttributeError:
+            return Placeholder(f"{self._path}.{item}" if self._path else str(item))
+
     def __bool__(self):
         return bool(self.val)
 
@@ -1727,8 +1752,15 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
                 elif isinstance(item, dict):
                     for k, v in list(item.items()):
                         meta_key = f"{group_name}.{k}"
-                        if meta_key in fk_map and v is not None and v != '' and not isinstance(v, (dict, list)):
+                        meta = None
+                        if meta_key in fk_map:
                             meta = fk_map[meta_key]
+                        else:
+                            for fk_k, fk_m in fk_map.items():
+                                if fk_k.endswith(f".{k}") or fk_k == k or (isinstance(fk_m, dict) and fk_m.get('element') == k):
+                                    meta = fk_m
+                                    break
+                        if meta and v is not None and v != '' and not isinstance(v, (dict, list)):
                             tbl = _resolve_table(meta.get('vectorPath'))
                             if tbl and isinstance(tbl, list):
                                 v_field = str(meta.get('valueField', ''))
