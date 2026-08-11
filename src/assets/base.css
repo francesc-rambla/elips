@@ -884,13 +884,16 @@ input[type="text"]:focus, select:focus, textarea:focus {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
-  height: 520px;
+  height: 100%;
+  min-height: 0;
+  flex: 1;
 }
 
 @media (max-width: 900px) {
   .preview-container {
     grid-template-columns: 1fr;
     height: auto;
+    overflow-y: auto;
   }
 }
 
@@ -899,6 +902,7 @@ input[type="text"]:focus, select:focus, textarea:focus {
   border-radius: var(--radius-sm);
   background-color: var(--bg-card);
   height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -917,6 +921,8 @@ input[type="text"]:focus, select:focus, textarea:focus {
 
 .preview-body {
   flex: 1;
+  height: 100%;
+  min-height: 0;
   padding: 1.5rem;
   overflow-y: auto;
   font-size: 0.95rem;
@@ -1010,6 +1016,8 @@ input[type="text"]:focus, select:focus, textarea:focus {
 .raw-textarea {
   width: 100%;
   height: 100%;
+  flex: 1;
+  min-height: 0;
   border: none;
   resize: none;
   font-family: var(--font-mono);
@@ -1018,6 +1026,7 @@ input[type="text"]:focus, select:focus, textarea:focus {
   background-color: var(--bg-card);
   color: var(--text-primary);
   outline: none;
+  overflow-y: auto;
 }
 
 /* Logging & Issues Styles */
