@@ -2015,7 +2015,7 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
       const fileName = store.excelFileName || `${pName}.xlsx`;
       store.excelFileName = fileName;
       store.excelFile = new File([excelBytes], fileName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      await saveBinaryFile(`${pName}:excelFileBuffer`, excelBytes.buffer);
+    await saveBinaryFile(`${pName}:excelFileBuffer`, excelBytes.buffer);
     } catch (e) {
       console.warn("Error desant el fitxer Excel a IndexedDB:", e);
     }
@@ -2023,38 +2023,78 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     return new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   };
 
-  const evaluateCustomFormula = (formulaStr, row) => {
-    if (!formulaStr || typeof formulaStr !== 'string' || !row) return 0;
-
+  const evaluateCustomFormula = (formulaStr, row, globalData = null) => {
+    if (!formulaStr || typeof formulaStr !== 'string') return 0;
     try {
       let expr = formulaStr.trim();
-      if (!expr) return 0;
 
-      // Safe, non-infinite parser for SI(...) / IF(...) function calls into JavaScript ternary operators
-      const transformIf = (s) => {
-        let str = s;
-        let maxPasses = 30;
-        while (maxPasses-- > 0) {
-          const match = str.match(/(?:SI|IF)\s*\(([^()]+)\)/i);
+      // 1. Transform SI(...) or IF(...) into JS ternary operators
+      const transformIf = (str) => {
+        let prev = '';
+        while (prev !== str) {
+          prev = str;
+          const regex = /\b(SI|IF)\s*\(/i;
+          const match = regex.exec(str);
           if (!match) break;
 
-          const fullMatch = match[0];
-          const innerContent = match[1];
-
-          let parts = [];
-          let current = '';
+          const startIdx = match.index;
+          const openParenIdx = startIdx + match[0].length - 1;
+          let depth = 1;
+          let endIdx = -1;
           let inQuotes = false;
-          for (let i = 0; i < innerContent.length; i++) {
-            const ch = innerContent[i];
-            if (ch === '"') inQuotes = !inQuotes;
-            if ((ch === ';' || ch === ',') && !inQuotes) {
-              parts.push(current);
+          let quoteChar = '';
+
+          for (let i = openParenIdx + 1; i < str.length; i++) {
+            const ch = str[i];
+            if (inQuotes) {
+              if (ch === quoteChar) inQuotes = false;
+            } else if (ch === '"' || ch === "'") {
+              inQuotes = true;
+              quoteChar = ch;
+            } else if (ch === '(') {
+              depth++;
+            } else if (ch === ')') {
+              depth--;
+              if (depth === 0) {
+                endIdx = i;
+                break;
+              }
+            }
+          }
+
+          if (endIdx === -1) break;
+
+          const fullMatch = str.substring(startIdx, endIdx + 1);
+          const argsStr = str.substring(openParenIdx + 1, endIdx);
+
+          const parts = [];
+          let current = '';
+          depth = 0;
+          inQuotes = false;
+
+          for (let i = 0; i < argsStr.length; i++) {
+            const ch = argsStr[i];
+            if (inQuotes) {
+              if (ch === quoteChar) inQuotes = false;
+              current += ch;
+            } else if (ch === '"' || ch === "'") {
+              inQuotes = true;
+              quoteChar = ch;
+              current += ch;
+            } else if (ch === '(') {
+              depth++;
+              current += ch;
+            } else if (ch === ')') {
+              depth--;
+              current += ch;
+            } else if ((ch === ';' || ch === ',') && depth === 0) {
+              parts.push(current.trim());
               current = '';
             } else {
               current += ch;
             }
           }
-          parts.push(current);
+          parts.push(current.trim());
 
           if (parts.length >= 3) {
             const cond = parts[0];
@@ -2069,35 +2109,189 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         return str;
       };
 
-      expr = transformIf(expr);
+      // 2. Transform ARRODONEIX(...) / ROUND(...) into __round(...)
+      const transformRound = (str) => {
+        let prev = '';
+        while (prev !== str) {
+          prev = str;
+          const regex = /\b(ARRODONEIX|ROUND)\s*\(/i;
+          const match = regex.exec(str);
+          if (!match) break;
 
-      // Operator normalizations
+          const startIdx = match.index;
+          const openParenIdx = startIdx + match[0].length - 1;
+          let depth = 1;
+          let endIdx = -1;
+          let inQuotes = false;
+          let quoteChar = '';
+
+          for (let i = openParenIdx + 1; i < str.length; i++) {
+            const ch = str[i];
+            if (inQuotes) {
+              if (ch === quoteChar) inQuotes = false;
+            } else if (ch === '"' || ch === "'") {
+              inQuotes = true;
+              quoteChar = ch;
+            } else if (ch === '(') {
+              depth++;
+            } else if (ch === ')') {
+              depth--;
+              if (depth === 0) {
+                endIdx = i;
+                break;
+              }
+            }
+          }
+
+          if (endIdx === -1) break;
+
+          const fullMatch = str.substring(startIdx, endIdx + 1);
+          const argsStr = str.substring(openParenIdx + 1, endIdx);
+
+          const parts = [];
+          let current = '';
+          depth = 0;
+          inQuotes = false;
+
+          for (let i = 0; i < argsStr.length; i++) {
+            const ch = argsStr[i];
+            if (inQuotes) {
+              if (ch === quoteChar) inQuotes = false;
+              current += ch;
+            } else if (ch === '"' || ch === "'") {
+              inQuotes = true;
+              quoteChar = ch;
+              current += ch;
+            } else if (ch === '(') {
+              depth++;
+              current += ch;
+            } else if (ch === ')') {
+              depth--;
+              current += ch;
+            } else if ((ch === ';' || ch === ',') && depth === 0) {
+              parts.push(current.trim());
+              current = '';
+            } else {
+              current += ch;
+            }
+          }
+          parts.push(current.trim());
+
+          const valExpr = parts[0] || '0';
+          const precExpr = parts[1] !== undefined ? parts[1] : '0';
+          const roundCall = `__round(${valExpr}, ${precExpr})`;
+          str = str.replace(fullMatch, roundCall);
+        }
+        return str;
+      };
+
+      expr = transformIf(expr);
+      expr = transformRound(expr);
+
+      // 3. Math replacements
+      expr = expr.replace(/\bABS\s*\(/gi, 'Math.abs(');
       expr = expr.replace(/(^|[^<>=!])=([^=])/g, '$1==$2');
       expr = expr.replace(/<>/g, '!=');
       expr = expr.replace(/\^/g, '**');
 
-      // Sort keys descending by length so longer variable names match first
-      const keys = Object.keys(row).sort((a, b) => b.length - a.length);
-      keys.forEach(key => {
-        if (key === '_hierarchy_schema' || key === 'editor_metadata' || key === '_sheet_info') return;
-        const rawVal = row[key];
-        let valNum = 0;
-        if (typeof rawVal === 'number') {
-          valNum = rawVal;
-        } else if (typeof rawVal === 'string' && rawVal.trim() !== '') {
+      // 4. Value Resolution Context Helper
+      const parseNumOrString = (rawVal) => {
+        if (typeof rawVal === 'number') return rawVal;
+        if (typeof rawVal === 'boolean') return rawVal;
+        if (typeof rawVal === 'string') {
+          if (rawVal.trim() === '') return 0;
           const parsed = parseFloat(rawVal.replace(',', '.'));
-          valNum = isNaN(parsed) ? `"${rawVal.replace(/"/g, '\\"')}"` : parsed;
-        } else if (typeof rawVal === 'boolean') {
-          valNum = rawVal;
+          return isNaN(parsed) ? `"${rawVal.replace(/"/g, '\\"')}"` : parsed;
         }
+        return 0;
+      };
 
-        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const varRegex = new RegExp(`\\b${escapedKey}\\b`, 'g');
-        expr = expr.replace(varRegex, typeof valNum === 'string' ? valNum : `(${valNum})`);
+      const getNestedValue = (obj, parts) => {
+        let current = obj;
+        for (let i = 0; i < parts.length; i++) {
+          if (current === undefined || current === null) return undefined;
+          const part = parts[i];
+
+          const arrayMatch = part.match(/^([a-zA-Z0-9_]+)\[(\d+)\]$/);
+          if (arrayMatch) {
+            const arrKey = arrayMatch[1];
+            const index = parseInt(arrayMatch[2], 10);
+            current = current[arrKey];
+            if (Array.isArray(current)) {
+              current = current[index];
+            } else {
+              return undefined;
+            }
+          } else if (Array.isArray(current)) {
+            const prop = part;
+            const nums = current.map(item => item ? parseFloat(item[prop]) : NaN).filter(n => !isNaN(n));
+            return nums.length > 0 ? nums.reduce((a, b) => a + b, 0) : 0;
+          } else if (typeof current === 'object') {
+            current = current[part];
+          } else {
+            return undefined;
+          }
+        }
+        return current;
+      };
+
+      const resolveValue = (pathStr) => {
+        if (!pathStr) return undefined;
+        if (row && row[pathStr] !== undefined) {
+          return parseNumOrString(row[pathStr]);
+        }
+        let cleanPath = pathStr.replace(/^(doc|dades)\./i, '');
+        const pathParts = cleanPath.split('.').filter(Boolean);
+
+        let val = getNestedValue(row, pathParts);
+        if (val !== undefined) return parseNumOrString(val);
+
+        const gData = globalData || store.excelJsonData;
+        if (gData) {
+          val = getNestedValue(gData, pathParts);
+          if (val === undefined && pathParts.length > 0) {
+            const prefixedParts = ['OUT_' + pathParts[0], ...pathParts.slice(1)];
+            val = getNestedValue(gData, prefixedParts);
+          }
+          if (val !== undefined) return parseNumOrString(val);
+        }
+        return undefined;
+      };
+
+      // 5. Extract and replace all tokens/paths in formula
+      const tokenRegex = /\b(?:[a-zA-Z_][a-zA-Z0-9_]*|doc\.[a-zA-Z0-9_.]+|dades\.[a-zA-Z0-9_.]+)(?:\[\d+\])?(?:\.[a-zA-Z_][a-zA-Z0-9_.]*(?:\[\d+\])?)*\b/g;
+      const reservedKeywords = new Set([
+        'SI', 'IF', 'ARRODONEIX', 'ROUND', 'ABS', 'MIN', 'MAX', 'Math', '__round',
+        'true', 'false', 'null', 'undefined', 'doc', 'dades', 'return', 'function'
+      ]);
+
+      const foundTokens = new Set();
+      let match;
+      while ((match = tokenRegex.exec(expr)) !== null) {
+        const t = match[0];
+        if (!reservedKeywords.has(t) && !reservedKeywords.has(t.toUpperCase())) {
+          foundTokens.add(t);
+        }
+      }
+
+      const sortedTokens = Array.from(foundTokens).sort((a, b) => b.length - a.length);
+
+      sortedTokens.forEach(t => {
+        const resolvedVal = resolveValue(t);
+        if (resolvedVal !== undefined) {
+          const escapedToken = t.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+          const varRegex = new RegExp(`\\b${escapedToken}\\b`, 'g');
+          expr = expr.replace(varRegex, typeof resolvedVal === 'string' ? resolvedVal : `(${resolvedVal})`);
+        }
       });
 
-      const safeEval = new Function(`"use strict"; return (${expr});`);
-      const result = safeEval();
+      const safeEval = new Function('__round', `"use strict"; return (${expr});`);
+      const __round = (val, prec = 0) => {
+        const p = Math.pow(10, prec);
+        return Math.round(parseFloat(val) * p) / p;
+      };
+
+      const result = safeEval(__round);
 
       if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
         return Math.round(result * 100) / 100;
@@ -2143,7 +2337,7 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
       // Evaluate CUSTOM formulas for this node
       customMetas.forEach(meta => {
         if (!meta.group || meta.group === groupHint || (meta.element in container)) {
-          const calculatedVal = evaluateCustomFormula(meta.calcFormula, container);
+          const calculatedVal = evaluateCustomFormula(meta.calcFormula, container, data);
           if (container[meta.element] !== calculatedVal) {
             container[meta.element] = calculatedVal;
           }

@@ -145,20 +145,25 @@ Permet calcular el total d'una columna de la sub-taula fill des del nivell pare:
 - **Columna**: `import_activitat`
 
 #### B. Fórmules personalitzades de fila (`CUSTOM`)
-Permet calcular valors a la mateixa fila utilitzant una expressió matemàtica completa.
+Permet calcular valors utilitzant expressions matemàtiques avançades amb accés a tot el model de dades:
+
+1. **Accés a rutes globals del model de dades (Sintaxi Jinja2)**:
+   - Es pot fer referència a qualsevol camp del model global escrivint la ruta puntuada (ex: `pres.pbl`, `doc.pres.pbl`, `general.pbl`, `parts[0].import` o `parts.import`).
+2. **Funcions matemàtiques i condicionals incloses**:
+   - `SI(condició; expressió_cert; expressió_fals)` / `IF(...)`: Condicional lògic.
+   - `ARRODONEIX(valor; prec=0)` / `ROUND(valor; prec=0)`: Arrodoneix un valor numèric al nombre de decimals indicat (per defecte 0).
+   - `ABS(valor)`: Retorna el valor absolut d'un número.
+   - `MIN(a; b)` / `MAX(a; b)`: Retorna el valor mínim o màxim.
 
 Exemples de fórmules vàlides:
-- Multiplicació directa: `preu * unitats`
-- Operacions amb parèntesis i potències: `(superficie * 1.21) ^ 2`
-- Condicional `SI(...)` / `IF(...)`:
-  ```excel
-  SI(persones > 0; persones * unitats * preu; unitats * preu)
-  ```
+- `SI(pres.pbl > 100000; ARRODONEIX(pres.pbl * 0.21; 2); 0)`
+- `ARRODONEIX(preu * unitats; 2)`
+- `ABS(import_estimat - import_real)`
 
 #### ✏️ Editor ampliat de fórmules modal
 En seleccionar la funció `CUSTOM`, feu clic al botó **✏️ Amplia** per obrir l'editor ampliat de fórmules:
-- **Insígnies cliquejables**: Fent clic a qualsevol nom de camp (ex: `+ unitats`, `+ preu`), s'insereix automàticament a la posició del cursor.
-- **Botons d'operadors**: Botons ràpids per a `+`, `-`, `*`, `/`, `%`, `^`, `( )` i plantilla `SI(condició; cert; fals)`.
+- **Insígnies de camps locals i rutes globals Jinja2**: Cliqueu qualsevol insígnia local (`+ unitats`, `+ preu`) o global (`+ pres.pbl`, `+ pres.iva`) per inserir-la directament a la posició del cursor.
+- **Botons d'operadors i funcions ràpides**: Botons d'accés directe per a `+`, `-`, `*`, `/`, `%`, `^`, `( )`, `SI(...)`, `ARRODONEIX(...)` i `ABS(...)`.
 
 ---
 

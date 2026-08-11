@@ -830,12 +830,37 @@ const isFormulaModalOpen = ref(false);
 const editingFormulaItem = ref(null);
 const formulaTextBuffer = ref('');
 const availableFormulaFields = ref([]);
+const globalFormulaPaths = ref([]);
 const formulaTextareaRef = ref(null);
+
+const getGlobalFormulaPaths = () => {
+  if (!store.excelJsonData) return [];
+  const paths = [];
+  Object.keys(store.excelJsonData).forEach(groupKey => {
+    if (groupKey === 'editor_metadata' || groupKey === '_hierarchy_schema' || groupKey === '_sheet_info') return;
+    const groupData = store.excelJsonData[groupKey];
+    if (Array.isArray(groupData) && groupData.length > 0 && typeof groupData[0] === 'object') {
+      Object.keys(groupData[0]).forEach(field => {
+        if (field !== '_hierarchy_schema' && isPrimitive(groupData[0][field])) {
+          paths.push(`${groupKey}.${field}`);
+        }
+      });
+    } else if (typeof groupData === 'object' && !Array.isArray(groupData)) {
+      Object.keys(groupData).forEach(field => {
+        if (field !== '_hierarchy_schema' && isPrimitive(groupData[field])) {
+          paths.push(`${groupKey}.${field}`);
+        }
+      });
+    }
+  });
+  return paths;
+};
 
 const openFormulaModal = (item, fields) => {
   editingFormulaItem.value = item;
   formulaTextBuffer.value = item.calcFormula || '';
   availableFormulaFields.value = (fields || []).filter(f => f !== item.element);
+  globalFormulaPaths.value = getGlobalFormulaPaths();
   isFormulaModalOpen.value = true;
 };
 
@@ -1926,6 +1951,24 @@ onMounted(() => {
             </div>
           </div>
 
+          <!-- Global Model Paths Badges (Jinja2 syntax) -->
+          <div v-if="globalFormulaPaths.length > 0">
+            <span style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Rutes globals del model de dades (Jinja2):</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px; max-height: 80px; overflow-y: auto;">
+              <button 
+                v-for="gPath in globalFormulaPaths" 
+                :key="gPath" 
+                type="button" 
+                class="btn btn-secondary" 
+                style="padding: 2px 7px; font-size: 0.73rem; font-family: var(--font-mono); width: auto; border: 1px dashed var(--color-primary); color: var(--color-primary);"
+                @click="insertTokenIntoFormula(gPath)"
+                :title="'Insereix la ruta global ' + gPath"
+              >
+                + {{ gPath }}
+              </button>
+            </div>
+          </div>
+
           <!-- Quick Operators & Functions -->
           <div>
             <span style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Operadors i Funcions:</span>
@@ -1938,7 +1981,9 @@ onMounted(() => {
               <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' ^ ')">^</button>
               <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' ( ')">(</button>
               <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' ) ')">)</button>
-              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto; font-weight: bold; color: var(--color-primary);" @click="insertTokenIntoFormula('SI(condició; expressió_cert; expressió_fals)')">SI(condició; cert; fals)</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto; font-weight: bold; color: var(--color-primary);" @click="insertTokenIntoFormula('SI(condició; cert; fals)')">SI(condició; cert; fals)</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto; font-weight: bold; color: var(--color-primary);" @click="insertTokenIntoFormula('ARRODONEIX(valor; 2)')">ARRODONEIX(valor; prec)</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto; font-weight: bold; color: var(--color-primary);" @click="insertTokenIntoFormula('ABS(valor)')">ABS(valor)</button>
             </div>
           </div>
 
