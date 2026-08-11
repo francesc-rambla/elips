@@ -692,6 +692,22 @@ const deleteTabularColumn = (colName) => {
 const isConfigModalOpen = ref(false);
 const activeConfigGroup = ref('');
 const groupConfigList = ref([]);
+const groupLabelInput = ref('');
+
+const getGroupLabel = (groupName) => {
+  if (!groupName) return '';
+  if (store.editorMetadata) {
+    const meta = store.editorMetadata.find(m => 
+      (m.group === groupName || m.group === groupName.split('.').pop()) && 
+      (m.element === '_group_label' || m.element === '_group' || m.isGroupHeader) && 
+      m.label && m.label.trim()
+    );
+    if (meta) {
+      return meta.label.trim();
+    }
+  }
+  return groupName;
+};
 
 const getFieldLabel = (groupName, elementName) => {
   const meta = getElementMetadata(groupName, elementName);
@@ -849,6 +865,9 @@ const saveFormulaModal = () => {
 
 const openGroupConfig = (groupName, sheetData) => {
   activeConfigGroup.value = groupName;
+  const currentGroupLabel = getGroupLabel(groupName);
+  groupLabelInput.value = currentGroupLabel !== groupName ? currentGroupLabel : '';
+
   const isKv = getSheetType(sheetData) === 'kv';
   const elements = isKv ? Object.keys(sheetData) : (sheetData.length > 0 ? Object.keys(sheetData[0]) : []);
   
@@ -924,7 +943,18 @@ const saveGroupConfig = () => {
   // Clear old metadata for this group
   store.editorMetadata = store.editorMetadata.filter(m => m.group !== groupName);
   
-  // Add new
+  // Save group label if specified
+  if (groupLabelInput.value && groupLabelInput.value.trim()) {
+    store.editorMetadata.push({
+      group: groupName,
+      element: '_group_label',
+      isGroupHeader: true,
+      type: 'Group',
+      label: groupLabelInput.value.trim()
+    });
+  }
+  
+  // Add new field metadata
   groupConfigList.value.forEach(item => {
     const meta = {
       group: groupName,
@@ -1131,7 +1161,13 @@ onMounted(() => {
         >
           <div class="accordion-header-left">
             <span class="accordion-badge" :class="getSheetType(sheetData)">{{ getSheetType(sheetData) }}</span>
-            <span>{{ name }}</span>
+            <span 
+              style="font-weight: 600;"
+              :style="{ cursor: getGroupLabel(name) !== name ? 'help' : 'default' }"
+              :title="getGroupLabel(name) !== name ? 'Clau de grup: ' + name : undefined"
+            >
+              {{ getGroupLabel(name) }}
+            </span>
             <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal;">({{ getRowsCount(sheetData) }} files/tuples)</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
@@ -1153,7 +1189,12 @@ onMounted(() => {
             <div v-if="viewMode === 'compact'" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.4rem;">
               <h4 style="margin: 0; font-size: 0.95rem; color: var(--text-primary); font-weight: 700; display: flex; align-items: center; gap: 6px;">
                 <span class="accordion-badge" :class="getSheetType(sheetData)">{{ getSheetType(sheetData) }}</span>
-                {{ name }}
+                <span 
+                  :style="{ cursor: getGroupLabel(name) !== name ? 'help' : 'default' }"
+                  :title="getGroupLabel(name) !== name ? 'Clau de grup: ' + name : undefined"
+                >
+                  {{ getGroupLabel(name) }}
+                </span>
               </h4>
               <button 
                 class="btn btn-secondary" 
@@ -1551,11 +1592,36 @@ onMounted(() => {
     <div class="modal-overlay" :style="{ display: isConfigModalOpen ? 'flex' : 'none' }">
       <div class="modal-content" style="max-width: 820px; width: 95%; max-height: 85vh; display: flex; flex-direction: column;">
         <div class="modal-header">
-          <h3 style="border: none; padding-bottom: 0; margin: 0;">Configura Tipus: {{ activeConfigGroup }}</h3>
+          <h3 style="border: none; padding-bottom: 0; margin: 0;">
+            Configuració del Grup: 
+            <span 
+              style="color: var(--color-primary);"
+              :style="{ cursor: getGroupLabel(activeConfigGroup) !== activeConfigGroup ? 'help' : 'default' }"
+              :title="getGroupLabel(activeConfigGroup) !== activeConfigGroup ? 'Clau de grup: ' + activeConfigGroup : undefined"
+            >
+              {{ getGroupLabel(activeConfigGroup) }}
+            </span>
+          </h3>
           <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem;" @click="isConfigModalOpen = false">&times;</button>
         </div>
         
         <div class="modal-body" style="flex-grow: 1; overflow-y: auto; padding: 1rem 0;">
+          <!-- Etiqueta del grup / full (Label) -->
+          <div style="background: var(--bg-card); padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 8px; flex-grow: 1;">
+              <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); white-space: nowrap;">Etiqueta al formulari per al grup/full:</span>
+              <input 
+                type="text" 
+                v-model="groupLabelInput" 
+                class="data-input" 
+                placeholder="ex: Pressupost, Partides, Activitats..." 
+                style="max-width: 320px; height: 32px; font-size: 0.85rem; flex-grow: 1;"
+              />
+            </div>
+            <span style="font-size: 0.75rem; color: var(--text-muted);">
+              (Nom visible a l'aplicació per al grup '{{ activeConfigGroup }}')
+            </span>
+          </div>
           <table class="inspector-table" style="width: 100%;">
             <thead>
               <tr>

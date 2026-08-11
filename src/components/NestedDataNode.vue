@@ -362,6 +362,23 @@ const groupLayout = computed(() => {
   return meta ? meta.groupLayout : 'vertical';
 });
 
+const groupLabelInput = ref('');
+
+const getGroupLabel = (groupName) => {
+  if (!groupName) return '';
+  if (store.editorMetadata) {
+    const meta = store.editorMetadata.find(m => 
+      (m.group === groupName || m.group === groupName.split('.').pop() || m.group === fullPath.value) && 
+      (m.element === '_group_label' || m.element === '_group' || m.isGroupHeader) && 
+      m.label && m.label.trim()
+    );
+    if (meta) {
+      return meta.label.trim();
+    }
+  }
+  return groupName;
+};
+
 // Metadata & Custom Data Type Config Helpers
 const getElementMetadata = (elementName) => {
   if (!store.editorMetadata) return null;
@@ -569,6 +586,9 @@ const saveFormulaModal = () => {
 
 const openGroupConfig = () => {
   selectedLayout.value = groupLayout.value;
+  const currentLabel = getGroupLabel(props.arrayKey);
+  groupLabelInput.value = currentLabel !== props.arrayKey ? currentLabel : '';
+
   const elements = effectiveFields.value;
   groupConfigList.value = elements.map(el => {
     const meta = getElementMetadata(el) || { type: 'Text' };
@@ -632,12 +652,17 @@ const addNewFieldToConfig = () => {
 const saveGroupConfig = () => {
   store.editorMetadata = store.editorMetadata.filter(m => m.group !== props.arrayKey);
   
-  // Save group layout header
-  store.editorMetadata.push({
+  // Save group layout & label header
+  const groupMeta = {
     group: props.arrayKey,
+    element: '_group_label',
     isGroupHeader: true,
     groupLayout: selectedLayout.value
-  });
+  };
+  if (groupLabelInput.value && groupLabelInput.value.trim()) {
+    groupMeta.label = groupLabelInput.value.trim();
+  }
+  store.editorMetadata.push(groupMeta);
   
   // Save field config items
   groupConfigList.value.forEach(item => {
@@ -1044,7 +1069,14 @@ const getItemPath = (idx, fieldKey) => {
           <!-- Card Header -->
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem; padding-bottom: 0.2rem; border-bottom: 1px dashed var(--border-color);">
             <span style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary);">
-              #{{ idx + 1 }} {{ arrayKey }}: <strong>{{ getItemLabel(item, `Element #${idx + 1}`) }}</strong>
+              #{{ idx + 1 }} 
+              <span 
+                :style="{ cursor: getGroupLabel(arrayKey) !== arrayKey ? 'help' : 'default' }"
+                :title="getGroupLabel(arrayKey) !== arrayKey ? 'Clau de grup: ' + arrayKey : undefined"
+              >
+                {{ getGroupLabel(arrayKey) }}
+              </span>: 
+              <strong>{{ getItemLabel(item, `Element #${idx + 1}`) }}</strong>
             </span>
             <div style="display: flex; align-items: center; gap: 4px;">
               <button 
@@ -1361,12 +1393,29 @@ const getItemPath = (idx, fieldKey) => {
         <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
           <h3 style="border: none; padding-bottom: 0; margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 6px;">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-            <span>Configuració de tipus de dades per al grup: <strong style="color: var(--color-primary);">{{ arrayKey }}</strong></span>
+            <span>Configuració del grup: <strong style="color: var(--color-primary);" :title="getGroupLabel(arrayKey) !== arrayKey ? 'Clau de grup: ' + arrayKey : undefined">{{ getGroupLabel(arrayKey) }}</strong></span>
           </h3>
           <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isConfigModalOpen = false">&times;</button>
         </div>
         
         <div class="modal-body" style="flex-grow: 1; overflow-y: auto; padding: 1rem 0;">
+          <!-- Etiqueta del grup / full (Label) -->
+          <div style="background: var(--bg-card); padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 8px; flex-grow: 1;">
+              <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); white-space: nowrap;">Etiqueta al formulari per al grup/full:</span>
+              <input 
+                type="text" 
+                v-model="groupLabelInput" 
+                class="data-input" 
+                placeholder="ex: Pressupost, Partides, Activitats..." 
+                style="max-width: 320px; height: 32px; font-size: 0.85rem; flex-grow: 1;"
+              />
+            </div>
+            <span style="font-size: 0.75rem; color: var(--text-muted);">
+              (Nom visible a l'aplicació per al grup '{{ arrayKey }}')
+            </span>
+          </div>
+
           <!-- Layout selector option (Vertical KV vs Horizontal Grid) -->
           <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 1rem; flex-wrap: wrap; gap: 8px;">
             <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">Disposició visual dels camps de formulari:</span>
