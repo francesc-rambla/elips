@@ -993,6 +993,31 @@ def render_with_recovery(env, template_src, ctx, pass_label, max_fixes=50):
             else:
                 ctx[keypath] = _placeholder(keypath)
             continue
+        except TemplateSyntaxError as e:
+            lineno = getattr(e, 'lineno', None)
+            msg = str(e)
+            lines = current_src.splitlines()
+            issues.append({
+                'pass': pass_label,
+                'line': lineno,
+                'key': 'syntax_error',
+                'message': f"Sintaxi Jinja2 no vàlida a la línia {lineno}: '{msg}'. S'ha corregit automàticament."
+            })
+            if lineno and 1 <= lineno <= len(lines):
+                bad_line = lines[lineno - 1]
+                lines[lineno - 1] = bad_line.replace('{{', '&#123;&#123;').replace('}}', '&#125;&#125;').replace('{%', '&#123;&#37;').replace('%}', '&#37;&#125;')
+                current_src = '\n'.join(lines)
+                continue
+            break
+        except Exception as e:
+            msg = str(e)
+            issues.append({
+                'pass': pass_label,
+                'line': 0,
+                'key': 'render_error',
+                'message': f"Error de renderitzat ({pass_label}): {msg}"
+            })
+            break
 
     # Fallback to non-strict environment if recovery loop gets stuck
     env_lax = Environment(undefined=DebugUndefined, autoescape=False, trim_blocks=False, lstrip_blocks=False)
@@ -1737,6 +1762,9 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
 
         with open(template_path, 'r', encoding='utf-8') as f:
             tpl_src = f.read()
+
+        # Clean non-breaking spaces (\u00a0) that might be attached to Jinja2 tags
+        tpl_src = tpl_src.replace('\u00a0', ' ')
 
         def _normalize_markdown_headings(text):
             if not text:
