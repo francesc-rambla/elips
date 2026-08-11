@@ -99,12 +99,21 @@ Per recórrer taules aniuades (`parts -> activitats -> costs`):
 {% endfor %}
 ```
 
-#### C. Filtres de format disponibles
+#### C. Filtres de format i manipulació de llistes disponibles
 elips incorpora filtres d'alta precisió en català/espanyol:
 - `{{ valor | format_currency }}` ➔ Formata com a moneda (ex: `12.345,67 €`).
 - `{{ valor | format_number(2) }}` ➔ Formata amb milers i decimals (ex: `1.234,56`).
 - `{{ data | date('%d/%m/%Y') }}` ➔ Formata dates.
 - `{{ text | upper }}` / `{{ text | lower }}` ➔ Majúscules / minúscules.
+
+##### Filtres de llista (`sort` i `filter` / `where`):
+- **Ordenació (`sort`)**:
+  - `llista | sort` ➔ Ordena la llista en ordre ascendent per la primera columna.
+  - `llista | sort("columna")` ➔ Ordena en ordre ascendent per `"columna"`.
+  - `llista | sort("-columna")` ➔ Ordena en ordre descendent per `"columna"` (prefix `-`).
+  - `llista | sort(["columna1", "-columna2"])` ➔ Ordena per múltiples columnes (ascendent per `"columna1"` i descendent per `"columna2"`).
+- **Filtratge (`filter` / `where`)**:
+  - `llista | filter({ "columna1": "valor1" })` ➔ Retorna només els elements on `"columna1"` sigui igual a `"valor1"`. Si el diccionari conté més claus (ex: `{ "columna1": "v1", "columna2": "v2" }`), filtra aplicant totes les condicions.
 
 ---
 

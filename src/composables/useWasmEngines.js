@@ -1572,6 +1572,160 @@ def filter_prefix(value, fallback, elided):
             res = f"{pfx} {s}"
     return _wrap_res(res, orig_path, enable_links)
 
+class _DescKey:
+    def __init__(self, obj):
+        self.obj = obj
+    def __lt__(self, other):
+        return self.obj > other.obj
+    def __gt__(self, other):
+        return self.obj < other.obj
+    def __eq__(self, other):
+        return self.obj == other.obj
+    def __le__(self, other):
+        return self.obj >= other.obj
+    def __ge__(self, other):
+        return self.obj <= other.obj
+
+def filter_sort(value, by=None, reverse=False, attribute=None, case_sensitive=False):
+    if attribute and not by:
+        by = attribute
+
+    if value in (None, ''):
+        return []
+
+    orig_path = getattr(value, '_path', None)
+    enable_links = getattr(value, 'enable_links', True)
+
+    if isinstance(value, (list, tuple)):
+        lst = list(value)
+    else:
+        return value
+
+    if not lst:
+        return lst
+
+    if by is None or by == '' or by == []:
+        first_item = lst[0]
+        if isinstance(first_item, dict) and len(first_item) > 0:
+            keys = [k for k in first_item.keys() if not str(k).startswith('_')]
+            if keys:
+                by = [keys[0]]
+            else:
+                by = []
+        else:
+            def _scalar_key(item):
+                v = item.val if hasattr(item, 'val') else item
+                if v is None:
+                    return (1, '')
+                return (0, v)
+            sorted_lst = sorted(lst, key=_scalar_key, reverse=reverse)
+            return _wrap_tracked(sorted_lst, orig_path, enable_links) if orig_path else sorted_lst
+
+    if isinstance(by, str):
+        keys_spec = [by]
+    elif isinstance(by, (list, tuple)):
+        keys_spec = list(by)
+    else:
+        keys_spec = [str(by)]
+
+    def _sort_key(item):
+        raw_item = item
+        keys_tuple = []
+        for spec in keys_spec:
+            spec_str = str(spec).strip()
+            desc = False
+            col_name = spec_str
+            if spec_str.startswith('-'):
+                desc = True
+                col_name = spec_str[1:].strip()
+            elif spec_str.startswith('+'):
+                col_name = spec_str[1:].strip()
+
+            val = None
+            if isinstance(raw_item, dict):
+                val = raw_item.get(col_name)
+            elif hasattr(raw_item, col_name):
+                val = getattr(raw_item, col_name)
+
+            if hasattr(val, 'val'):
+                val = val.val
+
+            if val is None:
+                sort_v = ''
+                type_rank = 2
+            elif isinstance(val, (int, float)):
+                sort_v = -float(val) if desc else float(val)
+                type_rank = 0
+            else:
+                s_v = str(val).lower() if not case_sensitive else str(val)
+                sort_v = _DescKey(s_v) if desc else s_v
+                type_rank = 1
+
+            keys_tuple.append((type_rank, sort_v))
+        return tuple(keys_tuple)
+
+    sorted_lst = sorted(lst, key=_sort_key, reverse=reverse)
+    return _wrap_tracked(sorted_lst, orig_path, enable_links) if orig_path else sorted_lst
+
+def filter_where(value, criteria=None, **kwargs):
+    if value in (None, ''):
+        return []
+
+    orig_path = getattr(value, '_path', None)
+    enable_links = getattr(value, 'enable_links', True)
+
+    if isinstance(value, (list, tuple)):
+        lst = list(value)
+    else:
+        return value
+
+    target_criteria = {}
+    if isinstance(criteria, dict):
+        target_criteria.update(criteria)
+    elif isinstance(criteria, str) and kwargs:
+        target_criteria[criteria] = list(kwargs.values())[0]
+    target_criteria.update(kwargs)
+
+    if not target_criteria:
+        res = [item for item in lst if item]
+        return _wrap_tracked(res, orig_path, enable_links) if orig_path else res
+
+    def _matches_item(item):
+        for col_name, req_val in target_criteria.items():
+            col_str = str(col_name).strip()
+            item_val = None
+            if isinstance(item, dict):
+                item_val = item.get(col_str)
+            elif hasattr(item, col_str):
+                item_val = getattr(item, col_str)
+
+            if hasattr(item_val, 'val'):
+                item_val = item_val.val
+
+            def _single_match(act, exp):
+                if exp is None:
+                    return act is None or act == ''
+                if act is None:
+                    return False
+                try:
+                    act_num = float(act)
+                    exp_num = float(exp)
+                    return act_num == exp_num
+                except (ValueError, TypeError):
+                    pass
+                return str(act).strip().lower() == str(exp).strip().lower()
+
+            if isinstance(req_val, (list, tuple, set)):
+                if not any(_single_match(item_val, rv) for rv in req_val):
+                    return False
+            else:
+                if not _single_match(item_val, req_val):
+                    return False
+        return True
+
+    res = [item for item in lst if _matches_item(item)]
+    return _wrap_tracked(res, orig_path, enable_links) if orig_path else res
+
 def render_json_text(excel_path, date_format='iso', strict=False):
     doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
     return json.dumps(doc, ensure_ascii=False, indent=2)
@@ -1821,6 +1975,9 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         env_clean.filters['number'] = filter_number
         env_clean.filters['words'] = filter_words
         env_clean.filters['prefix'] = filter_prefix
+        env_clean.filters['sort'] = filter_sort
+        env_clean.filters['filter'] = filter_where
+        env_clean.filters['where'] = filter_where
         env_clean.globals['TRUE'] = True
         env_clean.globals['FALSE'] = False
         env_clean.globals['true'] = True
@@ -1844,6 +2001,9 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         env_html.filters['number'] = filter_number
         env_html.filters['words'] = filter_words
         env_html.filters['prefix'] = filter_prefix
+        env_html.filters['sort'] = filter_sort
+        env_html.filters['filter'] = filter_where
+        env_html.filters['where'] = filter_where
         env_html.globals['TRUE'] = True
         env_html.globals['FALSE'] = False
         env_html.globals['true'] = True
