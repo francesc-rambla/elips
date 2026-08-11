@@ -1387,6 +1387,7 @@ onMounted(() => {
                         >
                         
                         <button 
+                          v-if="getElementType(name, col) !== 'Computed'"
                           class="btn-icon-only"
                           style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
                           title="Edició complexa en Markdown + Jinja2"
@@ -1450,14 +1451,6 @@ onMounted(() => {
                       {{ getFieldLabel(name, key) }}
                     </span>
                   </div>
-                  <button 
-                    class="btn-icon-only text-danger" 
-                    style="height: 20px; width: 20px; min-width: 20px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
-                    title="Elimina clau-valor"
-                    @click="deleteKvKey(name, key)"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                  </button>
                 </div>
 
                 <!-- Input Controls -->
@@ -1576,6 +1569,7 @@ onMounted(() => {
                     style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                   >
                   <button 
+                    v-if="getElementType(name, key) !== 'Computed'"
                     class="btn-icon-only"
                     style="height: 28px; width: 28px; min-width: 28px; font-size: 0.85rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
                     title="Edició complexa en Markdown + Jinja2"

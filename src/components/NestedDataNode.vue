@@ -1055,6 +1055,7 @@ const getItemPath = (idx, fieldKey) => {
                   />
 
                   <button 
+                    v-if="getElementType(h) !== 'Computed'"
                     type="button"
                     class="btn-icon-only"
                     style="height: 28px; width: 28px; min-width: 28px; font-size: 0.8rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
@@ -1291,6 +1292,7 @@ const getItemPath = (idx, fieldKey) => {
                 >
                 
                 <button 
+                  v-if="getElementType(fKey) !== 'Computed'"
                   type="button"
                   class="btn-icon-only"
                   style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
@@ -1411,6 +1413,7 @@ const getItemPath = (idx, fieldKey) => {
                 >
                 
                 <button 
+                  v-if="getElementType(fKey) !== 'Computed'"
                   type="button"
                   class="btn-icon-only"
                   style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"

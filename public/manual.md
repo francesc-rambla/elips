@@ -212,8 +212,11 @@ A la columna esquerra trobareu l'arbre de seccions de l'expedient:
 - **Camps generals (Clau-valor)**: Ompliu les dades del contracte a través de formularis ràpids amb etiquetes superiors.
 - **Sub-taules (Tabulars)**: Afegiu, reordeneu o elimineu rengleres de partides, activitats o costos amb els botons `+ Afegeix fila` i `Eliminar`.
 
-#### B. Identificació de camps calculats
-Els camps calculats (com import total, IVA, o aplicació de fórmules) estan protegits contra edició manual i s'identifiquen clarament amb la **icona monocromàtica de calculadora** i l'etiqueta `Calculat`. Aquests valors s'actualitzen automàticament al moment en què modifiqueu qualsevol camp precursor.
+#### B. Identificació i protecció de camps calculats
+Els camps calculats (com import total, IVA, o aplicació de fórmules) estan protegits contra edició manual i s'identifiquen clarament amb la **icona monocromàtica de calculadora** i l'etiqueta `Calculat`. Aquests valors s'actualitzen automàticament al moment en què modifiqueu qualsevol camp precursor. Per evitar confusions, la icona d'edició en llapis (✏️) s'amaga en aquests camps.
+
+#### C. Protecció contra eliminació d'estructures de dades
+Per prevenir errors accidentals d'eliminació de claus durant l'emplenat de dades, la icona de paperera (🗑️) per esborrar un camp o clau s'amaga de la vista principal del formulari i només és accessible des del modal de **⚙️ Configuració del Grup / Tipus de Dades**.
 
 ---
 
