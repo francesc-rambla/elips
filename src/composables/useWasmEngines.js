@@ -830,6 +830,15 @@ class TrackedDict(dict):
             return Placeholder(p)
         return super().get(key, default)
 
+    def __str__(self):
+        if '_default_val' in self:
+            val_str = str(self['_default_val'])
+            if getattr(self, 'enable_links', True) and getattr(self, '_path', ''):
+                clean_path = self._path.lstrip('.')
+                return f'<a href="#dades.{clean_path}" class="data-link" title="Anar a la dada: {clean_path}">{val_str}</a>'
+            return val_str
+        return super().__str__()
+
 class TrackedList(list):
     def __init__(self, lst, path, enable_links=True, visited=None):
         super().__init__()
@@ -1599,6 +1608,11 @@ class SafeDict(dict):
             return Placeholder(f"{self._path}.{key}" if self._path else str(key))
         return super().get(key, default)
 
+    def __str__(self):
+        if '_default_val' in self:
+            return str(self['_default_val'])
+        return super().__str__()
+
 def _wrap_safe(val, path='', visited=None):
     if visited is None:
         visited = set()
@@ -1639,6 +1653,79 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
                                         doc[k][sub_k] = sub_v
         except Exception:
             pass
+
+        def _hydrate_foreign_keys(doc_dict):
+            if not isinstance(doc_dict, dict) or 'editor_metadata' not in doc_dict:
+                return doc_dict
+            meta_list = doc_dict.get('editor_metadata', [])
+            if not isinstance(meta_list, list):
+                return doc_dict
+            fk_map = {}
+            for meta in meta_list:
+                if isinstance(meta, dict):
+                    m_type = str(meta.get('type', ''))
+                    m_src = str(meta.get('sourceType', ''))
+                    m_vec = str(meta.get('vectorPath', ''))
+                    grp = str(meta.get('group', ''))
+                    elem = str(meta.get('element', ''))
+                    if m_type == 'Select' and m_src == 'dynamic' and m_vec and grp and elem:
+                        fk_map[f"{grp}.{elem}"] = meta
+            if not fk_map:
+                return doc_dict
+
+            def _resolve_table(vec_path):
+                if not vec_path:
+                    return None
+                if vec_path in doc_dict and isinstance(doc_dict[vec_path], list):
+                    return doc_dict[vec_path]
+                if f"OUT_{vec_path}" in doc_dict and isinstance(doc_dict[f"OUT_{vec_path}"], list):
+                    return doc_dict[f"OUT_{vec_path}"]
+                parts = vec_path.replace('doc.', '').replace('dades.', '').split('.')
+                curr = doc_dict
+                for p in parts:
+                    if isinstance(curr, dict) and p in curr:
+                        curr = curr[p]
+                    else:
+                        return None
+                return curr if isinstance(curr, list) else None
+
+            def _process_item(group_name, item):
+                if isinstance(item, list):
+                    for row in item:
+                        _process_item(group_name, row)
+                elif isinstance(item, dict):
+                    for k, v in list(item.items()):
+                        meta_key = f"{group_name}.{k}"
+                        if meta_key in fk_map and v is not None and v != '' and not isinstance(v, (dict, list)):
+                            meta = fk_map[meta_key]
+                            tbl = _resolve_table(meta.get('vectorPath'))
+                            if tbl and isinstance(tbl, list):
+                                v_field = str(meta.get('valueField', ''))
+                                d_field = str(meta.get('displayField', ''))
+                                matched = None
+                                for target_row in tbl:
+                                    if isinstance(target_row, dict):
+                                        v_k = v_field if (v_field and v_field in target_row) else (list(target_row.keys())[0] if target_row else '')
+                                        d_k = d_field if (d_field and d_field in target_row) else v_k
+                                        target_val = str(target_row.get(v_k, ''))
+                                        target_disp = str(target_row.get(d_k, ''))
+                                        if target_val == str(v) or target_disp == str(v):
+                                            matched = target_row
+                                            break
+                                if matched:
+                                    hydrated = dict(matched)
+                                    hydrated['_default_val'] = v
+                                    item[k] = hydrated
+                        if isinstance(v, (dict, list)) and k not in ('editor_metadata', '_hierarchy_schema'):
+                            child_path = f"{group_name}.{k}"
+                            _process_item(child_path, v)
+
+            for sheet_name, sheet_val in list(doc_dict.items()):
+                if sheet_name not in ('editor_metadata', '_hierarchy_schema'):
+                    _process_item(sheet_name, sheet_val)
+            return doc_dict
+
+        doc = _hydrate_foreign_keys(doc)
 
         with open(template_path, 'r', encoding='utf-8') as f:
             tpl_src = f.read()
@@ -2009,18 +2096,102 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
       _pyodide.FS.writeFile('/work/in.xlsx', excelBytes);
     } catch (_) {}
 
-    // Persist binary buffer into store.excelFile and IndexedDB persistent storage
     try {
       const pName = store.currentProjectName || localStorage.getItem('currentProjectName') || 'Default';
       const fileName = store.excelFileName || `${pName}.xlsx`;
       store.excelFileName = fileName;
       store.excelFile = new File([excelBytes], fileName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    await saveBinaryFile(`${pName}:excelFileBuffer`, excelBytes.buffer);
+      await saveBinaryFile(`${pName}:excelFileBuffer`, excelBytes.buffer);
     } catch (e) {
       console.warn("Error desant el fitxer Excel a IndexedDB:", e);
     }
 
     return new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  };
+
+  const hydrateModelWithForeignKeys = (rootData, editorMetadata) => {
+    if (!rootData || typeof rootData !== 'object') return rootData;
+    const metaList = editorMetadata || rootData.editor_metadata || [];
+    if (!Array.isArray(metaList) || metaList.length === 0) return rootData;
+
+    const dynamicMetaMap = {};
+    metaList.forEach(meta => {
+      if (meta && meta.type === 'Select' && meta.sourceType === 'dynamic' && meta.vectorPath) {
+        const group = meta.group;
+        const elem = meta.element;
+        if (group && elem) {
+          dynamicMetaMap[`${group}.${elem}`] = meta;
+        }
+      }
+    });
+
+    if (Object.keys(dynamicMetaMap).length === 0) return rootData;
+
+    const resolveTargetTable = (targetPath) => {
+      if (!targetPath) return null;
+      if (Array.isArray(rootData[targetPath])) return rootData[targetPath];
+      if (Array.isArray(rootData['OUT_' + targetPath])) return rootData['OUT_' + targetPath];
+      const parts = targetPath.replace(/^doc\.|^dades\./, '').split('.');
+      let curr = rootData;
+      for (const p of parts) {
+        if (curr && typeof curr === 'object') {
+          curr = curr[p];
+        } else {
+          return null;
+        }
+      }
+      return Array.isArray(curr) ? curr : null;
+    };
+
+    const processGroup = (groupName, groupData) => {
+      if (!groupData || typeof groupData !== 'object') return;
+
+      if (Array.isArray(groupData)) {
+        groupData.forEach(row => processGroup(groupName, row));
+        return;
+      }
+
+      Object.keys(groupData).forEach(elemKey => {
+        const val = groupData[elemKey];
+        const metaKey = `${groupName}.${elemKey}`;
+        const meta = dynamicMetaMap[metaKey];
+
+        if (meta && val !== null && val !== undefined && val !== '' && typeof val !== 'object') {
+          const targetTable = resolveTargetTable(meta.vectorPath);
+          if (targetTable && targetTable.length > 0) {
+            const valField = meta.valueField || Object.keys(targetTable[0] || {})[0] || '';
+            const dispField = meta.displayField || valField;
+
+            const matchedRow = targetTable.find(r => {
+              if (!r || typeof r !== 'object') return false;
+              return String(r[valField]) === String(val) || String(r[dispField]) === String(val);
+            });
+
+            if (matchedRow) {
+              const hydratedObj = Object.assign({}, matchedRow);
+              const defaultScalar = matchedRow[valField] !== undefined ? matchedRow[valField] : val;
+              hydratedObj._default_val = defaultScalar;
+              hydratedObj.toString = () => String(defaultScalar);
+              hydratedObj.valueOf = () => defaultScalar;
+              groupData[elemKey] = hydratedObj;
+            }
+          }
+        }
+
+        if (val && typeof val === 'object' && !val.toString) {
+          const childGroupPath = `${groupName}.${elemKey}`;
+          processGroup(childGroupPath, val);
+        }
+      });
+    };
+
+    Object.keys(rootData).forEach(sheetOrGroupName => {
+      if (sheetOrGroupName !== 'editor_metadata' && sheetOrGroupName !== '_hierarchy_schema') {
+        processGroup(sheetOrGroupName, rootData[sheetOrGroupName]);
+      }
+    });
+
+    return rootData;
   };
 
   const evaluateCustomFormula = (formulaStr, row, globalData = null) => {
@@ -2297,7 +2468,7 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         return Math.round(result * 100) / 100;
       } else if (typeof result === 'boolean') {
         return result;
-      } else if (result !== undefined && result !== null) {
+          } else if (result !== undefined && result !== null) {
         return String(result);
       }
       return 0;
@@ -2306,11 +2477,15 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     }
   };
 
-  const evaluateComputedFields = (data) => {
-    if (!data || !store.editorMetadata || !Array.isArray(store.editorMetadata) || store.editorMetadata.length === 0) return;
+  const evaluateComputedFields = (dataObj, metadataList = []) => {
+    if (!dataObj || typeof dataObj !== 'object') return dataObj;
+    const metadata = metadataList.length > 0 ? metadataList : (dataObj.editor_metadata || []);
 
-    const computedMetas = store.editorMetadata.filter(m => m.type === 'Computed');
-    if (computedMetas.length === 0) return;
+    // Hydrate dynamic select Foreign Keys into objects (e.g., part.lot becomes an object with part.lot.nom, part.lot.codi, etc.)
+    const data = hydrateModelWithForeignKeys(dataObj, metadata);
+
+    const computedMetas = metadata.filter(m => m.type === 'Computed');
+    if (computedMetas.length === 0) return data;
 
     const customMetas = computedMetas.filter(m => (m.calcFn || '').toUpperCase() === 'CUSTOM' && m.calcFormula);
     const aggMetas = computedMetas.filter(m => (m.calcFn || '').toUpperCase() !== 'CUSTOM');

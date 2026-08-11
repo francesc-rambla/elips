@@ -117,9 +117,9 @@ Per configurar la naturalesa de cada camp, feu clic al botó **⚙️ Configura 
 2. **Number (Numèric)**: Valors decimals o enters per a càlculs.
 3. **Date (Data)**: Selecció de dates en format calendari (`YYYY-MM-DD`).
 4. **Boolean (Lògic)**: Desplegable de cert (`True`) o fals (`False`).
-5. **Select (Desplegable)**:
+5. **Select (Desplegable i Enllaços d'Objectes Foreign Key)**:
    - **Estàtic**: Llista manual d'opcions separades per comes (`opcio1, opcio2, opcio3`).
-   - **Dinàmic (Vector de dades)**: Enllaça amb una taula existent de l'Excel, permetent seleccionar un `displayField` (camp visible) i un `valueField` (valor desat).
+   - **Dinàmic (Vector de dades / Relació Foreign Key)**: Enllaça amb una taula existent de l'Excel, permetent seleccionar la columna per fixar el valor (`valueField`, clau primària) i la columna per visualitzar-lo (`displayField`). **Navegació d'objectes enllaçats**: Quan s'assigna una dada a partir d'una sub-taula (ex: la columna `Lot` d'una partida que enllaça amb la taula `Lots`), el camp es converteix automàticament en un **objecte complet** tant per a Jinja2 com per a les fórmules calculades. Això permet referenciar directament propietats de la taula associada com `part.Lot.nom`, `part.Lot.codi` o `part.Lot.limit_pressupost`!
    - **Selecció múltiple**: Permet escollir un o diversos valors simultàniament que es guarden com a etiquetes (*pills*).
 6. **Computed (Calculat)**: Camp no editable directament que es calcula mitjançant el motor de fórmules d'elips.
 
