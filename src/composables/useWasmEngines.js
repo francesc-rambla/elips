@@ -2117,10 +2117,16 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     const dynamicMetaMap = {};
     metaList.forEach(meta => {
       if (meta && meta.type === 'Select' && meta.sourceType === 'dynamic' && meta.vectorPath) {
-        const group = meta.group;
-        const elem = meta.element;
+        const group = meta.group || '';
+        const elem = meta.element || '';
         if (group && elem) {
           dynamicMetaMap[`${group}.${elem}`] = meta;
+          const shortGroup = group.split('.').pop();
+          dynamicMetaMap[`${shortGroup}.${elem}`] = meta;
+          const cleanGroup = group.replace(/^OUT_/, '');
+          dynamicMetaMap[`${cleanGroup}.${elem}`] = meta;
+          const cleanShort = shortGroup.replace(/^OUT_/, '');
+          dynamicMetaMap[`${cleanShort}.${elem}`] = meta;
         }
       }
     });
@@ -2397,8 +2403,29 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
             const prop = part;
             const nums = current.map(item => item ? parseFloat(item[prop]) : NaN).filter(n => !isNaN(n));
             return nums.length > 0 ? nums.reduce((a, b) => a + b, 0) : 0;
-          } else if (typeof current === 'object') {
+          } else if (typeof current === 'object' && current !== null) {
             current = current[part];
+          } else if (typeof current === 'string' || typeof current === 'number') {
+            // Fallback: If current is a scalar FK value (e.g. "Tova"), attempt to lookup in global tables for matching row
+            const gData = globalData || store.excelJsonData;
+            let foundVal = undefined;
+            if (gData) {
+              for (const sheetKey of Object.keys(gData)) {
+                const table = gData[sheetKey];
+                if (Array.isArray(table)) {
+                  const matchRow = table.find(r => r && typeof r === 'object' && Object.values(r).some(v => String(v) === String(current)));
+                  if (matchRow && matchRow[part] !== undefined) {
+                    foundVal = matchRow[part];
+                    break;
+                  }
+                }
+              }
+            }
+            if (foundVal !== undefined) {
+              current = foundVal;
+            } else {
+              return undefined;
+            }
           } else {
             return undefined;
           }
