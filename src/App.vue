@@ -228,6 +228,7 @@ const saveCurrentProject = () => {
   localStorage.setItem(`${name}:excelFileName`, store.excelFileName || '');
   localStorage.setItem(`${name}:excelFileSize`, store.excelFileSize || '0');
   localStorage.setItem(`${name}:editorMetadata`, JSON.stringify(store.editorMetadata || []));
+  localStorage.setItem(`${name}:sheetInfo`, JSON.stringify(store.sheetInfo || []));
 };
 
 const loadDocumentConfig = (pName, dName) => {
@@ -467,6 +468,11 @@ watch(() => store.excelJsonData, (newVal) => {
   if (newVal) {
     if (newVal.editor_metadata) {
       store.editorMetadata = newVal.editor_metadata;
+      delete newVal.editor_metadata;
+    }
+    if (newVal._sheet_info) {
+      store.sheetInfo = newVal._sheet_info;
+      delete newVal._sheet_info;
     }
     if (newVal._hierarchy_schema) {
       delete newVal._hierarchy_schema;
@@ -863,7 +869,7 @@ const openHierarchyModal = () => {
     alert("Primer heu de carregar un fitxer Excel.");
     return;
   }
-  const infoList = store.excelJsonData._sheet_info;
+  const infoList = store.sheetInfo && store.sheetInfo.length > 0 ? store.sheetInfo : (store.excelJsonData ? store.excelJsonData._sheet_info : null);
   if (infoList && Array.isArray(infoList)) {
     hierarchyRows.value = infoList.map(item => ({
       raw_name: item.raw_name,
@@ -992,12 +998,24 @@ const processExcelFile = async (file) => {
   if (store.enginesReady) {
     try {
       const parsedData = await parseExcel(buffer);
+      if (parsedData._sheet_info) {
+        store.sheetInfo = parsedData._sheet_info;
+        delete parsedData._sheet_info;
+      }
+      if (parsedData.editor_metadata) {
+        store.editorMetadata = parsedData.editor_metadata;
+        delete parsedData.editor_metadata;
+      }
+      if (parsedData._hierarchy_schema) {
+        delete parsedData._hierarchy_schema;
+      }
+
       store.excelJsonData = parsedData;
       saveCurrentProject();
       store.addLog("Dades de l'Excel interpretades correctament. Podeu consultar l'esquema.", "success");
       
       // Auto open hierarchy modal so user can review/edit detected relationships
-      if (parsedData._sheet_info && parsedData._sheet_info.length > 0) {
+      if (store.sheetInfo && store.sheetInfo.length > 0) {
         openHierarchyModal();
       }
     } catch (e) {

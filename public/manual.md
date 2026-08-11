@@ -62,8 +62,9 @@ Per organitzar la informació i evitar interferències amb altres fulls auxiliar
 | `OUT_pres.parts.activitats` | 3 (Sub-taula) | **Tabular (Llista)** | Detall d'activitats vinculades a cada partida. |
 | `OUT_pres.parts.activitats.costs` | 4 (Sub-taula) | **Tabular (Llista)** | Detall de desglossament de costos unitaris. |
 
-### 🔒 Conservació de la configuració: full `editor_metadata`
-Tota la configuració de tipus de dades, opcions desplegables, fórmules i disseny visual es desa automàticament al full ocult `editor_metadata` de l'arxiu Excel (amb 16 columnes de metadades). Això garanteix que, en compartir el fitxer `.xlsx` amb altres usuaris o reimportar-lo, **tota la configuració de formularis es manté intacta**.
+### 🔒 Conservació de la configuració i jerarquia: fulls ocults `editor_metadata` i `_sheet_info`
+- **`editor_metadata`**: Tota la configuració de tipus de dades, opcions desplegables, fórmules i disseny visual es desa automàticament al full ocult `editor_metadata` de l'arxiu Excel (amb 17 columnes de metadades).
+- **`_sheet_info`**: L'estructura de jerarquies de fulls, etiquetes i tipologia (`kv` / `tabular`) es desa al full ocult `_sheet_info`. Aquestes metadades s'exclouen del model de dades principal de l'expedient (`doc` / `dades`) per evitar interferències a Jinja2, però es conserven intactes a l'Excel per mantenir tota la configuració en reimportar el fitxer `.xlsx`.
 
 ---
 

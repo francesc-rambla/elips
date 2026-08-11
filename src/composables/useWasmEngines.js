@@ -546,10 +546,10 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
     
     internal_sheets = ('editor_metadata', 'editormetadata', '_sheet_info', '_hierarchy_schema', '_hierarchy_metadata', 'headers')
 
-    # Remove internal system phantom sheets only
+    # Remove internal system phantom sheets only (never delete _sheet_info metadata sheet)
     for s_name in list(wb.sheetnames):
         s_lower = s_name.lower()
-        if s_lower in ('_sheet_info', '_sheet_info.headers', 'headers') or s_lower.startswith('_sheet_info'):
+        if s_lower in ('_sheet_info.headers', 'headers') or s_lower.startswith('_sheet_info.'):
             del wb[s_name]
 
     for sheet_name in list(wb.sheetnames):
@@ -667,6 +667,29 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                 val = int(val)
             write_cell_value(ws, excel_row, c_idx + 1, val)
     ws.sheet_state = 'hidden'
+
+    # EXPLICITLY write _sheet_info sheet as hidden metadata sheet if available
+    sheet_info_data = data.get('_sheet_info') or []
+    if sheet_info_data and isinstance(sheet_info_data, list):
+        if '_sheet_info' in wb.sheetnames:
+            ws_info = wb['_sheet_info']
+            ws_info.delete_rows(1, max(ws_info.max_row, 1))
+        else:
+            ws_info = wb.create_sheet(title='_sheet_info')
+
+        info_headers = ['raw_name', 'prefix', 'clean_name', 'parent_path', 'full_path', 'kind', 'headers', 'parent_ref_key', 'child_ref_key']
+        for c_idx, h in enumerate(info_headers):
+            ws_info.cell(1, c_idx + 1).value = h
+
+        for r_idx, row_obj in enumerate(sheet_info_data):
+            excel_row = r_idx + 2
+            if isinstance(row_obj, dict):
+                for c_idx, h in enumerate(info_headers):
+                    val = row_obj.get(h, '')
+                    if isinstance(val, list):
+                        val = ', '.join(str(x) for x in val)
+                    write_cell_value(ws_info, excel_row, c_idx + 1, val)
+        ws_info.sheet_state = 'hidden'
 
     wb.save(out_excel_path)
 
@@ -1842,6 +1865,12 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         raw_doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
         doc = _filter_empty_rows(raw_doc)
 
+        # Remove internal metadata keys from main data model so Jinja2 context never sees them as data nodes
+        doc.pop('_sheet_info', None)
+        doc.pop('editor_metadata', None)
+        doc.pop('_hierarchy_schema', None)
+        doc.pop('editormetadata', None)
+
         # Merge latest JSON from /work/in.json if present
         try:
             if os.path.exists('/work/in.json'):
@@ -2274,6 +2303,9 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/in.xlsx')
 
     if (store.editorMetadata && Array.isArray(store.editorMetadata) && store.editorMetadata.length > 0) {
       dataToSave.editor_metadata = store.editorMetadata;
+    }
+    if (store.sheetInfo && Array.isArray(store.sheetInfo) && store.sheetInfo.length > 0) {
+      dataToSave._sheet_info = store.sheetInfo;
     }
 
     const jsonStr = JSON.stringify(dataToSave);

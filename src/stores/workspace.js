@@ -32,6 +32,14 @@ export const useWorkspaceStore = defineStore('workspace', {
         return [];
       }
     })(),
+    sheetInfo: (() => {
+      try {
+        const pName = localStorage.getItem('currentProjectName') || 'Default';
+        return JSON.parse(localStorage.getItem(`${pName}:sheetInfo`) || localStorage.getItem('sheetInfo') || '[]');
+      } catch (e) {
+        return [];
+      }
+    })(),
     renderedMarkdown: '',
     cleanMarkdown: '',
     targetDataPath: null,
