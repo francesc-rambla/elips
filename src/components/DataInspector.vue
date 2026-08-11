@@ -100,6 +100,11 @@ const getKvFieldCardStyle = (groupName, key) => {
   if (meta?.gridOrder) {
     baseStyle += ` order: ${meta.gridOrder};`;
   }
+  if (meta?.gridFill) {
+    baseStyle += ' flex-grow: 1; flex-shrink: 1; flex-basis: 280px; min-width: 240px;';
+  } else {
+    baseStyle += ' flex-grow: 0; flex-shrink: 0; flex-basis: 260px; min-width: 200px;';
+  }
   return baseStyle;
 };
 
@@ -914,7 +919,8 @@ const openGroupConfig = (groupName, sheetData) => {
       calcTargetCol: meta.calcTargetCol || '',
       calcFormula: meta.calcFormula || '',
       gridRow: meta.gridRow || '',
-      gridOrder: meta.gridOrder || ''
+      gridOrder: meta.gridOrder || '',
+      gridFill: !!meta.gridFill
     };
   });
   
@@ -957,7 +963,10 @@ const addNewFieldToConfig = () => {
       calcFn: 'SUM',
       calcVector: '',
       calcTargetCol: '',
-      calcFormula: ''
+      calcFormula: '',
+      gridRow: '',
+      gridOrder: '',
+      gridFill: false
     });
   }
 };
@@ -1015,6 +1024,9 @@ const saveGroupConfig = () => {
     }
     if (item.gridOrder) {
       meta.gridOrder = item.gridOrder;
+    }
+    if (item.gridFill) {
+      meta.gridFill = true;
     }
     store.editorMetadata.push(meta);
   });
@@ -1415,7 +1427,7 @@ onMounted(() => {
           <template v-else>
             <div 
               :style="store.config.labelPosition === 'top' 
-                ? 'display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; padding: 6px 0;' 
+                ? 'display: flex; flex-wrap: wrap; gap: 12px; padding: 6px 0;' 
                 : 'display: flex; flex-direction: column; gap: 8px; padding: 6px 0;'"
             >
               <div 
@@ -1655,6 +1667,7 @@ onMounted(() => {
                 <th>Tipus de Dada</th>
                 <th style="width: 70px; text-align: center;" title="Fila a la quadrícula del formulari (ex: 1, 2...)">Fila Grid</th>
                 <th style="width: 70px; text-align: center;" title="Ordre de prioritat a la fila (ex: 1, 2...)">Ordre</th>
+                <th style="width: 60px; text-align: center;" title="Si està marcat, el camp ocuparà tot l'espai horitzontal disponible a la fila">Omple</th>
                 <th>Valors Possibles (Select / Fórmules)</th>
                 <th v-if="getSheetType(store.excelJsonData[activeConfigGroup]) === 'tabular'" style="width: 90px;">Amplada (%)</th>
                 <th v-if="getSheetType(store.excelJsonData[activeConfigGroup]) === 'tabular'" style="width: 60px; text-align: center;">Accions</th>
@@ -1708,6 +1721,16 @@ onMounted(() => {
                     class="data-input" 
                     style="padding: 2px 4px; height: 28px; font-size: 0.8rem; text-align: center;"
                     title="Ordre de prioritat dins de la fila a la quadrícula (ex: 1, 2, 3...). Buit = automàtic"
+                  >
+                </td>
+
+                <!-- Grid Fill option ("Omple") -->
+                <td style="padding: 4px; width: 60px; text-align: center; vertical-align: middle;">
+                  <input 
+                    type="checkbox" 
+                    v-model="item.gridFill" 
+                    style="width: 18px; height: 18px; cursor: pointer;"
+                    title="Si està marcat, el camp ocuparà tot l'espai horitzontal disponible a la fila"
                   >
                 </td>
                 <td style="padding: 4px; vertical-align: top;">

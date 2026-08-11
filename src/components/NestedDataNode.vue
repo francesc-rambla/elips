@@ -346,6 +346,11 @@ const getFieldCardStyle = (fKey) => {
   if (meta?.gridOrder) {
     baseStyle += ` order: ${meta.gridOrder};`;
   }
+  if (meta?.gridFill) {
+    baseStyle += ' flex-grow: 1; flex-shrink: 1; flex-basis: 260px; min-width: 220px;';
+  } else {
+    baseStyle += ' flex-grow: 0; flex-shrink: 0; flex-basis: 240px; min-width: 180px;';
+  }
   return baseStyle;
 };
 
@@ -631,7 +636,10 @@ const openGroupConfig = () => {
       calcFn: meta.calcFn || 'SUM',
       calcVector: meta.calcVector || '',
       calcTargetCol: meta.calcTargetCol || '',
-      calcFormula: meta.calcFormula || ''
+      calcFormula: meta.calcFormula || '',
+      gridRow: meta.gridRow || '',
+      gridOrder: meta.gridOrder || '',
+      gridFill: !!meta.gridFill
     };
   });
   isConfigModalOpen.value = true;
@@ -669,7 +677,10 @@ const addNewFieldToConfig = () => {
       calcFn: 'SUM',
       calcVector: '',
       calcTargetCol: '',
-      calcFormula: ''
+      calcFormula: '',
+      gridRow: '',
+      gridOrder: '',
+      gridFill: false
     });
   }
 };
@@ -718,6 +729,15 @@ const saveGroupConfig = () => {
     }
     if (item.width) {
       meta.width = item.width;
+    }
+    if (item.gridRow) {
+      meta.gridRow = item.gridRow;
+    }
+    if (item.gridOrder) {
+      meta.gridOrder = item.gridOrder;
+    }
+    if (item.gridFill) {
+      meta.gridFill = true;
     }
     store.editorMetadata.push(meta);
   });
@@ -1141,7 +1161,7 @@ const getItemPath = (idx, fieldKey) => {
           <div 
             v-if="groupLayout === 'vertical'" 
             :style="store.config.labelPosition === 'top' 
-              ? 'display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; margin-bottom: 0.75rem;' 
+              ? 'display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 0.75rem;' 
               : 'display: flex; flex-direction: column; gap: 6px; margin-bottom: 0.75rem;'"
           >
             <div 
@@ -1284,8 +1304,12 @@ const getItemPath = (idx, fieldKey) => {
           </div>
 
           <!-- HORIZONTAL LAYOUT (Grid View) -->
-          <div v-else style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem; margin-bottom: 0.75rem;">
-            <div v-for="(val, fKey) in getPrimitiveFields(item)" :key="fKey" style="display: flex; flex-direction: column; gap: 2px;">
+          <div v-else style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+            <div 
+              v-for="(val, fKey) in getPrimitiveFields(item)" 
+              :key="fKey" 
+              :style="getFieldCardStyle(fKey)"
+            >
               <label 
                 style="font-size: 0.72rem; font-weight: 600; color: var(--text-muted); margin: 0;"
                 :style="{ cursor: getFieldLabel(fKey) !== fKey ? 'help' : 'default' }"
@@ -1462,7 +1486,10 @@ const getItemPath = (idx, fieldKey) => {
                 <th style="padding: 8px; text-align: left;">Element / Camp</th>
                 <th style="padding: 8px; text-align: left;">Etiqueta al formulari (Opcional)</th>
                 <th style="padding: 8px; text-align: left; width: 130px;">Tipus de Dada</th>
-                <th style="padding: 8px; text-align: left;">Font d'Opcions (Select)</th>
+                <th style="width: 65px; text-align: center;" title="Fila a la quadrícula del formulari (ex: 1, 2...)">Fila Grid</th>
+                <th style="width: 65px; text-align: center;" title="Ordre de prioritat a la fila (ex: 1, 2...)">Ordre</th>
+                <th style="width: 55px; text-align: center;" title="Si està marcat, el camp ocuparà tot l'espai horitzontal disponible a la fila">Omple</th>
+                <th style="padding: 8px; text-align: left;">Font d'Opcions (Select / Fórmules)</th>
               </tr>
             </thead>
             <tbody>
@@ -1489,6 +1516,41 @@ const getItemPath = (idx, fieldKey) => {
                     <option value="Boolean">Booleà</option>
                     <option value="Computed">Calculat (Computed: SUM, COUNT, AVG)</option>
                   </select>
+                </td>
+                <!-- Grid Row assignment -->
+                <td style="padding: 4px; width: 65px; vertical-align: top;">
+                  <input 
+                    type="number" 
+                    v-model="item.gridRow" 
+                    min="1" 
+                    placeholder="Auto"
+                    class="data-input" 
+                    style="padding: 2px 4px; height: 28px; font-size: 0.8rem; text-align: center;"
+                    title="Número de fila a la quadrícula del formulari (ex: 1, 2, 3...). Buit = automàtic"
+                  >
+                </td>
+                
+                <!-- Grid Order assignment -->
+                <td style="padding: 4px; width: 65px; vertical-align: top;">
+                  <input 
+                    type="number" 
+                    v-model="item.gridOrder" 
+                    min="1" 
+                    placeholder="Auto"
+                    class="data-input" 
+                    style="padding: 2px 4px; height: 28px; font-size: 0.8rem; text-align: center;"
+                    title="Ordre de prioritat dins de la fila a la quadrícula (ex: 1, 2, 3...). Buit = automàtic"
+                  >
+                </td>
+
+                <!-- Grid Fill option ("Omple") -->
+                <td style="padding: 4px; width: 55px; text-align: center; vertical-align: middle;">
+                  <input 
+                    type="checkbox" 
+                    v-model="item.gridFill" 
+                    style="width: 18px; height: 18px; cursor: pointer;"
+                    title="Si està marcat, el camp ocuparà tot l'espai horitzontal disponible a la fila"
+                  >
                 </td>
                 <td style="padding: 6px 8px; vertical-align: top;">
                   <template v-if="item.type === 'Select'">

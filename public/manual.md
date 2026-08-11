@@ -176,10 +176,11 @@ A la finestra de **Configuració avançada (⚙️)** de la barra superior:
 - **A dalt (Superiors - Per defecte)**: Les etiquetes es col·loquen directament a dalt dels camps d'entrada en una quadrícula de targetes d'alta llegibilitat.
 - **A l'esquerra**: Les etiquetes s'alineen horitzontalment a la meitat esquerra del camp.
 
-#### B. Distribució personalitzada a la quadrícula (`Fila grid` i `Ordre`)
+#### B. Distribució personalitzada a la quadrícula (`Fila grid`, `Ordre` i `Omple`)
 Al modal de configuració de tipus de dades (⚙️ Configura Tipus):
 - **Fila grid**: Especifica a quina fila de la quadrícula ha d'aparèixer el camp (`1`, `2`, `3`...). Els camps amb la mateixa fila se situen colze a colze.
 - **Ordre**: Especifica l'ordre de prioritat d'esquerra a dreta dins de la mateixa fila.
+- **Omple (gridFill)**: Casella de selecció clicable. Quan està marcada, el camp s'expandeix horitzontalment (`flex-grow: 1`) fins a **absorbir tot l'espai horitzontal disponible a la fila**. Els altres camps de la mateixa fila mantenen la seva amplada compacta, mentre que el camp amb l'opció "Omple" s'ajusta de manera adaptativa.
 - *Si es deixen en buit (Auto), els camps es distribueixen automàticament de manera adaptativa.*
 
 #### C. Etiquetes i consells d'ajuda (`title`)
