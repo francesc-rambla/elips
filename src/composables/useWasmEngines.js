@@ -1670,6 +1670,12 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
                     elem = str(meta.get('element', ''))
                     if m_type == 'Select' and m_src == 'dynamic' and m_vec and grp and elem:
                         fk_map[f"{grp}.{elem}"] = meta
+                        short_grp = grp.split('.')[-1]
+                        fk_map[f"{short_grp}.{elem}"] = meta
+                        clean_grp = grp.replace('OUT_', '')
+                        fk_map[f"{clean_grp}.{elem}"] = meta
+                        clean_short = short_grp.replace('OUT_', '')
+                        fk_map[f"{clean_short}.{elem}"] = meta
             if not fk_map:
                 return doc_dict
 
@@ -1715,6 +1721,8 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
                                 if matched:
                                     hydrated = dict(matched)
                                     hydrated['_default_val'] = v
+                                    hydrated['value'] = v
+                                    hydrated['val'] = v
                                     item[k] = hydrated
                         if isinstance(v, (dict, list)) and k not in ('editor_metadata', '_hierarchy_schema'):
                             child_path = f"{group_name}.{k}"
@@ -2177,6 +2185,8 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
               const hydratedObj = Object.assign({}, matchedRow);
               const defaultScalar = matchedRow[valField] !== undefined ? matchedRow[valField] : val;
               hydratedObj._default_val = defaultScalar;
+              hydratedObj.value = defaultScalar;
+              hydratedObj.val = defaultScalar;
               hydratedObj.toString = () => String(defaultScalar);
               hydratedObj.valueOf = () => defaultScalar;
               groupData[elemKey] = hydratedObj;
