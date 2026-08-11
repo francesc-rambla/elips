@@ -2034,7 +2034,7 @@ const generateDocuments = async () => {
           </div>
 
           <!-- Tab: Document Previews -->
-          <div class="tab-content" :class="{ active: store.activeTab === 'preview' }" style="overflow: hidden; height: 100%; min-height: 0; display: flex; flex-direction: column;">
+          <div class="tab-content" :class="{ active: store.activeTab === 'preview' }" style="overflow: hidden; height: 100%; min-height: 0;">
             <DocumentPreview />
           </div>
         </div>
