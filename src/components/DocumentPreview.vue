@@ -8,10 +8,86 @@ const store = useWorkspaceStore();
 
 const isGenerated = computed(() => !!store.renderedMarkdown);
 
+const parseYamlHeader = (rawYaml) => {
+  const meta = {};
+  if (!rawYaml) return meta;
+  const lines = rawYaml.split(/\r?\n/);
+  lines.forEach(line => {
+    const colonIdx = line.indexOf(':');
+    if (colonIdx !== -1) {
+      const key = line.slice(0, colonIdx).trim().toLowerCase();
+      let val = line.slice(colonIdx + 1).trim();
+      val = val.replace(/^["']|["']$/g, '').trim();
+      if (key && val) {
+        meta[key] = val;
+      }
+    }
+  });
+  return meta;
+};
+
+const formatMetadataHtmlBlock = (meta) => {
+  if (!meta || Object.keys(meta).length === 0) return '';
+  
+  let html = `<div class="document-metadata-card">`;
+  html += `<div class="metadata-card-badge">📄 METADADES DEL DOCUMENT</div>`;
+  
+  if (meta.title) {
+    html += `<h1 class="metadata-card-title">${meta.title}</h1>`;
+  }
+  if (meta.subtitle) {
+    html += `<div class="metadata-card-subtitle">${meta.subtitle}</div>`;
+  }
+  
+  const knownKeys = ['author', 'date', 'lang', 'expedient', 'organ', 'llengua', 'versio', 'estat'];
+  const gridItems = [];
+  
+  if (meta.author) gridItems.push({ icon: '👤', label: 'Autor / Òrgan', value: meta.author });
+  if (meta.date) gridItems.push({ icon: '📅', label: 'Data', value: meta.date });
+  if (meta.lang) gridItems.push({ icon: '🌐', label: 'Idioma', value: meta.lang.toUpperCase() });
+  if (meta.expedient) gridItems.push({ icon: '📁', label: 'Expedient', value: meta.expedient });
+  if (meta.organ) gridItems.push({ icon: '🏛️', label: 'Òrgan de contractació', value: meta.organ });
+  
+  Object.keys(meta).forEach(k => {
+    if (!['title', 'subtitle', 'abstract', 'toc', 'toc-title', 'keywords', ...knownKeys].includes(k)) {
+      const formattedKey = k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' ');
+      gridItems.push({ icon: '📌', label: formattedKey, value: meta[k] });
+    }
+  });
+
+  if (gridItems.length > 0) {
+    html += `<div class="metadata-card-grid">`;
+    gridItems.forEach(item => {
+      html += `<div class="metadata-grid-item">
+        <span class="metadata-item-label">${item.icon} ${item.label}:</span>
+        <span class="metadata-item-value">${item.value}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+  
+  if (meta.abstract) {
+    html += `<div class="metadata-card-abstract"><strong>📝 Resum:</strong> ${meta.abstract}</div>`;
+  }
+  
+  html += `</div>`;
+  return html;
+};
+
 const htmlContent = computed(() => {
   if (!store.renderedMarkdown) return '';
   try {
     let md = store.renderedMarkdown;
+    let metadataHtml = '';
+    
+    // 0. Extract leading Pandoc YAML metadata block (--- ... ---)
+    const yamlMatch = md.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+    if (yamlMatch) {
+      const rawYaml = yamlMatch[1];
+      md = md.slice(yamlMatch[0].length);
+      const metaObj = parseYamlHeader(rawYaml);
+      metadataHtml = formatMetadataHtmlBlock(metaObj);
+    }
     
     // 1. Compile display math formulas (double dollars $$ ... $$)
     md = md.replace(/\$\$(.*?)\$\$/g, (m, expr) => {
@@ -35,7 +111,8 @@ const htmlContent = computed(() => {
       return `<span class="latex-chip inline-math" data-type="inline" data-expr="${expr}">${render}</span>`;
     });
     
-    return marked.parse(md);
+    const parsedMdHtml = marked.parse(md);
+    return metadataHtml + parsedMdHtml;
   } catch (e) {
     return `<span style="color:var(--color-danger)">Error parsejant Markdown: ${e.message}</span>`;
   }
