@@ -1565,40 +1565,24 @@ onMounted(() => {
                   {{ getGroupLabel(name) }}
                 </span>
               </h4>
-              <div style="display: flex; gap: 6px; align-items: center;">
+              <div style="display: flex; gap: 4px; align-items: center;">
                 <button 
                   class="btn btn-secondary" 
-                  style="width: auto; padding: 3px 8px; font-size: 0.72rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
-                  @click="openNewSheetModal"
-                  title="Crea un nou full o grup de dades des de l'aplicació"
+                  style="width: auto; padding: 2px 6px; font-size: 0.72rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--border-color);"
+                  @click="copyGroupConfig(name)"
+                  title="Copia la configuració d'aquest grup al portaretalls"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  <span v-if="store.config.showButtonTexts">Nou Full</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span v-if="store.config.showButtonTexts">Copia</span>
                 </button>
                 <button 
                   class="btn btn-secondary" 
-                  style="width: auto; padding: 3px 6px; font-size: 0.72rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--border-color);"
-                  @click="copyGlobalConfig"
-                  title="📋 Copia la configuració de TOTS els conjunts de dades del projecte al portaretalls"
+                  style="width: auto; padding: 2px 6px; font-size: 0.72rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--border-color);"
+                  @click="pasteGroupConfig(name)"
+                  title="Enganxa la configuració des del portaretalls sobre aquest grup"
                 >
-                  <span>📋 Copia Config Global</span>
-                </button>
-                <button 
-                  class="btn btn-secondary" 
-                  style="width: auto; padding: 3px 6px; font-size: 0.72rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--border-color);"
-                  @click="pasteGlobalConfig"
-                  title="📥 Enganxa la configuració de TOTS els conjunts de dades des del portaretalls a aquest projecte"
-                >
-                  <span>📥 Enganxa Config Global</span>
-                </button>
-                <button 
-                  class="btn btn-secondary" 
-                  style="width: auto; padding: 3px 8px; font-size: 0.72rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
-                  @click="openGroupConfig(name, sheetData)"
-                  title="Configura tipus de dades per a aquest grup"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                  <span v-if="store.config.showButtonTexts">Configura Tipus</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+                  <span v-if="store.config.showButtonTexts">Enganxa</span>
                 </button>
               </div>
           </div>

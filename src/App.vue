@@ -1565,7 +1565,7 @@ const generateDocuments = async () => {
               :value="store.dataActions?.getSelectedCompactSheet && store.dataActions.getSelectedCompactSheet()"
               @change="store.dataActions?.setSelectedCompactSheet && store.dataActions.setSelectedCompactSheet($event.target.value)"
               class="data-input" 
-              style="height: 28px; font-size: 0.75rem; padding: 2px 6px; width: 100%; border-color: var(--color-primary); background: var(--bg-primary); color: var(--text-primary); border-radius: 4px;"
+              style="height: 28px; font-size: 0.75rem; padding: 2px 6px; width: 100%; border-color: var(--border-color); background: var(--bg-primary); color: var(--text-primary); border-radius: 4px;"
               title="Selecciona el conjunt de dades actiu per editar en mode compacte"
             >
               <option 
@@ -1580,24 +1580,76 @@ const generateDocuments = async () => {
           <div class="ribbon-group-label">CONJUNT ACTIU</div>
         </div>
 
+        <!-- Group: Estructura (Nou Full i Configura Tipus) -->
+        <div class="ribbon-group-card">
+          <div class="ribbon-group-body" style="display: grid; grid-template-rows: repeat(2, 28px); grid-auto-flow: column; gap: 4px;">
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 1; display: inline-flex; align-items: center; gap: 4px;"
+              @click="store.dataActions?.openNewSheetModal && store.dataActions.openNewSheetModal()"
+              title="Crea un nou full o conjunt de dades des de l'aplicació"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span v-if="store.config.showButtonTexts">Nou Conjunt</span>
+            </button>
+
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 2; display: inline-flex; align-items: center; gap: 4px;"
+              @click="store.dataActions?.openGroupConfigActive && store.dataActions.openGroupConfigActive()"
+              title="Configura tipus de dades i format del conjunt actual"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+              <span v-if="store.config.showButtonTexts">Configura Tipus</span>
+            </button>
+          </div>
+          <div class="ribbon-group-label">ESTRUCTURA</div>
+        </div>
+
+        <!-- Group: Portaretalls de Configuració -->
+        <div class="ribbon-group-card">
+          <div class="ribbon-group-body" style="display: grid; grid-template-rows: repeat(2, 28px); grid-auto-flow: column; gap: 4px;">
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 1; display: inline-flex; align-items: center; gap: 4px;"
+              @click="store.dataActions?.copyGlobalConfig && store.dataActions.copyGlobalConfig()"
+              title="Copia la configuració de TOTS els conjunts de dades al portaretalls"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <span v-if="store.config.showButtonTexts">Copia Config</span>
+            </button>
+
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 2; display: inline-flex; align-items: center; gap: 4px;"
+              @click="store.dataActions?.pasteGlobalConfig && store.dataActions.pasteGlobalConfig()"
+              title="Enganxa la configuració global de dades des del portaretalls"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+              <span v-if="store.config.showButtonTexts">Enganxa Config</span>
+            </button>
+          </div>
+          <div class="ribbon-group-label">PORTARETALLS</div>
+        </div>
+
         <!-- Group: Dades -->
         <div class="ribbon-group-card">
           <div class="ribbon-group-body" style="display: grid; grid-template-rows: repeat(2, 28px); grid-auto-flow: column; gap: 4px;">
             <button 
               class="btn btn-secondary" 
-              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); border-color: var(--color-primary, #0284c7); grid-row: 1; display: inline-flex; align-items: center; gap: 4px;"
+              style="padding: 2px 8px; font-size: 0.72rem; height: 28px; grid-row: 1; display: inline-flex; align-items: center; gap: 4px;"
               @click="store.dataActions?.loadMockData && store.dataActions.loadMockData()"
-              title="🧪 Carrega dades de prova en l'esquema jeràrquic"
+              title="Carrega dades de prova en l'esquema jeràrquic"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><line x1="8.5" y1="2" x2="15.5" y2="2"/></svg>
               <span v-if="store.config.showButtonTexts">Dades de Prova</span>
             </button>
             <button 
-              class="btn btn-primary" 
-              style="padding: 2px 10px; font-size: 0.72rem; height: 28px; background-color: var(--color-success); border-color: var(--color-success); grid-row: 2; display: inline-flex; align-items: center; gap: 4px;"
+              class="btn btn-secondary" 
+              style="padding: 2px 10px; font-size: 0.72rem; height: 28px; grid-row: 2; display: inline-flex; align-items: center; gap: 4px;"
               :disabled="store.dataActions?.savingExcel && store.dataActions.savingExcel()"
               @click="store.dataActions?.exportExcel && store.dataActions.exportExcel()"
-              title="📥 Exporta les dades de tornada a un fitxer d'Excel (.xlsx)"
+              title="Exporta les dades de tornada a un fitxer d'Excel (.xlsx)"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span v-if="store.config.showButtonTexts">{{ store.dataActions?.savingExcel && store.dataActions.savingExcel() ? 'Guardant...' : 'Baixa Excel' }}</span>
