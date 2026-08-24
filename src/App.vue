@@ -1126,11 +1126,6 @@ const processExcelFile = async (file) => {
       store.excelJsonData = parsedData;
       saveCurrentProject();
       store.addLog("Dades de l'Excel interpretades correctament. Podeu consultar l'esquema.", "success");
-      
-      // Auto open hierarchy modal so user can review/edit detected relationships
-      if (store.sheetInfo && store.sheetInfo.length > 0) {
-        openHierarchyModal();
-      }
     } catch (e) {
       store.addLog(`Error parsejant Excel: ${e.message}`, "error");
     }

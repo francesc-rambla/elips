@@ -3242,8 +3242,18 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     store.excelFile = new File([newBytes], fileName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     store.excelFileSize = newBuffer.byteLength;
 
-    // Re-parse the updated Excel file
+    // Re-parse the updated Excel file structure while preserving loaded data values
+    const currentJsonData = store.excelJsonData ? JSON.parse(JSON.stringify(store.excelJsonData)) : {};
     const parsedData = await parseExcel(newBuffer);
+    
+    if (parsedData && typeof parsedData === 'object') {
+      Object.keys(currentJsonData).forEach(key => {
+        if (!key.startsWith('_') && currentJsonData[key] !== undefined) {
+          parsedData[key] = currentJsonData[key];
+        }
+      });
+    }
+
     store.excelJsonData = parsedData;
 
     store.addLog("Esquema de relacions i jerarquia d'Excel actualitzat correctament al full de càlcul.", "success");
