@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, onMounted, onUnmounted } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 
 import { useWasmEngines } from '../composables/useWasmEngines';
@@ -561,6 +561,35 @@ const saveCellEditor = () => {
   isCellModalOpen.value = false;
   store.addLog("Camp actualitzat correctament.", "success");
 };
+
+const handleNestedKeydown = (e) => {
+  if (isMultiSelectModalOpen.value) {
+    if (e.key === 'Escape' || e.key === 'Enter') {
+      e.preventDefault();
+      isMultiSelectModalOpen.value = false;
+    }
+    return;
+  }
+
+  if (isCellModalOpen.value) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      isCellModalOpen.value = false;
+    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      saveCellEditor();
+    }
+    return;
+  }
+};
+
+onMounted(() => {
+  window.addEventListener('keydown', handleNestedKeydown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleNestedKeydown);
+});
 
 // Group Config Modal for arrayKey
 const isConfigModalOpen = ref(false);

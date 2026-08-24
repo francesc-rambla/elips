@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import VisualGridEditorModal from './VisualGridEditorModal.vue';
 
@@ -24,6 +24,40 @@ const isVisualGridModalOpen = ref(false);
 const isFormulaModalOpen = ref(false);
 const editingFormulaItem = ref(null);
 const formulaTextBuffer = ref('');
+
+const handleKeydown = (e) => {
+  if (!props.modelValue) return;
+  if (isVisualGridModalOpen.value) return;
+
+  if (isFormulaModalOpen.value) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      isFormulaModalOpen.value = false;
+    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey || e.target?.tagName?.toLowerCase() !== 'textarea')) {
+      e.preventDefault();
+      saveFormulaModal();
+    }
+    return;
+  }
+
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeModal();
+  } else if (e.key === 'Enter') {
+    const tag = e.target?.tagName?.toLowerCase();
+    if (tag === 'textarea' && !e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    handleSave();
+  }
+};
+
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown);
+});
 
 watch(() => props.modelValue, (newVal) => {
   if (newVal) {

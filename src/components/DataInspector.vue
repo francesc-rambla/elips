@@ -547,6 +547,57 @@ const saveCellEditor = () => {
   store.addLog("Cel·la actualitzada correctament.", "success");
 };
 
+const handleDataInspectorModalsKeydown = (e) => {
+  if (isNewSheetModalOpen.value) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      isNewSheetModalOpen.value = false;
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      createNewSheet();
+    }
+    return;
+  }
+
+  if (isDataSetsModalOpen.value) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      isDataSetsModalOpen.value = false;
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      saveDataSetsConfig();
+    }
+    return;
+  }
+
+  if (isMultiSelectModalOpen.value) {
+    if (e.key === 'Escape' || e.key === 'Enter') {
+      e.preventDefault();
+      isMultiSelectModalOpen.value = false;
+    }
+    return;
+  }
+
+  if (isCellModalOpen.value) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      isCellModalOpen.value = false;
+    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      saveCellEditor();
+    }
+    return;
+  }
+};
+
+onMounted(() => {
+  window.addEventListener('keydown', handleDataInspectorModalsKeydown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleDataInspectorModalsKeydown);
+});
+
 // Metadata Schema helpers for custom types
 const getElementMetadata = (groupName, elementName) => {
   if (!store.editorMetadata) return null;

@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, watch } from 'vue';
+import { reactive, watch, onMounted, onUnmounted } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 
 const props = defineProps({
@@ -11,6 +11,27 @@ const store = useWorkspaceStore();
 
 // Local copy for cancellation
 const localConfig = reactive({ ...store.config });
+
+const handleKeydown = (e) => {
+  if (!props.isOpen) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    emit('close');
+  } else if (e.key === 'Enter') {
+    const tag = e.target?.tagName?.toLowerCase();
+    if (tag === 'textarea' && !e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    saveSettings();
+  }
+};
+
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown);
+});
 
 // Sync config local copies when opening modal
 watch(() => props.isOpen, (newVal) => {

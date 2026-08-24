@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from 'vue';
+import { ref, watch, onMounted, onUnmounted } from 'vue';
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -11,6 +11,27 @@ const emit = defineEmits(['update:modelValue', 'apply']);
 
 const visualGridRows = ref([]);
 const unassignedFieldsPool = ref([]);
+
+const handleKeydown = (e) => {
+  if (!props.modelValue) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeModal();
+  } else if (e.key === 'Enter') {
+    const tag = e.target?.tagName?.toLowerCase();
+    if (tag === 'textarea' && !e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    saveVisualGridEditor();
+  }
+};
+
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown);
+});
 
 const initGridFromConfig = () => {
   if (!props.configList) return;
