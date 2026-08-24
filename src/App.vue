@@ -1992,18 +1992,6 @@ const generateDocuments = async () => {
       </div>
     </div>
 
-    <!-- Sidebar Edge Hover Trigger Bar when Auto-Hidden -->
-    <div 
-      v-if="isSidebarAutoHidden && !store.isMaximized" 
-      class="sidebar-edge-trigger" 
-      @mouseenter="isSidebarHovered = true"
-      title="Passa el cursor per mostrar el Tauler de Control"
-    >
-      <div style="writing-mode: vertical-rl; text-transform: uppercase; font-size: 0.65rem; font-weight: 700; color: var(--color-primary); letter-spacing: 1px; padding: 10px 2px; transform: rotate(180deg); user-select: none;">
-        ◀ TAULER
-      </div>
-    </div>
-
     <div class="container" :style="store.isMaximized ? 'padding: 6px 12px; gap: 0; height: calc(100vh - 42px);' : ''">
 
       <!-- Main Workspace Grid -->
@@ -2011,6 +1999,17 @@ const generateDocuments = async () => {
         class="main-grid" 
         :class="{ 'editor-maximized': store.isMaximized, 'sidebar-auto-hidden': isSidebarAutoHidden && !store.isMaximized }"
       >
+        <!-- Sidebar Edge Hover Trigger Bar when Auto-Hidden -->
+        <div 
+          v-if="isSidebarAutoHidden && !store.isMaximized" 
+          class="sidebar-edge-trigger" 
+          @mouseenter="isSidebarHovered = true"
+          title="Passa el cursor per mostrar el Tauler de Control"
+        >
+          <div style="writing-mode: vertical-rl; text-transform: uppercase; font-size: 0.65rem; font-weight: 700; color: var(--color-primary); letter-spacing: 1px; padding: 10px 2px; transform: rotate(180deg); user-select: none;">
+            ◀ TAULER
+          </div>
+        </div>
         <!-- Control Card Panel -->
         <div 
           class="card control-panel-card" 
