@@ -516,6 +516,7 @@ const highlightedJson = computed(() => {
 // Complex Cell Editor Modal Logic
 import TemplateEditor from './TemplateEditor.vue';
 import VisualGridEditorModal from './VisualGridEditorModal.vue';
+import GroupConfigModal from './GroupConfigModal.vue';
 
 const isCellModalOpen = ref(false);
 const cellTextValue = ref('');
@@ -1062,10 +1063,39 @@ const addNewFieldToConfig = () => {
   }
 };
 
-// Visual Grid Layout Editor State & Method
-const isVisualGridModalOpen = ref(false);
-const openVisualGridEditor = () => {
-  isVisualGridModalOpen.value = true;
+const handleSaveGroupConfig = (data) => {
+  const groupName = activeConfigGroup.value;
+  setGroupLabel(groupName, data.groupLabel);
+  setGroupLayout(groupName, data.selectedLayout);
+
+  data.configList.forEach(item => {
+    let optionsArr = [];
+    if (item.type === 'Select' && item.sourceType === 'static' && item.optionsRaw) {
+      optionsArr = item.optionsRaw.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    
+    setElementMetadata(groupName, item.element, {
+      label: item.label,
+      type: item.type,
+      sourceType: item.sourceType,
+      options: optionsArr,
+      vectorPath: item.vectorPath,
+      displayField: item.displayField,
+      valueField: item.valueField,
+      multiple: item.multiple,
+      width: item.width,
+      calcFn: item.calcFn,
+      calcVector: item.calcVector,
+      calcTargetCol: item.calcTargetCol,
+      calcFormula: item.calcFormula,
+      gridRow: item.gridRow,
+      gridOrder: item.gridOrder,
+      gridFill: item.gridFill
+    });
+  });
+
+  isConfigModalOpen.value = false;
+  store.addLog(`Configuració desada per al grup '${groupName}'.`, 'success');
 };
 
 const saveGroupConfig = () => {
@@ -2122,321 +2152,16 @@ onMounted(() => {
     </div>
 
     <!-- 6. Group Configuration Modal -->
-    <div class="modal-overlay" :style="{ display: isConfigModalOpen ? 'flex' : 'none' }">
-      <div class="modal-content" style="max-width: 820px; width: 95%; max-height: 85vh; display: flex; flex-direction: column;">
-        <div class="modal-header">
-          <h3 style="border: none; padding-bottom: 0; margin: 0;">
-            Configuració del Grup: 
-            <span 
-              style="color: var(--color-primary);"
-              :style="{ cursor: getGroupLabel(activeConfigGroup) !== activeConfigGroup ? 'help' : 'default' }"
-              :title="getGroupLabel(activeConfigGroup) !== activeConfigGroup ? 'Clau de grup: ' + activeConfigGroup : undefined"
-            >
-              {{ getGroupLabel(activeConfigGroup) }}
-            </span>
-          </h3>
-          <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem;" @click="isConfigModalOpen = false">&times;</button>
-        </div>
-        
-        <div class="modal-body" style="flex-grow: 1; overflow-y: auto; padding: 1rem 0;">
-          <!-- Top Control Header: Label Input + Action Buttons (Nova Clau, Editor Visual Grid) -->
-          <div style="background: var(--bg-card); padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
-            <!-- Left: Group Label Input -->
-            <div style="display: flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 240px;">
-              <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); white-space: nowrap;">Etiqueta formulari:</span>
-              <input 
-                type="text" 
-                v-model="groupLabelInput" 
-                class="data-input" 
-                placeholder="ex: Pressupost, Partides, Activitats..." 
-                style="height: 30px; font-size: 0.85rem; flex-grow: 1;"
-              />
-            </div>
-
-            <!-- Right: Action Buttons at the exact same row level -->
-            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-              <button 
-                type="button"
-                class="btn btn-secondary" 
-                style="width: auto; padding: 4px 10px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 5px;" 
-                @click="addNewFieldToConfig"
-                title="Afegeix una nova clau o camp a aquest grup"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                <span>Afegeix camp</span>
-              </button>
-
-              <button 
-                type="button"
-                class="btn btn-secondary" 
-                style="width: auto; padding: 4px 12px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;" 
-                @click="openVisualGridEditor"
-                title="Editor Visual de Grid: Organitza files, assigna camps i mou-los fàcilment de forma visual"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-                <span>Editor Visual de Grid</span>
-              </button>
-            </div>
-          </div>
-          <table class="inspector-table" style="width: 100%;">
-            <thead>
-              <tr>
-                <th>Element (Clau/Columna)</th>
-                <th>Etiqueta al formulari</th>
-                <th>Tipus de Dada</th>
-                <th style="width: 70px; text-align: center;" title="Fila a la quadrícula del formulari (ex: 1, 2...)">Fila Grid</th>
-                <th style="width: 70px; text-align: center;" title="Ordre de prioritat a la fila (ex: 1, 2...)">Ordre</th>
-                <th style="width: 60px; text-align: center;" title="Si està marcat, el camp ocuparà tot l'espai horitzontal disponible a la fila">Omple</th>
-                <th>Valors Possibles (Select / Fórmules)</th>
-                <th v-if="getSheetType(store.excelJsonData[activeConfigGroup]) === 'tabular'" style="width: 90px;">Amplada (%)</th>
-                <th v-if="getSheetType(store.excelJsonData[activeConfigGroup]) === 'tabular'" style="width: 60px; text-align: center;">Accions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="item in groupConfigList" :key="item.element">
-                <td style="font-weight: 600; font-family: monospace; font-size: 0.8rem; vertical-align: middle; padding: 6px 8px;">
-                  {{ item.element }}
-                </td>
-                <td style="padding: 4px;">
-                  <input 
-                    type="text" 
-                    v-model="item.label" 
-                    class="data-input" 
-                    style="padding: 2px 6px; height: 28px; font-size: 0.8rem;"
-                    :placeholder="item.element"
-                    title="Nom personalitzat a mostrar al formulari en comptes del nom del camp"
-                  >
-                </td>
-                <td style="padding: 4px;">
-                  <select v-model="item.type" class="data-input" style="padding: 2px 6px; height: 28px; font-size: 0.8rem;">
-                    <option value="Text">Text (String)</option>
-                    <option value="Number">Number (Numèric)</option>
-                    <option value="Date">Date (Data)</option>
-                    <option value="Boolean">Boolean (Lògic)</option>
-                    <option value="Select">Select (Desplegable)</option>
-                    <option value="Computed">Calculat (Computed: SUM, COUNT, AVG)</option>
-                    <option value="Table">Sub-taula / Estructura Tabular Aniuada (Table)</option>
-                  </select>
-                </td>
-                <!-- Grid Row assignment -->
-                <td style="padding: 4px; width: 70px;">
-                  <input 
-                    type="number" 
-                    v-model="item.gridRow" 
-                    min="1" 
-                    placeholder="Auto"
-                    class="data-input" 
-                    style="padding: 2px 4px; height: 28px; font-size: 0.8rem; text-align: center;"
-                    title="Número de fila a la quadrícula del formulari (ex: 1, 2, 3...). Buit = automàtic"
-                  >
-                </td>
-                
-                <!-- Grid Order assignment -->
-                <td style="padding: 4px; width: 70px;">
-                  <input 
-                    type="number" 
-                    v-model="item.gridOrder" 
-                    min="1" 
-                    placeholder="Auto"
-                    class="data-input" 
-                    style="padding: 2px 4px; height: 28px; font-size: 0.8rem; text-align: center;"
-                    title="Ordre de prioritat dins de la fila a la quadrícula (ex: 1, 2, 3...). Buit = automàtic"
-                  >
-                </td>
-
-                <!-- Grid Fill option ("Omple") -->
-                <td style="padding: 4px; width: 60px; text-align: center; vertical-align: middle;">
-                  <input 
-                    type="checkbox" 
-                    v-model="item.gridFill" 
-                    style="width: 18px; height: 18px; cursor: pointer;"
-                    title="Si està marcat, el camp ocuparà tot l'espai horitzontal disponible a la fila"
-                  >
-                </td>
-                <td style="padding: 4px; vertical-align: top;">
-                  <template v-if="item.type === 'Select'">
-                    <!-- Select Source Type -->
-                    <div style="margin-bottom: 6px;">
-                      <select v-model="item.sourceType" class="data-input" style="padding: 2px 6px; height: 28px; font-size: 0.8rem; width: 100%;">
-                        <option value="static">Llista manual (Estàtic)</option>
-                        <option value="dynamic">Vector de dades (Dinàmic)</option>
-                      </select>
-                    </div>
-                    
-                    <!-- Static comma list -->
-                    <div v-if="item.sourceType === 'static'">
-                      <input 
-                        type="text" 
-                        v-model="item.optionsRaw" 
-                        class="data-input" 
-                        placeholder="opcio1, opcio2, opcio3"
-                        style="padding: 4px 8px; height: 28px; font-size: 0.8rem;"
-                      >
-                    </div>
-                    
-                    <!-- Dynamic vector config -->
-                    <div v-else style="display: flex; flex-direction: column; gap: 4px;">
-                      <!-- Vector Path Selection -->
-                      <select v-model="item.vectorPath" class="data-input" style="padding: 2px 6px; height: 28px; font-size: 0.8rem;" @change="onVectorPathChange(item)">
-                        <option value="">-- Tria una taula --</option>
-                        <option v-for="tName in getAvailableTables()" :key="tName" :value="tName">
-                          {{ tName }}
-                        </option>
-                      </select>
-                      
-                      <!-- Field mapping (only if vectorPath is set and has columns) -->
-                      <div v-if="item.vectorPath && getTableColumns(item.vectorPath).length > 0" style="display: flex; gap: 4px;">
-                        <select v-model="item.displayField" class="data-input" style="padding: 2px 6px; height: 28px; font-size: 0.75rem; flex: 1;" title="Camp visual">
-                          <option value="">-- Camp visual --</option>
-                          <option v-for="col in getTableColumns(item.vectorPath)" :key="col" :value="col">{{ col }}</option>
-                        </select>
-                        <select v-model="item.valueField" class="data-input" style="padding: 2px 6px; height: 28px; font-size: 0.75rem; flex: 1;" title="Camp a desar">
-                          <option value="">-- Camp a desar --</option>
-                          <option v-for="col in getTableColumns(item.vectorPath)" :key="col" :value="col">{{ col }}</option>
-                        </select>
-                      </div>
-                    </div>
-                    
-                    <!-- Multi-select checkbox -->
-                    <label style="display: flex; align-items: center; gap: 6px; margin-top: 6px; cursor: pointer; font-size: 0.8rem; color: var(--text-primary);">
-                      <input type="checkbox" v-model="item.multiple">
-                      <span>Selecció múltiple</span>
-                    </label>
-                  </template>
-
-                  <!-- Computed Configuration -->
-                  <template v-else-if="item.type === 'Computed'">
-                    <div style="display: flex; flex-direction: column; gap: 4px; padding: 2px 0;">
-                      <div style="display: flex; gap: 4px; align-items: center;">
-                        <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Funció:</span>
-                        <select v-model="item.calcFn" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
-                          <option value="SUM">SUM (Suma sub-taula)</option>
-                          <option value="COUNT">COUNT (Recompte sub-taula)</option>
-                          <option value="AVG">AVG (Mitjana sub-taula)</option>
-                          <option value="CUSTOM">CUSTOM (Fórmula personalitzada)</option>
-                        </select>
-                      </div>
-
-                      <template v-if="item.calcFn === 'CUSTOM'">
-                        <div style="display: flex; flex-direction: column; gap: 3px; margin-top: 2px;">
-                          <div style="display: flex; gap: 4px; align-items: center;">
-                            <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Fórmula:</span>
-                            <input 
-                              type="text" 
-                              v-model="item.calcFormula" 
-                              class="data-input" 
-                              placeholder="ex: preu * unitats o SI(unitats > 10; preu * 0.9; preu)"
-                              style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1; font-family: var(--font-mono);"
-                              title="Ex: preu * unitats o SI(unitats > 10; preu * 0.9; preu * unitats)"
-                            />
-                            <button 
-                              type="button" 
-                              class="btn btn-secondary" 
-                              style="padding: 2px 8px; height: 26px; font-size: 0.72rem; width: auto; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;"
-                              @click="openFormulaModal(item, groupConfigList.map(x => x.element))"
-                              title="Obre l'editor ampliat de fórmules"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-                              <span>Amplia</span>
-                            </button>
-                          </div>
-                          <span style="font-size: 0.68rem; color: var(--text-muted);">
-                            Operadors: +, -, *, /, %, ^ | Condició: SI(condició; cert; fals)
-                          </span>
-                        </div>
-                      </template>
-
-                      <template v-else>
-                        <div style="display: flex; gap: 4px; align-items: center;">
-                          <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Sub-taula:</span>
-                          <select v-model="item.calcVector" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
-                            <option value="">-- Sub-taula --</option>
-                            <option v-for="vec in getAvailableChildVectorsForGroup(activeConfigGroup)" :key="vec" :value="vec">
-                              {{ vec }}
-                            </option>
-                          </select>
-                        </div>
-
-                        <div v-if="item.calcFn !== 'COUNT' && item.calcVector" style="display: flex; gap: 4px; align-items: center;">
-                          <span style="font-size: 0.72rem; font-weight: 600; width: 60px;">Columna:</span>
-                          <select v-model="item.calcTargetCol" class="data-input" style="padding: 2px 6px; height: 26px; font-size: 0.75rem; flex: 1;">
-                            <option value="">-- Columna --</option>
-                            <option v-for="col in getChildTableColumns(activeConfigGroup, item.calcVector)" :key="col" :value="col">
-                              {{ col }}
-                            </option>
-                          </select>
-                        </div>
-                      </template>
-                    </div>
-                  </template>
-
-                  <template v-else>
-                    <span style="color: var(--text-muted); font-size: 0.8rem;">No aplicable</span>
-                  </template>
-                </td>
-                
-                <!-- Width (%) -->
-                <td v-if="getSheetType(store.excelJsonData[activeConfigGroup]) === 'tabular'" style="padding: 4px; vertical-align: top;">
-                  <div style="display: flex; align-items: center; gap: 4px;">
-                    <input 
-                      type="number" 
-                      v-model="item.width" 
-                      min="1" 
-                      max="100" 
-                      placeholder="Auto"
-                      class="data-input" 
-                      style="padding: 2px 6px; height: 28px; font-size: 0.8rem; text-align: right;"
-                    >
-                    <span style="font-size: 0.85rem; color: var(--text-muted);">%</span>
-                  </div>
-                </td>
-                
-                <!-- Actions -->
-                <td v-if="getSheetType(store.excelJsonData[activeConfigGroup]) === 'tabular'" style="padding: 4px; text-align: center; vertical-align: middle;">
-                  <button 
-                    class="btn-icon-only text-danger" 
-                    style="border: none; background: transparent; font-size: 1rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; height: 28px; width: 28px;"
-                    title="Elimina columna"
-                    @click="deleteTabularColumn(item.element)"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        
-        <div class="modal-footer" style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
-          <div style="display: flex; gap: 6px;">
-            <button 
-              type="button"
-              class="btn btn-secondary" 
-              style="width: auto; padding: 3px 8px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 4px;"
-              @click="copyGroupConfig(activeConfigGroup)"
-              title="Copia la configuració d'aquest grup al portaretalls"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-              <span>Copia Grup</span>
-            </button>
-            <button 
-              type="button"
-              class="btn btn-secondary" 
-              style="width: auto; padding: 3px 8px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 4px;"
-              @click="pasteGroupConfig(activeConfigGroup)"
-              title="Enganxa la configuració del portaretalls sobre aquest grup"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
-              <span>Enganxa Grup</span>
-            </button>
-          </div>
-          <div style="display: flex; gap: 8px;">
-            <button class="btn btn-secondary" style="width: auto;" @click="isConfigModalOpen = false">Cancel·la</button>
-            <button class="btn btn-primary" style="width: auto;" @click="saveGroupConfig">Aplica</button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <GroupConfigModal
+      v-model="isConfigModalOpen"
+      :groupName="activeConfigGroup"
+      :configList="groupConfigList"
+      :groupLabel="groupLabelInput"
+      :selectedLayout="selectedLayout"
+      @save="handleSaveGroupConfig"
+      @copyGroup="copyGroupConfig"
+      @pasteGroup="pasteGroupConfig"
+    />
 
     <!-- 7. Dynamic Multi-Select Options Modal -->
     <div class="modal-overlay" v-if="isMultiSelectModalOpen" style="display: flex; z-index: 1100;">
