@@ -20,10 +20,7 @@ const localSelectedLayout = ref('vertical');
 const localConfigList = ref([]);
 const isVisualGridModalOpen = ref(false);
 
-// Formula Modal State
-const isFormulaModalOpen = ref(false);
-const editingFormulaItem = ref(null);
-const formulaTextBuffer = ref('');
+// Formula Modal State - declared below near helper functions
 
 const handleKeydown = (e) => {
   if (!props.modelValue) return;
@@ -245,10 +242,65 @@ const getChildTableColumns = (vectorName) => {
   return ['valor'];
 };
 
+// Formula Modal State
+const isFormulaModalOpen = ref(false);
+const editingFormulaItem = ref(null);
+const formulaTextBuffer = ref('');
+const formulaTextareaRef = ref(null);
+
+const availableFormulaFields = computed(() => {
+  if (!editingFormulaItem.value) return [];
+  return localConfigList.value
+    .map(item => item.element)
+    .filter(f => f && f !== editingFormulaItem.value.element);
+});
+
+const globalFormulaPaths = computed(() => {
+  if (!store.excelJsonData) return [];
+  const paths = [];
+  const isPrimitive = (val) => val === null || val === undefined || typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean';
+
+  Object.keys(store.excelJsonData).forEach(groupKey => {
+    if (groupKey === 'editor_metadata' || groupKey === '_hierarchy_schema' || groupKey === '_sheet_info') return;
+    const groupData = store.excelJsonData[groupKey];
+    if (Array.isArray(groupData) && groupData.length > 0 && typeof groupData[0] === 'object') {
+      Object.keys(groupData[0]).forEach(field => {
+        if (field !== '_hierarchy_schema' && isPrimitive(groupData[0][field])) {
+          paths.push(`${groupKey}.${field}`);
+        }
+      });
+    } else if (typeof groupData === 'object' && !Array.isArray(groupData)) {
+      Object.keys(groupData).forEach(field => {
+        if (field !== '_hierarchy_schema' && isPrimitive(groupData[field])) {
+          paths.push(`${groupKey}.${field}`);
+        }
+      });
+    }
+  });
+  return paths;
+});
+
 const openFormulaEditor = (item) => {
   editingFormulaItem.value = item;
   formulaTextBuffer.value = item.calcFormula || '';
   isFormulaModalOpen.value = true;
+};
+
+const insertTokenIntoFormula = (token) => {
+  if (!formulaTextareaRef.value) {
+    formulaTextBuffer.value += token;
+    return;
+  }
+  const el = formulaTextareaRef.value;
+  const start = el.selectionStart || formulaTextBuffer.value.length;
+  const end = el.selectionEnd || formulaTextBuffer.value.length;
+  const val = formulaTextBuffer.value;
+  formulaTextBuffer.value = val.substring(0, start) + token + val.substring(end);
+  nextTick(() => {
+    el.focus();
+    const newPos = start + token.length;
+    el.setSelectionRange(newPos, newPos);
+  });
 };
 
 const saveFormulaModal = () => {
@@ -579,20 +631,80 @@ const saveFormulaModal = () => {
 
     <!-- Integrated Formula Editor Modal -->
     <div class="modal-overlay" v-if="isFormulaModalOpen" style="display: flex; z-index: 1200;">
-      <div class="modal-content" style="max-width: 600px; width: 90%;">
+      <div class="modal-content" style="max-width: 650px; width: 90%; display: flex; flex-direction: column; gap: 12px;">
         <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
-          <h3 style="margin: 0; font-size: 1rem;">Editor de Fórmula Personalitzada</h3>
+          <h3 style="margin: 0; font-size: 1.05rem; display: flex; align-items: center; gap: 6px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+            <span>Editor de Fórmula: <strong style="color: var(--color-primary);">{{ editingFormulaItem?.element }}</strong></span>
+          </h3>
           <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isFormulaModalOpen = false">&times;</button>
         </div>
-        <div class="modal-body" style="padding: 1rem 0;">
+
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 10px;">
+          <!-- Field Insert Badges -->
+          <div v-if="availableFormulaFields.length > 0">
+            <span style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Camps de la fila disponibles (Clica per inserir):</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+              <button 
+                v-for="col in availableFormulaFields" 
+                :key="col" 
+                type="button" 
+                class="btn btn-secondary" 
+                style="padding: 3px 8px; font-size: 0.75rem; font-family: var(--font-mono); width: auto; background: var(--bg-tertiary);"
+                @click="insertTokenIntoFormula(col)"
+              >
+                + {{ col }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Global Model Paths Badges -->
+          <div v-if="globalFormulaPaths.length > 0">
+            <span style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Rutes globals del model de dades:</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px; max-height: 80px; overflow-y: auto;">
+              <button 
+                v-for="gPath in globalFormulaPaths" 
+                :key="gPath" 
+                type="button" 
+                class="btn btn-secondary" 
+                style="padding: 2px 7px; font-size: 0.73rem; font-family: var(--font-mono); width: auto; border: 1px dashed var(--color-primary); color: var(--color-primary);"
+                @click="insertTokenIntoFormula(gPath)"
+                :title="'Insereix la ruta global ' + gPath"
+              >
+                + {{ gPath }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Quick Operators & Functions -->
+          <div>
+            <span style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Operadors i Funcions:</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' + ')">+</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' - ')">-</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' * ')">*</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' / ')">/</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' % ')">%</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' ^ ')">^</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' ( ')">(</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' ) ')">)</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto; font-weight: bold; color: var(--color-primary);" @click="insertTokenIntoFormula('SI(condició; cert; fals)')">SI(condició; cert; fals)</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto; font-weight: bold; color: var(--color-primary);" @click="insertTokenIntoFormula('ARRODONEIX(valor; 2)')">ARRODONEIX(valor; prec)</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto; font-weight: bold; color: var(--color-primary);" @click="insertTokenIntoFormula('ABS(valor)')">ABS(valor)</button>
+            </div>
+          </div>
+
+          <!-- Multi-line Textarea -->
           <textarea 
+            ref="formulaTextareaRef"
             v-model="formulaTextBuffer" 
             class="data-input" 
-            rows="6" 
-            style="width: 100%; font-family: monospace; font-size: 0.85rem;"
-            placeholder="ex: sum(item.import for item in parts if item.actiu)"
+            rows="5" 
+            style="width: 100%; font-family: var(--font-mono); font-size: 0.85rem; padding: 8px; resize: vertical;"
+            placeholder="ex: preu * unitats o SI(unitats > 10; preu * 0.9; preu)"
           ></textarea>
         </div>
+
         <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 0.5rem;">
           <button type="button" class="btn btn-secondary" style="width: auto;" @click="isFormulaModalOpen = false">Cancel·la</button>
           <button type="button" class="btn btn-primary" style="width: auto;" @click="saveFormulaModal">Desa Fórmula</button>
