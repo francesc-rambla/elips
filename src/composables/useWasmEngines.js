@@ -2900,11 +2900,13 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     const aggMetas = computedMetas.filter(m => !isCustomFn(m.calcFn));
 
     // Helper to evaluate CUSTOM formulas on a container (bottom-up)
-    const runCustomPass = (container, groupHint = '') => {
+    const runCustomPass = (container, groupHint = '', visited = new Set()) => {
       if (!container || typeof container !== 'object') return;
+      if (visited.has(container)) return;
+      visited.add(container);
 
       if (Array.isArray(container)) {
-        container.forEach(item => runCustomPass(item, groupHint));
+        container.forEach(item => runCustomPass(item, groupHint, visited));
         return;
       }
 
@@ -2913,7 +2915,7 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         if (k !== '_sheet_info' && k !== '_hierarchy_schema' && k !== 'editor_metadata') {
           const val = container[k];
           if (val && typeof val === 'object') {
-            runCustomPass(val, Array.isArray(val) ? k : groupHint);
+            runCustomPass(val, Array.isArray(val) ? k : groupHint, visited);
           }
         }
       });
@@ -2930,11 +2932,13 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     };
 
     // Helper to evaluate Aggregation (SUM, COUNT, AVG) formulas on a container (bottom-up)
-    const runAggPass = (container, groupHint = '') => {
+    const runAggPass = (container, groupHint = '', visited = new Set()) => {
       if (!container || typeof container !== 'object') return;
+      if (visited.has(container)) return;
+      visited.add(container);
 
       if (Array.isArray(container)) {
-        container.forEach(item => runAggPass(item, groupHint));
+        container.forEach(item => runAggPass(item, groupHint, visited));
         return;
       }
 
@@ -2943,7 +2947,7 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         if (k !== '_sheet_info' && k !== '_hierarchy_schema' && k !== 'editor_metadata') {
           const val = container[k];
           if (val && typeof val === 'object') {
-            runAggPass(val, Array.isArray(val) ? k : groupHint);
+            runAggPass(val, Array.isArray(val) ? k : groupHint, visited);
           }
         }
       });
@@ -2961,15 +2965,18 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
           } else if (targetVec && data[targetVec] && Array.isArray(data[targetVec])) {
             childList = data[targetVec];
           } else if (targetVec) {
-            // Search recursively for targetVec in container
-            const findSubList = (obj) => {
-              if (!obj || typeof obj !== 'object' || childList) return;
+            // Search recursively for targetVec in container (safely guarded against infinite loops)
+            const findSubList = (obj, subVisited = new Set(), depth = 0) => {
+              if (!obj || typeof obj !== 'object' || childList || depth > 5) return;
+              if (subVisited.has(obj)) return;
+              subVisited.add(obj);
+
               if (Array.isArray(obj[targetVec])) {
                 childList = obj[targetVec];
                 return;
               }
               Object.values(obj).forEach(val => {
-                if (val && typeof val === 'object') findSubList(val);
+                if (val && typeof val === 'object') findSubList(val, subVisited, depth + 1);
               });
             };
             findSubList(container);
