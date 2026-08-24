@@ -522,8 +522,8 @@ const activeCellInfo = ref({ sheet: '', keyOrIdx: '', col: null, isKv: true });
 
 const openCellEditor = (sheet, keyOrIdx, col, isKv) => {
   const colName = isKv ? keyOrIdx : col;
-  if (getElementType(sheet, colName) === 'Computed') {
-    store.addLog("Aquest camp és calculat automàticament i no es pot editar manualment.", "info");
+  if (getElementType(sheet, colName) !== 'Text') {
+    store.addLog("Només els camps de tipus Text es poden editar amb l'editor visual.", "info");
     return;
   }
   activeCellInfo.value = { sheet, keyOrIdx, col, isKv };
@@ -1859,7 +1859,7 @@ onMounted(() => {
                         >
                         
                         <button 
-                          v-if="getElementType(name, col) !== 'Computed'"
+                          v-if="getElementType(name, col) === 'Text'"
                           class="btn-icon-only"
                           style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
                           title="Edició complexa en Markdown + Jinja2"
@@ -2063,7 +2063,7 @@ onMounted(() => {
                       style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                     >
                     <button 
-                      v-if="getElementType(name, item.key) !== 'Computed'"
+                      v-if="getElementType(name, item.key) === 'Text'"
                       class="btn-icon-only"
                       style="height: 28px; width: 28px; min-width: 28px; font-size: 0.85rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
                       title="Edició complexa en Markdown + Jinja2"

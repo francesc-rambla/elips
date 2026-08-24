@@ -502,8 +502,7 @@ const activeCellInfo = ref(null);
 const cellTextValue = ref('');
 
 const openCellEditor = (item, fieldKey) => {
-  if (getElementType(fieldKey) === 'Computed') {
-    store.addLog("Aquest camp és calculat automàticament i no es pot editar manualment.", "info");
+  if (getElementType(fieldKey) !== 'Text') {
     return;
   }
   activeCellInfo.value = { item, fieldKey };
@@ -1055,7 +1054,7 @@ const getItemPath = (idx, fieldKey) => {
                   />
 
                   <button 
-                    v-if="getElementType(h) !== 'Computed'"
+                    v-if="getElementType(h) === 'Text'"
                     type="button"
                     class="btn-icon-only"
                     style="height: 28px; width: 28px; min-width: 28px; font-size: 0.8rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
@@ -1292,7 +1291,7 @@ const getItemPath = (idx, fieldKey) => {
                 >
                 
                 <button 
-                  v-if="getElementType(fKey) !== 'Computed'"
+                  v-if="getElementType(fKey) === 'Text'"
                   type="button"
                   class="btn-icon-only"
                   style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
@@ -1413,7 +1412,7 @@ const getItemPath = (idx, fieldKey) => {
                 >
                 
                 <button 
-                  v-if="getElementType(fKey) !== 'Computed'"
+                  v-if="getElementType(fKey) === 'Text'"
                   type="button"
                   class="btn-icon-only"
                   style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
