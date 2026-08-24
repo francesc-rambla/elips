@@ -220,12 +220,13 @@ def _read_rows(ws_d, ws_f, wb_data, wb_formula, ws_name, date_format='iso'):
             val_f = ws_f.cell(r, c).value
             
             val = _to_jsonable(val_d, date_format)
-            if val in (None, ''):
-                if isinstance(val_f, str) and val_f.startswith('='):
+            if isinstance(val_f, str) and val_f.startswith('='):
+                if val in (None, '', 0, 0.0, '0', '0.0'):
                     val_res = _resolve_formula_ref(val_f, wb_data, wb_formula, ws_name, date_format)
-                    val = _to_jsonable(val_res, date_format) if val_res not in (None, '') else ''
-                else:
-                    val = _to_jsonable(val_f, date_format) if val_f is not None else ''
+                    if val_res not in (None, ''):
+                        val = _to_jsonable(val_res, date_format)
+            elif val is None:
+                val = _to_jsonable(val_f, date_format) if val_f is not None else ''
 
             row.append(val)
 
@@ -2392,33 +2393,6 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
     
     store.rawPythonJsonStr = jsonStr;
     const parsed = JSON.parse(jsonStr);
-
-    // Clean blank formula rows (rows where ALL cells are 0, 0.0, '', null, undefined, false, '0', '0.0')
-    if (parsed && parsed.data && typeof parsed.data === 'object') {
-      Object.keys(parsed.data).forEach(sheetName => {
-        if (sheetName === '_hierarchy_schema') return;
-        const sheetData = parsed.data[sheetName];
-        if (Array.isArray(sheetData)) {
-          sheetData.forEach(row => {
-            if (row && typeof row === 'object') {
-              const primitiveValues = Object.entries(row)
-                .filter(([k, v]) => !k.startsWith('_') && !Array.isArray(v) && (typeof v !== 'object' || v === null))
-                .map(([k, v]) => v);
-              const isAllZeros = primitiveValues.length > 0 && primitiveValues.every(val => 
-                val === 0 || val === 0.0 || val === '' || val === null || val === undefined || val === false || val === '0' || val === '0.0'
-              );
-              if (isAllZeros) {
-                Object.keys(row).forEach(key => {
-                  if (!key.startsWith('_') && !Array.isArray(row[key]) && typeof row[key] !== 'object') {
-                    row[key] = '';
-                  }
-                });
-              }
-            }
-          });
-        }
-      });
-    }
 
     let parsedData = {};
     let parsedSchema = {};
