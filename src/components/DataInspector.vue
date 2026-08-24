@@ -405,7 +405,11 @@ const deleteKvKey = (sheetName, key) => {
 
 const isRowAllZerosOrEmpty = (row) => {
   if (!row || typeof row !== 'object') return false;
-  return Object.values(row).every(val => val === '' || val === null || val === undefined);
+  const primitiveValues = Object.entries(row)
+    .filter(([k, v]) => !k.startsWith('_') && !Array.isArray(v) && (typeof v !== 'object' || v === null))
+    .map(([k, v]) => v);
+  if (primitiveValues.length === 0) return true;
+  return primitiveValues.every(val => val === 0 || val === 0.0 || val === '' || val === null || val === undefined || val === false || val === '0' || val === '0.0');
 };
 
 const visibleRowsCount = ref({});

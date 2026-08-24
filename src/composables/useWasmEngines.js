@@ -2302,6 +2302,33 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
     
     const parsed = JSON.parse(jsonStr);
 
+    // Clean blank formula rows (rows where ALL cells are 0, 0.0, '', null, undefined, false, '0', '0.0')
+    if (parsed && parsed.data && typeof parsed.data === 'object') {
+      Object.keys(parsed.data).forEach(sheetName => {
+        if (sheetName === '_hierarchy_schema') return;
+        const sheetData = parsed.data[sheetName];
+        if (Array.isArray(sheetData)) {
+          sheetData.forEach(row => {
+            if (row && typeof row === 'object') {
+              const primitiveValues = Object.entries(row)
+                .filter(([k, v]) => !k.startsWith('_') && !Array.isArray(v) && (typeof v !== 'object' || v === null))
+                .map(([k, v]) => v);
+              const isAllZeros = primitiveValues.length > 0 && primitiveValues.every(val => 
+                val === 0 || val === 0.0 || val === '' || val === null || val === undefined || val === false || val === '0' || val === '0.0'
+              );
+              if (isAllZeros) {
+                Object.keys(row).forEach(key => {
+                  if (!key.startsWith('_') && !Array.isArray(row[key]) && typeof row[key] !== 'object') {
+                    row[key] = '';
+                  }
+                });
+              }
+            }
+          });
+        }
+      });
+    }
+
     let parsedData = {};
     let parsedSchema = {};
 
