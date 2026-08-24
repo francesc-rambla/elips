@@ -243,13 +243,16 @@ Quan un camp requereix una redacció extensa (com la justificació de la necessi
 
 ---
 
-### 4.4 Generació, previsualització i exportació de documents (DOCX, MD, XLSX)
+### 4.4 Generació, previsualització i Tauler de Control (Descàrregues i Esquema)
 
 Un cop completades les dades:
 
-1. Aneu a la pestanya **Previsualització i compilació**.
-2. Previsualitzeu el document generat en temps real.
-3. Feu clic a **Compilar i baixar DOCX** per generar el document de Word oficial formatat segons l'estil corporatiu.
+1. **Tauler de Control integrat (Pestanyes internar)**:
+   - Ajustat verticalment entre el ribbon superior i el peu de pàgina de l'aplicació.
+   - **Pestanya 1: Descàrregues**: Permet inicialitzar els motors WASM, executar la generació de documents i baixar els fitxers finals desglossats en format JSON (`dades.json`), Markdown (`.md`) i Word (`.docx`).
+   - **Pestanya 2: Esquema**: Mostra un **arbre jeràrquic interactiu dels encapçalaments del document** (`H1`, `H2`, `H3`...). En fer clic sobre qualsevol nivell de l'arbre, la vista es desplaça automàticament fins a la secció seleccionada al document.
+2. Previsualitzeu el document generat en temps real a la pestanya **Previsualització**.
+3. Feu clic a **Baixa Document Word (.docx)** per descarregar el document de Word oficial formatat segons l'estil corporatiu.
 4. *(Opcional)* Feu clic a **Exporta dades a Excel** a la pestanya de Dades per guardar totes les modificacions realitzades des de la web en un nou arxiu `.xlsx` que mantindrà intacta la configuració i les fórmules.
 
 ---

@@ -266,9 +266,11 @@ header {
 
 .control-panel-card.auto-hidden {
   position: fixed;
-  top: 100px;
+  top: 96px;
+  bottom: 38px;
+  height: calc(100vh - 134px);
   left: 0;
-  width: 320px;
+  width: 340px;
   max-width: 90vw;
   transform: translateX(-100%);
   opacity: 0;
@@ -276,6 +278,7 @@ header {
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
   border-left: none;
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  box-sizing: border-box;
 }
 
 .control-panel-card.auto-hidden.hovered {
@@ -286,10 +289,11 @@ header {
 
 .sidebar-edge-trigger {
   position: fixed;
-  top: 92px;
+  top: 96px;
+  bottom: 38px;
+  height: calc(100vh - 134px);
   left: 0;
   width: 18px;
-  height: calc(100vh - 92px);
   z-index: 899;
   cursor: pointer;
   background: linear-gradient(to right, rgba(2, 132, 199, 0.18), transparent);
@@ -298,11 +302,142 @@ header {
   align-items: center;
   justify-content: center;
   transition: background 0.2s ease, width 0.2s ease;
+  box-sizing: border-box;
 }
 
 .sidebar-edge-trigger:hover {
   background: linear-gradient(to right, rgba(2, 132, 199, 0.35), transparent);
   width: 24px;
+}
+
+/* Control Panel Internal Segmented Tabs */
+.control-tab-switcher {
+  display: flex;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 3px;
+}
+
+.control-tab-btn {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.2s ease;
+}
+
+.control-tab-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.control-tab-btn.active {
+  background: var(--bg-card);
+  color: var(--color-primary);
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.tab-badge {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 10px;
+}
+
+/* Outline Tree Styling */
+.outline-tree-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+.outline-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  transition: background 0.15s ease, color 0.15s ease;
+  user-select: none;
+}
+
+.outline-tree-item:hover {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.outline-level-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 1px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.outline-level-badge.lvl-1 {
+  background: rgba(2, 132, 199, 0.15);
+  color: #0284c7;
+}
+
+.outline-level-badge.lvl-2 {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.outline-level-badge.lvl-3 {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.outline-level-badge.lvl-4,
+.outline-level-badge.lvl-5,
+.outline-level-badge.lvl-6 {
+  background: rgba(107, 114, 128, 0.15);
+  color: #6b7280;
+}
+
+.outline-item-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.outline-tree-item.level-1 .outline-item-text {
+  font-weight: 700;
+}
+
+@keyframes headingGlow {
+  0% { background-color: var(--color-primary-light); outline: 2px solid var(--color-primary); }
+  100% { background-color: transparent; outline: 2px solid transparent; }
+}
+
+.heading-highlight {
+  animation: headingGlow 1.8s ease-out;
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
 }
 
 .app-main-layout {

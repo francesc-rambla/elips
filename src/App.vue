@@ -65,6 +65,72 @@ const isProjectsModalOpen = ref(false);
 const activeDocName = ref(localStorage.getItem(`${currentProjectName.value}:activeDocName`) || 'Document Principal');
 const documentsList = ref(JSON.parse(localStorage.getItem(`${currentProjectName.value}:documentsList`) || '["Document Principal"]'));
 
+// Control Panel Internal Tabs ('downloads' | 'outline')
+const controlPanelTab = ref('downloads');
+
+const documentOutline = computed(() => {
+  const text = store.cleanMarkdown || store.renderedMarkdown || store.templateText || '';
+  if (!text) return [];
+  
+  const lines = text.split(/\r?\n/);
+  const outline = [];
+  let headingCount = 0;
+  
+  lines.forEach((line, index) => {
+    const match = line.match(/^(#{1,6})\s+(.+)$/);
+    if (match) {
+      const level = match[1].length;
+      let rawTitle = match[2].trim();
+      
+      let cleanText = rawTitle
+        .replace(/\{\{[\s\S]*?\}\}/g, '...')
+        .replace(/\{%[\s\S]*?%\}/g, '')
+        .replace(/[*_~`]/g, '')
+        .trim();
+        
+      if (!cleanText) cleanText = rawTitle;
+      
+      outline.push({
+        id: `outline-heading-${headingCount}`,
+        index: headingCount,
+        lineIndex: index,
+        level,
+        rawTitle,
+        text: cleanText
+      });
+      headingCount++;
+    }
+  });
+  
+  return outline;
+});
+
+const scrollToHeading = (item) => {
+  if (store.activeTab !== 'preview' && store.activeTab !== 'template') {
+    store.activeTab = 'preview';
+  }
+
+  setTimeout(() => {
+    const previewEl = document.getElementById('previewHtml');
+    if (previewEl) {
+      const headings = Array.from(previewEl.querySelectorAll('h1, h2, h3, h4, h5, h6, .metadata-card-title'));
+      if (headings.length > 0) {
+        let target = headings[item.index];
+        if (!target) {
+          target = headings.find(h => h.textContent.includes(item.text));
+        }
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          target.classList.add('heading-highlight');
+          setTimeout(() => {
+            target.classList.remove('heading-highlight');
+          }, 2000);
+        }
+      }
+    }
+  }, 120);
+};
+
 const openProjectsModal = () => {
   isProjectsModalOpen.value = true;
 };
@@ -1907,10 +1973,10 @@ const generateDocuments = async () => {
           @mouseenter="isSidebarHovered = true"
           @mouseleave="isSidebarHovered = false"
         >
-          <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+          <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; margin-bottom: 0.25rem;">
             <div style="display: flex; align-items: center; gap: 6px;">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sliders-horizontal"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="12" x2="12" y1="18" y2="22"/></svg>
-              <span>Tauler de Control</span>
+              <span style="font-weight: 700; font-size: 0.95rem;">Tauler de Control</span>
             </div>
             <button 
               type="button" 
@@ -1923,62 +1989,121 @@ const generateDocuments = async () => {
             </button>
           </div>
 
-          <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+          <!-- Segmented Tab Switcher for Control Panel -->
+          <div class="control-tab-switcher" style="margin-bottom: 0.5rem;">
             <button 
-              v-if="!store.enginesReady"
-              class="btn btn-secondary" 
-              @click="initEngines" 
-              :disabled="isLoading"
+              type="button" 
+              class="control-tab-btn" 
+              :class="{ active: controlPanelTab === 'downloads' }"
+              @click="controlPanelTab = 'downloads'"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ 'loading-pulse': isLoading }"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              {{ isLoading ? 'Inicialitzant...' : 'Inicialitza Motors (WASM)' }}
+              📥 Descàrregues
             </button>
-            <span v-else style="font-size: 0.8rem; font-weight: bold; color: var(--color-success); text-align: center; display: block; padding: 0.4rem; background: var(--color-success-light); border: 1px solid var(--color-success); border-radius: 4px;">
-              ✓ Motors Inicialitzats (Pyodide + Pandoc)
-            </span>
-
             <button 
-              class="btn btn-success" 
-              :disabled="!isGenerateReady || store.generating"
-              @click="generateDocuments"
+              type="button" 
+              class="control-tab-btn" 
+              :class="{ active: controlPanelTab === 'outline' }"
+              @click="controlPanelTab = 'outline'"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ 'loading-pulse': store.generating }"><polygon points="6 3 20 12 6 21 6 3"/></svg>
-              {{ store.generating ? 'Generant...' : 'Genera Documents' }}
+              📑 Esquema <span v-if="documentOutline.length > 0" class="tab-badge">{{ documentOutline.length }}</span>
             </button>
           </div>
 
-          <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 0.5rem 0;">
+          <!-- Control Panel Content Container -->
+          <div class="control-panel-body" style="flex: 1; display: flex; flex-direction: column; gap: 0.75rem; overflow-y: auto; min-height: 0;">
+            
+            <!-- Tab 1: Descàrregues -->
+            <div v-if="controlPanelTab === 'downloads'" style="display: flex; flex-direction: column; gap: 0.75rem;">
+              <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                <button 
+                  v-if="!store.enginesReady"
+                  class="btn btn-secondary" 
+                  @click="initEngines" 
+                  :disabled="isLoading"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ 'loading-pulse': isLoading }"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                  {{ isLoading ? 'Inicialitzant...' : 'Inicialitza Motors (WASM)' }}
+                </button>
+                <span v-else style="font-size: 0.8rem; font-weight: bold; color: var(--color-success); text-align: center; display: block; padding: 0.4rem; background: var(--color-success-light); border: 1px solid var(--color-success); border-radius: 4px;">
+                  ✓ Motors Inicialitzats (Pyodide + Pandoc)
+                </span>
 
-          <!-- Downloads Area -->
-          <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-            <label>Descàrregues Disponibles</label>
-            <a v-if="dlJsonUrl" :href="dlJsonUrl" :download="'dades.json'" class="btn btn-secondary" style="justify-content: flex-start;">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--color-primary)"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-              Baixa dades JSON
-            </a>
-            <a v-if="dlMdUrl" :href="dlMdUrl" :download="store.outNameMd" class="btn btn-secondary" style="justify-content: flex-start;">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--color-success)"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-              Baixa Markdown (.md)
-            </a>
-            <a v-if="dlDocxUrl" :href="dlDocxUrl" :download="store.outNameDocx" class="btn btn-primary" style="justify-content: flex-start;">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:white"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-              Baixa Document Word
-            </a>
-            <span v-if="!dlDocxUrl" style="font-size: 0.75rem; color: var(--text-muted); text-align: center;">
-              Executeu la generació per descarregar fitxers de sortida.
-            </span>
-          </div>
+                <button 
+                  class="btn btn-success" 
+                  :disabled="!isGenerateReady || store.generating"
+                  @click="generateDocuments"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ 'loading-pulse': store.generating }"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+                  {{ store.generating ? 'Generant...' : 'Genera Documents' }}
+                </button>
+              </div>
 
-          <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 0.5rem 0;">
+              <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 0.5rem 0;">
 
-          <!-- File configuration -->
-          <div class="form-row">
-            <label for="outNameDocx">Nom del fitxer de sortida DOCX</label>
-            <input type="text" id="outNameDocx" v-model="store.outNameDocx">
-          </div>
-          <div class="form-row">
-            <label for="outNameMd">Nom del fitxer de sortida MD</label>
-            <input type="text" id="outNameMd" v-model="store.outNameMd">
+              <!-- Downloads Area -->
+              <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                <label>Descàrregues Disponibles</label>
+                <a v-if="dlJsonUrl" :href="dlJsonUrl" :download="'dades.json'" class="btn btn-secondary" style="justify-content: flex-start;">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--color-primary)"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                  Baixa dades JSON
+                </a>
+                <a v-if="dlMdUrl" :href="dlMdUrl" :download="store.outNameMd" class="btn btn-secondary" style="justify-content: flex-start;">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--color-success)"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                  Baixa Markdown (.md)
+                </a>
+                <a v-if="dlDocxUrl" :href="dlDocxUrl" :download="store.outNameDocx" class="btn btn-primary" style="justify-content: flex-start;">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:white"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                  Baixa Document Word
+                </a>
+                <span v-if="!dlDocxUrl" style="font-size: 0.75rem; color: var(--text-muted); text-align: center;">
+                  Executeu la generació per descarregar fitxers de sortida.
+                </span>
+              </div>
+
+              <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 0.5rem 0;">
+
+              <!-- File configuration -->
+              <div class="form-row">
+                <label for="outNameDocx">Nom del fitxer de sortida DOCX</label>
+                <input type="text" id="outNameDocx" v-model="store.outNameDocx">
+              </div>
+              <div class="form-row">
+                <label for="outNameMd">Nom del fitxer de sortida MD</label>
+                <input type="text" id="outNameMd" v-model="store.outNameMd">
+              </div>
+            </div>
+
+            <!-- Tab 2: Esquema -->
+            <div v-else-if="controlPanelTab === 'outline'" style="display: flex; flex-direction: column; gap: 0.5rem; height: 100%;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                <label style="margin: 0;">Estructura del Document</label>
+                <span style="font-size: 0.72rem; color: var(--text-muted);">{{ documentOutline.length }} nivells</span>
+              </div>
+
+              <div v-if="documentOutline.length === 0" style="padding: 1.5rem 0.5rem; text-align: center; color: var(--text-muted); font-size: 0.8rem; background: var(--bg-tertiary); border-radius: var(--radius-md); border: 1px dashed var(--border-color);">
+                <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">📄</div>
+                <p style="margin: 0; font-weight: 600; color: var(--text-primary);">Sense encapçalaments</p>
+                <p style="margin: 0.35rem 0 0 0; line-height: 1.4;">
+                  Genereu el document o afegiu títols (<code># H1</code>, <code>## H2</code>) a la plantilla per veure l'arbre jeràrquic.
+                </p>
+              </div>
+
+              <div v-else class="outline-tree-container">
+                <div 
+                  v-for="item in documentOutline" 
+                  :key="item.id"
+                  class="outline-tree-item"
+                  :class="`level-${item.level}`"
+                  :style="{ paddingLeft: `${(item.level - 1) * 12 + 6}px` }"
+                  @click="scrollToHeading(item)"
+                  title="Fes clic per anar a aquesta secció del document"
+                >
+                  <span class="outline-level-badge" :class="`lvl-${item.level}`">H{{ item.level }}</span>
+                  <span class="outline-item-text">{{ item.text }}</span>
+                </div>
+              </div>
+            </div>
+
           </div>
         </div>
 
