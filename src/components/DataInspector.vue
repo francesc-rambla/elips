@@ -601,7 +601,11 @@ onUnmounted(() => {
 // Metadata Schema helpers for custom types
 const getElementMetadata = (groupName, elementName) => {
   if (!store.editorMetadata) return null;
-  return store.editorMetadata.find(m => m.group === groupName && m.element === elementName) || null;
+  const shortName = groupName ? groupName.split('.').pop() : '';
+  return store.editorMetadata.find(m => 
+    (m.group === groupName || (shortName && m.group === shortName)) && 
+    m.element === elementName
+  ) || null;
 };
 
 const getElementType = (groupName, elementName) => {
@@ -1116,37 +1120,64 @@ const addNewFieldToConfig = () => {
 
 const handleSaveGroupConfig = (data) => {
   const groupName = activeConfigGroup.value;
-  setGroupLabel(groupName, data.groupLabel);
-  setGroupLayout(groupName, data.selectedLayout);
+  store.editorMetadata = store.editorMetadata.filter(m => m.group !== groupName);
 
+  // Save group layout & label header
+  const groupMeta = {
+    group: groupName,
+    element: '_group_label',
+    isGroupHeader: true,
+    groupLayout: data.selectedLayout
+  };
+  if (data.groupLabel && data.groupLabel.trim()) {
+    groupMeta.label = data.groupLabel.trim();
+  }
+  store.editorMetadata.push(groupMeta);
+
+  // Save field config items
   data.configList.forEach(item => {
-    let optionsArr = [];
-    if (item.type === 'Select' && item.sourceType === 'static' && item.optionsRaw) {
-      optionsArr = item.optionsRaw.split(',').map(s => s.trim()).filter(Boolean);
+    const meta = {
+      group: groupName,
+      element: item.element,
+      type: item.type
+    };
+    if (item.label && item.label.trim()) {
+      meta.label = item.label.trim();
     }
-    
-    setElementMetadata(groupName, item.element, {
-      label: item.label,
-      type: item.type,
-      sourceType: item.sourceType,
-      options: optionsArr,
-      vectorPath: item.vectorPath,
-      displayField: item.displayField,
-      valueField: item.valueField,
-      multiple: item.multiple,
-      width: item.width,
-      calcFn: item.calcFn,
-      calcVector: item.calcVector,
-      calcTargetCol: item.calcTargetCol,
-      calcFormula: item.calcFormula,
-      gridRow: item.gridRow,
-      gridOrder: item.gridOrder,
-      gridFill: item.gridFill
-    });
+    if (item.type === 'Select') {
+      meta.sourceType = item.sourceType;
+      meta.multiple = !!item.multiple;
+      if (item.sourceType === 'dynamic') {
+        meta.vectorPath = item.vectorPath;
+        meta.displayField = item.displayField;
+        meta.valueField = item.valueField;
+      } else {
+        meta.options = (item.optionsRaw || '').split(',').map(x => x.trim()).filter(x => x);
+      }
+    } else if (item.type === 'Computed') {
+      meta.calcFn = item.calcFn;
+      meta.calcVector = item.calcVector;
+      meta.calcTargetCol = item.calcTargetCol;
+      meta.calcFormula = item.calcFormula;
+    } else if (item.type === 'Table') {
+      meta.vectorPath = item.vectorPath;
+    }
+
+    if (item.width) meta.width = item.width;
+    if (item.gridRow) meta.gridRow = item.gridRow;
+    if (item.gridOrder) meta.gridOrder = item.gridOrder;
+    if (item.gridFill) meta.gridFill = item.gridFill;
+
+    store.editorMetadata.push(meta);
   });
 
   isConfigModalOpen.value = false;
   store.addLog(`Configuració desada per al grup '${groupName}'.`, 'success');
+
+  if (store.excelJsonData) {
+    store.excelJsonData.editor_metadata = store.editorMetadata;
+    evaluateComputedFields(store.excelJsonData);
+  }
 };
 
 const saveGroupConfig = () => {

@@ -2805,6 +2805,15 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
       return upper === 'CUSTOM' || upper === 'FORMULA';
     };
 
+    const isGroupMatch = (metaGroup, hint) => {
+      if (!metaGroup) return true;
+      if (!hint) return true;
+      if (metaGroup === hint) return true;
+      const gShort = metaGroup.split('.').pop();
+      const hShort = hint.split('.').pop();
+      return gShort === hShort;
+    };
+
     const customMetas = computedMetas.filter(m => isCustomFn(m.calcFn) && m.calcFormula);
     const aggMetas = computedMetas.filter(m => !isCustomFn(m.calcFn));
 
@@ -2829,7 +2838,7 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
 
       // Evaluate CUSTOM formulas for this node
       customMetas.forEach(meta => {
-        if (!meta.group || meta.group === groupHint || (meta.element in container)) {
+        if (isGroupMatch(meta.group, groupHint) || (meta.element in container)) {
           const calculatedVal = evaluateCustomFormula(meta.calcFormula, container, data);
           if (container[meta.element] !== calculatedVal) {
             container[meta.element] = calculatedVal;
@@ -2863,39 +2872,67 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         const fn = (meta.calcFn || 'SUM').toUpperCase();
         const col = meta.calcTargetCol;
 
-        if (!meta.group || meta.group === groupHint || (targetVec && container[targetVec]) || (meta.element in container)) {
+        if (isGroupMatch(meta.group, groupHint) || (targetVec && container[targetVec]) || (meta.element in container)) {
           let childList = null;
           if (targetVec && Array.isArray(container[targetVec])) {
             childList = container[targetVec];
           } else if (targetVec && data[targetVec] && Array.isArray(data[targetVec])) {
             childList = data[targetVec];
+          } else if (targetVec) {
+            // Search recursively for targetVec in container
+            const findSubList = (obj) => {
+              if (!obj || typeof obj !== 'object' || childList) return;
+              if (Array.isArray(obj[targetVec])) {
+                childList = obj[targetVec];
+                return;
+              }
+              Object.values(obj).forEach(val => {
+                if (val && typeof val === 'object') findSubList(val);
+              });
+            };
+            findSubList(container);
           }
 
           if (childList) {
             let calculatedVal = 0;
+
+            const extractVal = (child) => {
+              if (child === null || child === undefined) return 0;
+              if (typeof child === 'object') {
+                if (col && child[col] !== undefined) {
+                  const v = parseFloat(child[col]);
+                  return isNaN(v) ? 0 : v;
+                }
+                // Fallback: find first numeric property if col is empty
+                const firstNumKey = Object.keys(child).find(k => !k.startsWith('_') && !isNaN(parseFloat(child[k])));
+                if (firstNumKey) {
+                  const v = parseFloat(child[firstNumKey]);
+                  return isNaN(v) ? 0 : v;
+                }
+                return 0;
+              }
+              const v = parseFloat(child);
+              return isNaN(v) ? 0 : v;
+            };
+
             if (fn === 'COUNT') {
               calculatedVal = childList.length;
-            } else if (fn === 'SUM' && col) {
-              const total = childList.reduce((sum, child) => {
-                const val = parseFloat(child[col]);
-                return sum + (isNaN(val) ? 0 : val);
-              }, 0);
+            } else if (fn === 'SUM') {
+              const total = childList.reduce((sum, child) => sum + extractVal(child), 0);
               calculatedVal = Math.round(total * 100) / 100;
-            } else if ((fn === 'AVG' || fn === 'AVERAGE') && col) {
-              const numbers = childList.map(c => parseFloat(c[col])).filter(n => !isNaN(n));
+            } else if (fn === 'AVG' || fn === 'AVERAGE') {
+              const numbers = childList.map(extractVal);
               const avg = numbers.length > 0 ? numbers.reduce((a, b) => a + b, 0) / numbers.length : 0;
               calculatedVal = Math.round(avg * 100) / 100;
-            } else if (fn === 'MIN' && col) {
-              const numbers = childList.map(c => parseFloat(c[col])).filter(n => !isNaN(n));
+            } else if (fn === 'MIN') {
+              const numbers = childList.map(extractVal);
               calculatedVal = numbers.length > 0 ? Math.min(...numbers) : 0;
-            } else if (fn === 'MAX' && col) {
-              const numbers = childList.map(c => parseFloat(c[col])).filter(n => !isNaN(n));
+            } else if (fn === 'MAX') {
+              const numbers = childList.map(extractVal);
               calculatedVal = numbers.length > 0 ? Math.max(...numbers) : 0;
             }
 
-            if (container[meta.element] !== calculatedVal) {
-              container[meta.element] = calculatedVal;
-            }
+            container[meta.element] = calculatedVal;
           }
         }
       });

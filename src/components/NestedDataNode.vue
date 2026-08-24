@@ -430,7 +430,12 @@ const getGroupLabel = (groupName) => {
 // Metadata & Custom Data Type Config Helpers
 const getElementMetadata = (elementName) => {
   if (!store.editorMetadata) return null;
-  return store.editorMetadata.find(m => m.group === props.arrayKey && m.element === elementName) || null;
+  const gName = props.arrayKey;
+  const shortName = gName ? gName.split('.').pop() : '';
+  return store.editorMetadata.find(m => 
+    (m.group === gName || (shortName && m.group === shortName)) && 
+    m.element === elementName
+  ) || null;
 };
 
 const getFieldLabel = (elementName) => {
