@@ -265,12 +265,12 @@ header {
 }
 
 .control-panel-card.auto-hidden {
-  position: fixed;
-  top: 108px;
-  bottom: 42px;
-  height: calc(100vh - 150px);
+  position: absolute;
+  top: 0;
+  bottom: 0;
   left: 0;
-  width: 340px;
+  height: 100%;
+  width: 360px;
   max-width: 90vw;
   transform: translateX(-100%);
   opacity: 0;
@@ -279,6 +279,7 @@ header {
   border-left: none;
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
   box-sizing: border-box;
+  z-index: 900;
 }
 
 .control-panel-card.auto-hidden.hovered {
@@ -288,11 +289,11 @@ header {
 }
 
 .sidebar-edge-trigger {
-  position: fixed;
-  top: 108px;
-  bottom: 42px;
-  height: calc(100vh - 150px);
+  position: absolute;
+  top: 0;
+  bottom: 0;
   left: 0;
+  height: 100%;
   width: 18px;
   z-index: 899;
   cursor: pointer;
@@ -303,11 +304,12 @@ header {
   justify-content: center;
   transition: background 0.2s ease, width 0.2s ease;
   box-sizing: border-box;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
 }
 
 .sidebar-edge-trigger:hover {
   background: linear-gradient(to right, rgba(2, 132, 199, 0.35), transparent);
-  width: 24px;
+  width: 22px;
 }
 
 /* Control Panel Internal Segmented Tabs */
@@ -545,6 +547,7 @@ header {
   flex-grow: 1;
   height: 0;
   overflow: hidden;
+  position: relative;
 }
 
 @media (max-width: 1024px) {
