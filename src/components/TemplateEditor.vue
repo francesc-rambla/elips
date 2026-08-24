@@ -3557,30 +3557,64 @@ watch(() => editorText.value, () => {
 
 onMounted(() => {
   window.__openPandocMetadataModal = openMetadataModal;
-  const scrollToLine = (lineIndex) => {
+  const scrollToLine = (target) => {
+    const lineIndex = typeof target === 'number' ? target : (target && target.lineIndex !== undefined ? target.lineIndex : 0);
+    const headingIndex = typeof target === 'object' && target ? target.headingIndex : undefined;
+    const rawTitle = typeof target === 'object' && target ? target.rawTitle : '';
+    const textTitle = typeof target === 'object' && target ? target.text : '';
+
+    // Strategy A: Visual WYSIWYG Mode Canvas
     if (activeEditorTab.value === 'visual' && canvasRef.value) {
-      const headings = canvasRef.value.querySelectorAll('h1, h2, h3, h4, h5, h6');
-      if (headings && headings.length > 0) {
-        const target = headings[lineIndex] || headings[0];
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          target.classList.add('heading-highlight');
-          setTimeout(() => target.classList.remove('heading-highlight'), 2000);
+      const headings = Array.from(canvasRef.value.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+      if (headings.length > 0) {
+        let el = headingIndex !== undefined ? headings[headingIndex] : null;
+        if (!el && textTitle) {
+          el = headings.find(h => h.textContent.includes(textTitle) || (rawTitle && h.textContent.includes(rawTitle)));
+        }
+        if (!el) {
+          el = headings[Math.min(lineIndex, headings.length - 1)];
+        }
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('heading-highlight');
+          setTimeout(() => el.classList.remove('heading-highlight'), 2000);
           return;
         }
       }
     }
+
+    // Strategy B: Raw Code Textarea Mode
     if (textareaRef.value) {
       const text = editorText.value || '';
-      const lines = text.split('\n');
+      const lines = text.split(/\r?\n/);
+      let targetLine = lineIndex;
+      
+      if (typeof target === 'object') {
+        const foundIdx = lines.findIndex((l) => {
+          if (!/^(#{1,6})\s+/.test(l)) return false;
+          if (rawTitle && l.includes(rawTitle)) return true;
+          if (textTitle && l.includes(textTitle)) return true;
+          return false;
+        });
+        if (foundIdx !== -1) {
+          targetLine = foundIdx;
+        }
+      }
+
       let charOffset = 0;
-      for (let i = 0; i < Math.min(lineIndex, lines.length); i++) {
+      for (let i = 0; i < Math.min(targetLine, lines.length); i++) {
         charOffset += lines[i].length + 1;
       }
+      
+      const targetLineText = lines[targetLine] || '';
       textareaRef.value.focus();
-      textareaRef.value.setSelectionRange(charOffset, charOffset + (lines[lineIndex] ? lines[lineIndex].length : 0));
-      const lineHeight = 22;
-      textareaRef.value.scrollTop = Math.max(0, lineIndex * lineHeight - 60);
+      textareaRef.value.setSelectionRange(charOffset, charOffset + targetLineText.length);
+      
+      const totalLines = Math.max(lines.length, 1);
+      const computedLineHeight = textareaRef.value.scrollHeight / totalLines;
+      const scrollPos = Math.max(0, (targetLine * computedLineHeight) - 80);
+      
+      textareaRef.value.scrollTop = scrollPos;
     }
   };
 

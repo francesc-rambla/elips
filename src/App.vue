@@ -147,7 +147,7 @@ const scrollToHeading = (item) => {
     }
     setTimeout(() => {
       if (store.editorActions && typeof store.editorActions.scrollToLine === 'function') {
-        store.editorActions.scrollToLine(item.lineIndex);
+        store.editorActions.scrollToLine(item);
       }
     }, 100);
   } else {

@@ -266,9 +266,9 @@ header {
 
 .control-panel-card.auto-hidden {
   position: fixed;
-  top: 96px;
-  bottom: 38px;
-  height: calc(100vh - 134px);
+  top: 108px;
+  bottom: 42px;
+  height: calc(100vh - 150px);
   left: 0;
   width: 340px;
   max-width: 90vw;
@@ -289,9 +289,9 @@ header {
 
 .sidebar-edge-trigger {
   position: fixed;
-  top: 96px;
-  bottom: 38px;
-  height: calc(100vh - 134px);
+  top: 108px;
+  bottom: 42px;
+  height: calc(100vh - 150px);
   left: 0;
   width: 18px;
   z-index: 899;
