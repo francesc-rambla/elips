@@ -213,6 +213,71 @@ const universalFindSchema = (targetPath, dict) => {
   return { fields: [], children: {} };
 };
 
+const getGroupCleanName = (name) => {
+  if (!name) return '';
+  return name.includes('.') ? name.split('.').pop() : name;
+};
+
+const getTabularColumns = (groupName, sheetData) => {
+  const colsSet = new Set();
+  const cleanGroup = getGroupCleanName(groupName);
+
+  // 1. Check store.editorMetadata
+  if (store.editorMetadata && Array.isArray(store.editorMetadata)) {
+    store.editorMetadata
+      .filter(m => (m.group === groupName || m.group === cleanGroup) && m.element && !m.element.startsWith('_'))
+      .forEach(m => {
+        colsSet.add(m.element);
+      });
+  }
+
+  // 2. Check hierarchySchema
+  const schemaNode = universalFindSchema(groupName, store.hierarchySchema || {});
+  if (schemaNode && Array.isArray(schemaNode.fields)) {
+    schemaNode.fields.forEach(f => {
+      if (f && !f.startsWith('_')) colsSet.add(f);
+    });
+  }
+
+  // 3. Check sheetInfo headers
+  if (store.sheetInfo && Array.isArray(store.sheetInfo)) {
+    const sInfo = store.sheetInfo.find(s => 
+      s.full_path === groupName || 
+      s.clean_name === groupName || 
+      s.clean_name === cleanGroup ||
+      s.raw_name === `OUT_${groupName}` ||
+      s.raw_name === groupName
+    );
+    if (sInfo && Array.isArray(sInfo.headers)) {
+      const refK = sInfo.child_ref_key || sInfo.headers[0];
+      sInfo.headers.forEach(h => {
+        if (h && !h.startsWith('_') && (groupName.indexOf('.') === -1 || h !== refK)) {
+          colsSet.add(h);
+        }
+      });
+    }
+  }
+
+  // 4. Check actual data rows (if any exist)
+  if (Array.isArray(sheetData) && sheetData.length > 0) {
+    sheetData.forEach(row => {
+      if (row && typeof row === 'object') {
+        Object.keys(row).forEach(k => {
+          if (isPrimitive(row[k]) && !k.startsWith('_')) {
+            colsSet.add(k);
+          }
+        });
+      }
+    });
+  }
+
+  const result = Array.from(colsSet).filter(c => 
+    c !== '_path' && c !== '_sheet_info' && c !== 'editor_metadata' && c !== '_hierarchy_schema' && c !== '_group_label'
+  );
+
+  return result;
+};
+
 const getTopLevelChildSchemas = (sheetName, sheetData) => {
   const dict = store.hierarchySchema || {};
   const rootS = universalFindSchema(sheetName, dict);
@@ -373,15 +438,19 @@ const addTabularRow = (sheetName, sheetData) => {
     visibleRowsCount.value[sheetName] = currentVisible + 1;
     store.addLog(`S'ha reutilitzat una fila buida pre-existent de l'Excel al full '${sheetName}'.`, 'info');
   } else {
+    const cols = getTabularColumns(sheetName, sheetData);
     const newRow = {};
-    const sample = sheetData[0] || {};
-    Object.keys(sample).forEach(k => {
-      if (Array.isArray(sample[k])) {
+    cols.forEach(k => {
+      const meta = getElementMetadata(sheetName, k);
+      if (meta && meta.type === 'Table') {
         newRow[k] = [];
       } else {
         newRow[k] = '';
       }
     });
+    if (!store.excelJsonData[sheetName]) {
+      store.excelJsonData[sheetName] = [];
+    }
     store.excelJsonData[sheetName].push(newRow);
     visibleRowsCount.value[sheetName] = currentVisible + 1;
     store.addLog(`S'ha afegit una nova fila al final del full '${sheetName}'.`, 'info');
@@ -924,7 +993,7 @@ const openGroupConfig = (groupName, sheetData) => {
   groupLabelInput.value = currentGroupLabel !== groupName ? currentGroupLabel : '';
 
   const isKv = getSheetType(sheetData) === 'kv';
-  const elements = isKv ? Object.keys(sheetData) : (sheetData.length > 0 ? Object.keys(sheetData[0]) : []);
+  const elements = isKv ? Object.keys(sheetData) : getTabularColumns(groupName, sheetData);
   
   groupConfigList.value = elements.map(el => {
     const meta = getElementMetadata(groupName, el) || { type: 'Text' };
@@ -961,13 +1030,9 @@ const addNewFieldToConfig = () => {
   if (store.excelJsonData && store.excelJsonData[groupName]) {
     const sheetData = store.excelJsonData[groupName];
     if (Array.isArray(sheetData)) {
-      if (sheetData.length === 0) {
-        sheetData.push({ [cleanKey]: '' });
-      } else {
-        sheetData.forEach(row => {
-          if (!(cleanKey in row)) row[cleanKey] = '';
-        });
-      }
+      sheetData.forEach(row => {
+        if (!(cleanKey in row)) row[cleanKey] = '';
+      });
     } else if (typeof sheetData === 'object') {
       if (!(cleanKey in sheetData)) sheetData[cleanKey] = '';
     }
@@ -1642,18 +1707,23 @@ onMounted(() => {
           </div>
           <!-- Tabular Preview -->
           <template v-if="getSheetType(sheetData) === 'tabular'">
-            <div v-if="sheetData.length === 0" style="font-size:0.8rem; color:var(--text-muted); padding: 1rem 0;">Taula buida</div>
-            <div v-else style="overflow-x: auto;">
+            <div style="overflow-x: auto;">
               <table class="inspector-table">
                 <thead>
                   <tr>
                     <th 
-                      v-for="col in Object.keys(sheetData[0]).filter(k => isPrimitive(sheetData[0][k]))" 
+                      v-for="col in getTabularColumns(name, sheetData)" 
                       :key="col" 
                       :style="getColumnWidthStyle(name, col)"
                     >
                       <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-                        <span>{{ col }}</span>
+                        <span 
+                          style="font-weight: 600;"
+                          :style="{ cursor: getFieldLabel(name, col) !== col ? 'help' : 'default' }"
+                          :title="getFieldLabel(name, col) !== col ? 'Clau de columna: ' + col : undefined"
+                        >
+                          {{ getFieldLabel(name, col) }}
+                        </span>
                         <span v-if="getColumnWidthPct(name, col)" style="font-size: 0.7rem; font-weight: normal; color: var(--text-muted); padding: 2px 4px; background: rgba(0,0,0,0.05); border-radius: 3px;">
                           {{ getColumnWidthPct(name, col) }}%
                         </span>
@@ -1663,8 +1733,13 @@ onMounted(() => {
                   </tr>
                 </thead>
                 <tbody>
+                  <tr v-if="sheetData.length === 0">
+                    <td :colspan="getTabularColumns(name, sheetData).length + 1" style="text-align: center; color: var(--text-muted); padding: 1.5rem; font-size: 0.82rem;">
+                      Aquesta taula no té cap fila de dades. Clica "Afegeix fila" per crear-ne una.
+                    </td>
+                  </tr>
                   <tr v-for="(row, idx) in sheetData.slice(0, visibleRowsCount[name])" :key="idx" :id="'data-row-' + name + '-' + idx">
-                    <td v-for="col in Object.keys(sheetData[0]).filter(k => isPrimitive(sheetData[0][k]))" :key="col" style="padding: 4px;">
+                    <td v-for="col in getTabularColumns(name, sheetData)" :key="col" style="padding: 4px;">
                       <span v-if="typeof row[col] === 'object' && row[col] !== null" style="font-size:0.75rem; color:var(--text-muted)">
                         [Complex]
                       </span>
