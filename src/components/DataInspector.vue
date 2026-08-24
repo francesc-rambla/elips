@@ -1028,6 +1028,9 @@ const saveGroupConfig = () => {
     if (item.gridFill) {
       meta.gridFill = true;
     }
+    if (item.type === 'Table') {
+      ensureSubTableSheetExists(groupName, item.element);
+    }
     store.editorMetadata.push(meta);
   });
   
@@ -1039,6 +1042,150 @@ const saveGroupConfig = () => {
   
   isConfigModalOpen.value = false;
   store.addLog(`Configuració de tipus de dades per al grup '${groupName}' desada i valors calculats avaluats.`, 'success');
+};
+
+const ensureSubTableSheetExists = (parentGroup, keyName) => {
+  const subPath = `${parentGroup}.${keyName}`;
+  const rawSheetName = `OUT_${subPath}`;
+  
+  if (!store.sheetInfo) store.sheetInfo = [];
+  let info = store.sheetInfo.find(s => s.clean_name === subPath || s.raw_name === rawSheetName);
+  if (!info) {
+    store.sheetInfo.push({
+      raw_name: rawSheetName,
+      prefix: 'OUT_',
+      clean_name: subPath,
+      parent_path: parentGroup,
+      full_path: subPath,
+      kind: 'tabular',
+      headers: [],
+      parent_ref_key: '',
+      child_ref_key: ''
+    });
+  }
+
+  if (store.excelJsonData) {
+    const parentParts = parentGroup.split('.');
+    let curr = store.excelJsonData;
+    for (let i = 0; i < parentParts.length; i++) {
+      const p = parentParts[i];
+      if (curr && typeof curr === 'object') {
+        if (Array.isArray(curr[p])) {
+          curr[p].forEach(row => {
+            if (row && typeof row === 'object' && !(keyName in row)) {
+              row[keyName] = [];
+            }
+          });
+          return;
+        } else if (curr[p] && typeof curr[p] === 'object') {
+          curr = curr[p];
+        }
+      }
+    }
+    if (curr && typeof curr === 'object') {
+      if (!(keyName in curr)) {
+        curr[keyName] = [];
+      }
+    }
+  }
+};
+
+const isNewSheetModalOpen = ref(false);
+const newSheetNameInput = ref('');
+const newSheetKindInput = ref('kv');
+const newSheetParentInput = ref('');
+
+const availableParentSheets = computed(() => {
+  const sheets = new Set();
+  if (store.sheetInfo && Array.isArray(store.sheetInfo)) {
+    store.sheetInfo.forEach(s => {
+      if (s.clean_name) sheets.add(s.clean_name);
+    });
+  }
+  if (store.excelJsonData && typeof store.excelJsonData === 'object') {
+    Object.keys(store.excelJsonData).forEach(k => {
+      if (k !== 'editor_metadata' && k !== '_hierarchy_schema' && k !== '_sheet_info') {
+        sheets.add(k);
+      }
+    });
+  }
+  return Array.from(sheets);
+});
+
+const openNewSheetModal = () => {
+  newSheetNameInput.value = '';
+  newSheetKindInput.value = 'kv';
+  newSheetParentInput.value = '';
+  isNewSheetModalOpen.value = true;
+};
+
+const createNewSheet = () => {
+  const rawName = newSheetNameInput.value.trim();
+  if (!rawName) {
+    alert("Introdueix un nom de full/clau vàlid.");
+    return;
+  }
+  const cleanName = rawName.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  
+  let fullPath = cleanName;
+  if (newSheetKindInput.value === 'sub_table' && newSheetParentInput.value) {
+    fullPath = `${newSheetParentInput.value}.${cleanName}`;
+  }
+  
+  const rawSheetName = `OUT_${fullPath}`;
+  
+  if (!store.excelJsonData) {
+    store.excelJsonData = {};
+  }
+  
+  const pathParts = fullPath.split('.');
+  if (pathParts.length === 1) {
+    if (!(fullPath in store.excelJsonData)) {
+      store.excelJsonData[fullPath] = (newSheetKindInput.value === 'kv') ? {} : [];
+    }
+  } else {
+    const parentPath = pathParts.slice(0, -1).join('.');
+    const subKey = pathParts[pathParts.length - 1];
+    ensureSubTableSheetExists(parentPath, subKey);
+  }
+  
+  if (!store.sheetInfo) store.sheetInfo = [];
+  if (!store.sheetInfo.some(s => s.clean_name === fullPath)) {
+    store.sheetInfo.push({
+      raw_name: rawSheetName,
+      prefix: 'OUT_',
+      clean_name: fullPath,
+      parent_path: fullPath.includes('.') ? fullPath.substring(0, fullPath.lastIndexOf('.')) : '',
+      full_path: fullPath,
+      kind: (newSheetKindInput.value === 'kv') ? 'kv' : 'tabular',
+      headers: [],
+      parent_ref_key: '',
+      child_ref_key: ''
+    });
+  }
+  
+  if (!store.editorMetadata) store.editorMetadata = [];
+  if (!store.editorMetadata.some(m => m.group === fullPath && m.isGroupHeader)) {
+    store.editorMetadata.push({
+      group: fullPath,
+      element: '_group_label',
+      isGroupHeader: true,
+      type: 'Group',
+      label: fullPath.charAt(0).toUpperCase() + fullPath.slice(1).replace(/\./g, ' ➔ ')
+    });
+  }
+  
+  isNewSheetModalOpen.value = false;
+  selectedCompactSheet.value = fullPath;
+  store.addLog(`Full/Grup de dades '${fullPath}' (${newSheetKindInput.value}) creat correctament.`, 'success');
+};
+
+const openOrNavigateToSubTable = (parentGroup, keyName) => {
+  const subPath = `${parentGroup}.${keyName}`;
+  ensureSubTableSheetExists(parentGroup, keyName);
+  selectedCompactSheet.value = subPath;
+  openSheets.value[parentGroup] = true;
+  openSheets.value[subPath] = true;
 };
 
 const handleCellKeyDown = (e) => {
@@ -1176,7 +1323,16 @@ onMounted(() => {
       <div class="accordion-item" style="border:0; background:none; text-align:center; padding:4rem; color:var(--text-muted)">
         <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:1rem; opacity:0.5"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
         <p>Encara no s'ha carregat cap fitxer Excel.</p>
-        <p style="font-size:0.75rem; margin-top: 0.25rem;">Inicialitzeu els motors WASM i carregueu un Excel de licitació.</p>
+        <p style="font-size:0.75rem; margin-top: 0.25rem;">Pots carregar un fitxer Excel o bé definir el teu model de dades des de zero directament des d'aquí:</p>
+        <div style="margin-top: 1.25rem;">
+          <button 
+            class="btn btn-primary" 
+            style="padding: 6px 14px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px;"
+            @click="openNewSheetModal"
+          >
+            ➕ Crear Nou Full / Grup de Dades
+          </button>
+        </div>
       </div>
     </div>
 
@@ -1233,15 +1389,26 @@ onMounted(() => {
                   {{ getGroupLabel(name) }}
                 </span>
               </h4>
-              <button 
-                class="btn btn-secondary" 
-                style="width: auto; padding: 3px 8px; font-size: 0.72rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
-                @click="openGroupConfig(name, sheetData)"
-                title="Configura tipus de dades per a aquest grup"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-                <span v-if="store.config.showButtonTexts">Configura Tipus</span>
-              </button>
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <button 
+                  class="btn btn-secondary" 
+                  style="width: auto; padding: 3px 8px; font-size: 0.72rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
+                  @click="openNewSheetModal"
+                  title="Crea un nou full o grup de dades des de l'aplicació"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  <span v-if="store.config.showButtonTexts">Nou Full / Grup</span>
+                </button>
+                <button 
+                  class="btn btn-secondary" 
+                  style="width: auto; padding: 3px 8px; font-size: 0.72rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
+                  @click="openGroupConfig(name, sheetData)"
+                  title="Configura tipus de dades per a aquest grup"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <span v-if="store.config.showButtonTexts">Configura Tipus</span>
+                </button>
+              </div>
           </div>
           <!-- Tabular Preview -->
           <template v-if="getSheetType(sheetData) === 'tabular'">
@@ -1534,19 +1701,26 @@ onMounted(() => {
                     style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                   >
                   
-                  <!-- Boolean Type -->
-                  <select 
-                    v-else-if="getElementType(name, key) === 'Boolean'"
+                  <!-- Table Sub-structure Type -->
+                  <div 
+                    v-else-if="getElementType(name, key) === 'Table'"
                     :id="'data-field-' + name + '-' + key"
                     :data-path="name + '.' + key"
-                    v-model="store.excelJsonData[name][key]"
-                    class="data-input"
-                    style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                    style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-grow: 1; min-height: 32px; padding: 4px 10px; border: 1.5px dashed var(--color-primary); border-radius: var(--radius-sm); background: var(--color-primary-light); color: var(--color-primary); font-size: 0.8rem; font-weight: 600;"
                   >
-                    <option value="">[Buit / Sense valor]</option>
-                    <option :value="true">Cert (True)</option>
-                    <option :value="false">Fals (False)</option>
-                  </select>
+                    <span style="display: flex; align-items: center; gap: 6px;">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>
+                      <span>Sub-taula aniuada: <code>{{ name }}.{{ key }}</code></span>
+                    </span>
+                    <button 
+                      class="btn btn-secondary btn-sm" 
+                      style="padding: 2px 8px; font-size: 0.72rem; height: 24px; display: inline-flex; align-items: center; gap: 4px; background: var(--bg-card); border-color: var(--color-primary); color: var(--color-primary);"
+                      @click="openOrNavigateToSubTable(name, key)"
+                      title="Navega o configura aquesta sub-taula aniuada"
+                    >
+                      📂 Obre Sub-taula "{{ key }}" ➔
+                    </button>
+                  </div>
                   
                   <!-- Text Type (default) -->
                   <textarea 
@@ -1690,6 +1864,7 @@ onMounted(() => {
                     <option value="Boolean">Boolean (Lògic)</option>
                     <option value="Select">Select (Desplegable)</option>
                     <option value="Computed">Calculat (Computed: SUM, COUNT, AVG)</option>
+                    <option value="Table">Sub-taula / Estructura Tabular Aniuada (Table)</option>
                   </select>
                 </td>
                 <!-- Grid Row assignment -->
@@ -2021,6 +2196,60 @@ onMounted(() => {
         <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
           <button type="button" class="btn btn-secondary" style="width: auto;" @click="isFormulaModalOpen = false">Cancel·la</button>
           <button type="button" class="btn btn-primary" style="width: auto;" @click="saveFormulaModal">Desa la Fórmula</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal for Creating New Sheet / Group -->
+    <div class="modal-overlay" v-if="isNewSheetModalOpen" style="display: flex; z-index: 1100;">
+      <div class="modal-content" style="max-width: 540px; width: 95%;">
+        <div class="modal-header">
+          <h3 style="border: none; padding-bottom: 0; margin: 0; display: flex; align-items: center; gap: 8px;">
+            <span style="color: var(--color-primary); font-size: 1.2rem;">📊</span>
+            <span>Crear Nou Full / Grup de Dades</span>
+          </h3>
+          <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isNewSheetModalOpen = false">&times;</button>
+        </div>
+        
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 1rem; padding: 0.75rem 0;">
+          <div class="form-row" style="display: flex; flex-direction: column; gap: 4px;">
+            <label style="font-weight: 600; font-size: 0.85rem;">Nom del Full / Entitat (clau interna):</label>
+            <input 
+              type="text" 
+              v-model="newSheetNameInput" 
+              class="data-input" 
+              placeholder="ex: contractant, pres, lots, partides"
+              @keyup.enter="createNewSheet"
+            >
+            <span style="font-size: 0.72rem; color: var(--text-muted);">El nom es converteix automàticament a minúscules i format clau (ex: `parts`).</span>
+          </div>
+
+          <div class="form-row" style="display: flex; flex-direction: column; gap: 4px;">
+            <label style="font-weight: 600; font-size: 0.85rem;">Tipus d'Estructura de Full:</label>
+            <select v-model="newSheetKindInput" class="data-input">
+              <option value="kv">Clau-Valor (KV - formulari d'un sol registre)</option>
+              <option value="tabular">Tabular (Llista / taula de rengleres independents)</option>
+              <option value="sub_table">Sub-taula Aniuada (taula fill vinculada a un altre full)</option>
+            </select>
+          </div>
+
+          <div v-if="newSheetKindInput === 'sub_table'" class="form-row" style="display: flex; flex-direction: column; gap: 4px;">
+            <label style="font-weight: 600; font-size: 0.85rem;">Full Pare (al qual pertany aquesta sub-taula):</label>
+            <select v-model="newSheetParentInput" class="data-input">
+              <option value="">[Selecciona Full Pare (ex: pres o pres.parts)]</option>
+              <option v-for="p in availableParentSheets" :key="p" :value="p">{{ p }}</option>
+            </select>
+            <span v-if="newSheetParentInput && newSheetNameInput" style="font-size: 0.75rem; color: var(--color-primary); font-weight: 600;">
+              Ruta d'accés resultant: <code>{{ newSheetParentInput }}.{{ newSheetNameInput.toLowerCase().replace(/[^a-z0-9_]/g, '_') }}</code>
+            </span>
+          </div>
+        </div>
+
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
+          <button class="btn btn-secondary" style="width: auto;" @click="isNewSheetModalOpen = false">Cancel·la</button>
+          <button class="btn btn-primary" style="width: auto;" @click="createNewSheet" :disabled="!newSheetNameInput.trim()">
+            ✓ Crear Full / Grup
+          </button>
         </div>
       </div>
     </div>
