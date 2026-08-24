@@ -113,6 +113,8 @@ def sanitize_id(s, allow_dots=False):
     if allow_dots and '.' in s:
         parts = [sanitize_id(p, allow_dots=False) for p in s.split('.')]
         return '.'.join(parts)
+    import unicodedata
+    s = ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
     s = re.sub(r'[^A-Za-z0-9_]', '_', s)
     s = re.sub(r'_+', '_', s).strip('_')
     if not s:
@@ -120,6 +122,14 @@ def sanitize_id(s, allow_dots=False):
     if not re.match(r'^[A-Za-z_]', s):
         s = '_' + s
     return s
+
+def _col_letter(col_idx_1):
+    result = ""
+    n = col_idx_1
+    while n > 0:
+        n, remainder = divmod(n - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
 
 # -------------------- Excel -> JSON --------------------
 def _custom_json_default(o):
@@ -174,19 +184,70 @@ def _is_kv_header(first_row):
     b = str(first_row[1]).strip().lower() if first_row[1] not in (None,'') else ''
     return (a in ('clau','key') and b in ('valor','value'))
 
-def _detect_kind(rows, raw_name=""):
+def _validate_and_detect_kind(rows, raw_name=""):
+    raw_upper = (raw_name or "").upper()
+    valid_pfxs = ('OUT_', 'EXPORT_', 'JSON_')
+    is_prefixed = any(raw_upper.startswith(pfx) for pfx in valid_pfxs)
+    is_dotted = '.' in raw_name
+
     if not rows:
-        return 'tabular' if '.' in raw_name else 'kv'
-    if '.' in raw_name:
-        return 'tabular'
+        if is_prefixed or is_dotted:
+            raise ValueError(f"El full '{raw_name}' té una estructura tabular però no conté cap fila ni capçalera de dades.")
+        return 'kv'
+
     if _is_kv_header(rows[0]):
         return 'kv_header'
-    
+
     first = rows[0]
-    headers = [v for v in first if v not in (None, '')]
-    if len(headers) >= 3 and all(isinstance(v, str) for v in headers) and len(set(headers)) == len(headers):
-        return 'tabular'
-    return 'kv'
+    headers_non_empty = [v for v in first if v not in (None, '')]
+
+    is_tabular = is_prefixed or is_dotted or (len(headers_non_empty) >= 3)
+
+    if not is_tabular:
+        return 'kv'
+
+    header_row_idx = 0
+    if len(headers_non_empty) <= 1 and len(rows) > 1:
+        r1_non_empty = [v for v in rows[1] if v not in (None, '')]
+        if len(r1_non_empty) >= 2:
+            header_row_idx = 1
+
+    header_row = rows[header_row_idx]
+
+    seen_raw_headers = {}
+    seen_clean_headers = {}
+    valid_count = 0
+
+    for col_idx_0, raw_val in enumerate(header_row):
+        if raw_val in (None, ''):
+            continue
+        
+        col_letter = _col_letter(col_idx_0 + 1)
+
+        if not isinstance(raw_val, str):
+            raise ValueError(f"El full '{raw_name}' té una estructura tabular però la capçalera '{raw_val}' (columna {col_letter}) no és un text.")
+
+        clean_h = sanitize_id(raw_val)
+        if not clean_h:
+            raise ValueError(f"El full '{raw_name}' té una estructura tabular però la capçalera '{raw_val}' (columna {col_letter}) no és un text vàlid.")
+
+        if raw_val in seen_raw_headers:
+            prev_col_letter = _col_letter(seen_raw_headers[raw_val] + 1)
+            raise ValueError(f"El full '{raw_name}' té una estructura tabular però les capçaleres de les columnes {prev_col_letter} i {col_letter} ('{raw_val}') són iguals.")
+        
+        if clean_h in seen_clean_headers:
+            prev_col_letter = _col_letter(seen_clean_headers[clean_h] + 1)
+            prev_raw = header_row[seen_clean_headers[clean_h]]
+            raise ValueError(f"El full '{raw_name}' té una estructura tabular però les capçaleres de les columnes {prev_col_letter} i {col_letter} ('{prev_raw}' i '{raw_val}') són iguals.")
+
+        seen_raw_headers[raw_val] = col_idx_0
+        seen_clean_headers[clean_h] = col_idx_0
+        valid_count += 1
+
+    if valid_count == 0:
+        raise ValueError(f"El full '{raw_name}' té una estructura tabular però la fila {header_row_idx + 1} no conté cap capçalera vàlida.")
+
+    return 'tabular', header_row_idx
 
 def _parse_kv(rows, start_row=0):
     out = {}
@@ -244,36 +305,55 @@ def _is_row_empty(item, visited=None, depth=0, max_depth=15):
                 return False
     return True
 
-def _parse_table(rows):
-    if not rows:
+def _parse_table(rows, header_row_idx=0):
+    if not rows or len(rows) <= header_row_idx:
         return []
-    headers = [sanitize_id(h) for h in rows[0] if h not in (None, '')]
+    header_row = rows[header_row_idx]
+    headers = []
+    for col_idx, raw_h in enumerate(header_row):
+        if raw_h in (None, ''):
+            continue
+        clean_h = sanitize_id(str(raw_h))
+        if clean_h:
+            headers.append((col_idx, clean_h))
+
+    if not headers:
+        return []
+
     out = []
-    for rr in rows[1:]:
+    for rr in rows[header_row_idx + 1:]:
         if all(v in (None, '') for v in rr):
             continue
         obj = {}
-        for i, h in enumerate(headers):
-            if h in (None, ''):
-                continue
-            obj[h] = rr[i] if i < len(rr) else None
-        if not _is_row_empty(obj):
+        has_any_data = False
+        for col_idx, h_name in headers:
+            val = rr[col_idx] if col_idx < len(rr) else None
+            obj[h_name] = val
+            if val not in (None, ''):
+                has_any_data = True
+        if has_any_data:
             out.append(obj)
     return out
 
 def _parse_sheet(ws, date_format='iso'):
     rows = _read_rows(ws, date_format)
-    kind = _detect_kind(rows, ws.title)
+    kind_res = _validate_and_detect_kind(rows, ws.title)
+    if isinstance(kind_res, tuple):
+        kind, header_row_idx = kind_res
+    else:
+        kind = kind_res
+        header_row_idx = 0
+
     headers = []
-    if rows:
-        headers = [sanitize_id(h) for h in rows[0] if h not in (None, '')]
+    if rows and len(rows) > header_row_idx:
+        headers = [sanitize_id(h) for h in rows[header_row_idx] if h not in (None, '')]
         
     if kind == 'kv_header':
         return 'kv', _parse_kv(rows, start_row=1), headers
     if kind == 'kv':
         return 'kv', _parse_kv(rows, start_row=0), headers
     if kind == 'tabular':
-        return 'tabular', _parse_table(rows), headers
+        return 'tabular', _parse_table(rows, header_row_idx=header_row_idx), headers
     return kind, [], headers
 
 def _cast_numeric_strings(obj):
