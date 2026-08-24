@@ -2301,31 +2301,6 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
     fn.destroy();
     
     const parsed = JSON.parse(jsonStr);
-    
-    // Clean all-zeros or empty rows to empty strings to avoid showing '0' for blank formula rows
-    Object.keys(parsed).forEach(sheetName => {
-      if (sheetName === '_hierarchy_schema') return;
-      const sheetData = parsed[sheetName];
-      if (Array.isArray(sheetData)) {
-        sheetData.forEach(row => {
-          if (row && typeof row === 'object') {
-            const primitiveValues = Object.entries(row)
-              .filter(([k, v]) => !Array.isArray(v) && typeof v !== 'object')
-              .map(([k, v]) => v);
-            const isAllZeros = primitiveValues.length > 0 && primitiveValues.every(val => 
-              val === 0 || val === 0.0 || val === '' || val === null || val === undefined || val === false
-            );
-            if (isAllZeros) {
-              Object.keys(row).forEach(key => {
-                if (!Array.isArray(row[key]) && typeof row[key] !== 'object') {
-                  row[key] = '';
-                }
-              });
-            }
-          }
-        });
-      }
-    });
 
     let parsedData = {};
     let parsedSchema = {};

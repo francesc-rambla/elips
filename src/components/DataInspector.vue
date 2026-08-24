@@ -405,7 +405,7 @@ const deleteKvKey = (sheetName, key) => {
 
 const isRowAllZerosOrEmpty = (row) => {
   if (!row || typeof row !== 'object') return false;
-  return Object.values(row).every(val => val === 0 || val === 0.0 || val === '' || val === null || val === undefined || val === false);
+  return Object.values(row).every(val => val === '' || val === null || val === undefined);
 };
 
 const visibleRowsCount = ref({});
