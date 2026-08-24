@@ -524,7 +524,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                         parent[sub_key] = data_to_set
 
     sheet_info_list = []
-    for raw_name in sorted_raw_names:
+    for raw_name in sheet_order:
         if raw_name in ('editor_metadata', '_hierarchy_metadata'):
             continue
         kind, data, headers = parsed[raw_name]
