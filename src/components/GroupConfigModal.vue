@@ -81,17 +81,113 @@ const removeFieldFromConfig = (idx) => {
 };
 
 const getAvailableTables = () => {
+  const result = new Set();
+
   if (!store.excelJsonData) return [];
-  return Object.keys(store.excelJsonData).filter(k => Array.isArray(store.excelJsonData[k]));
+
+  // Helper to recursively discover all array keys in an object tree
+  const findArrayKeys = (obj, depth = 0) => {
+    if (!obj || typeof obj !== 'object' || depth > 10) return;
+    
+    if (Array.isArray(obj)) {
+      obj.forEach(item => {
+        if (item && typeof item === 'object') {
+          Object.keys(item).forEach(k => {
+            if (!k.startsWith('_') && Array.isArray(item[k])) {
+              result.add(k);
+              findArrayKeys(item[k], depth + 1);
+            }
+          });
+        }
+      });
+    } else {
+      Object.keys(obj).forEach(k => {
+        if (!k.startsWith('_')) {
+          if (Array.isArray(obj[k])) {
+            result.add(k);
+            findArrayKeys(obj[k], depth + 1);
+          } else if (typeof obj[k] === 'object' && obj[k] !== null) {
+            findArrayKeys(obj[k], depth + 1);
+          }
+        }
+      });
+    }
+  };
+
+  // 1. Search in store.excelJsonData for the current group first
+  if (props.groupName && store.excelJsonData[props.groupName]) {
+    findArrayKeys(store.excelJsonData[props.groupName]);
+  }
+
+  // 2. Deep search across the entire store.excelJsonData tree
+  findArrayKeys(store.excelJsonData);
+
+  // 3. Search in store.editorMetadata for any fields defined as type === 'Table' or having vectorPath
+  if (Array.isArray(store.editorMetadata)) {
+    store.editorMetadata.forEach(meta => {
+      if (meta.type === 'Table' && meta.element) {
+        result.add(meta.element);
+      }
+      if (meta.vectorPath) {
+        result.add(meta.vectorPath);
+      }
+    });
+  }
+
+  return Array.from(result);
 };
 
 const getChildTableColumns = (vectorName) => {
-  if (!vectorName || !store.excelJsonData || !Array.isArray(store.excelJsonData[vectorName])) return [];
-  const list = store.excelJsonData[vectorName];
-  if (list.length === 0) return [];
-  const sample = list.find(item => item && typeof item === 'object') || list[0];
-  if (!sample || typeof sample !== 'object') return ['valor'];
-  return Object.keys(sample).filter(k => !k.startsWith('_'));
+  if (!vectorName || !store.excelJsonData) return [];
+
+  // 1. Check if vectorName is a top-level key in store.excelJsonData
+  if (Array.isArray(store.excelJsonData[vectorName])) {
+    const list = store.excelJsonData[vectorName];
+    const sample = list.find(item => item && typeof item === 'object') || list[0];
+    if (sample && typeof sample === 'object') {
+      return Object.keys(sample).filter(k => !k.startsWith('_'));
+    }
+  }
+
+  // 2. Deep search for array with key `vectorName` anywhere in store.excelJsonData
+  let foundSample = null;
+  const searchRecursive = (obj, depth = 0) => {
+    if (!obj || typeof obj !== 'object' || foundSample || depth > 10) return;
+    
+    if (Array.isArray(obj)) {
+      obj.forEach(item => {
+        if (item && typeof item === 'object') {
+          if (Array.isArray(item[vectorName]) && item[vectorName].length > 0) {
+            foundSample = item[vectorName].find(s => s && typeof s === 'object') || item[vectorName][0];
+            return;
+          }
+          Object.values(item).forEach(val => searchRecursive(val, depth + 1));
+        }
+      });
+    } else {
+      if (Array.isArray(obj[vectorName]) && obj[vectorName].length > 0) {
+        foundSample = obj[vectorName].find(s => s && typeof s === 'object') || obj[vectorName][0];
+        return;
+      }
+      Object.values(obj).forEach(val => searchRecursive(val, depth + 1));
+    }
+  };
+
+  searchRecursive(store.excelJsonData);
+
+  if (foundSample && typeof foundSample === 'object') {
+    return Object.keys(foundSample).filter(k => !k.startsWith('_'));
+  }
+
+  // 3. Search store.editorMetadata for fields configured under group === vectorName
+  if (Array.isArray(store.editorMetadata)) {
+    const cols = store.editorMetadata
+      .filter(m => m.group === vectorName && !m.isGroupHeader && m.element)
+      .map(m => m.element);
+    if (cols.length > 0) return cols;
+  }
+
+  return ['valor'];
 };
 
 const openFormulaEditor = (item) => {
