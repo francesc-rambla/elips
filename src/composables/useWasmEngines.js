@@ -3025,15 +3025,31 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     }
   };
 
-  const evaluateComputedFields = (dataObj, metadataList = []) => {
+  const evaluateComputedFields = (dataObj, metadataList = [], debugMode = true) => {
     if (!dataObj || typeof dataObj !== 'object') return dataObj;
-    const metadata = metadataList.length > 0 ? metadataList : (dataObj.editor_metadata || []);
+    const metadata = metadataList.length > 0 ? metadataList : (dataObj.editor_metadata || store.editorMetadata || []);
 
-    // Hydrate dynamic select Foreign Keys into objects (e.g., part.lot becomes an object with part.lot.nom, part.lot.codi, etc.)
+    const computedMetas = metadata.filter(m => 
+      m.type === 'Computed' || 
+      m.sourceType === 'computed' || 
+      (m.calcFn && m.calcFn !== '') || 
+      (m.calcFormula && m.calcFormula !== '')
+    );
+
+    if (debugMode) {
+      if (computedMetas.length === 0) {
+        store.addLog(`🧮 [DEPURACIÓ CAMPS CALCULATS] No s'ha trobat cap camp marcat com a calculat (editor_metadata té ${metadata.length} metadades en total).`, 'warning');
+      } else {
+        store.addLog(`🧮 [DEPURACIÓ CAMPS CALCULATS] Detectats ${computedMetas.length} camps calculats:\n` +
+          computedMetas.map(m => `  • [Grup: ${m.group || 'global'} | Camp: ${m.element}] Tipus: ${m.calcFn || 'CUSTOM'} | Fórmula/Vector: "${m.calcFormula || m.calcVector || ''}"`).join('\n'),
+          'info'
+        );
+      }
+    }
+
+    if (computedMetas.length === 0) return dataObj;
+
     const data = hydrateModelWithForeignKeys(dataObj, metadata);
-
-    const computedMetas = metadata.filter(m => m.type === 'Computed');
-    if (computedMetas.length === 0) return data;
 
     const isCustomFn = (fn) => {
       const upper = (fn || '').toUpperCase();
@@ -3043,9 +3059,9 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     const isGroupMatch = (metaGroup, hint) => {
       if (!metaGroup) return true;
       if (!hint) return true;
-      if (metaGroup === hint) return true;
-      const gShort = metaGroup.split('.').pop();
-      const hShort = hint.split('.').pop();
+      if (metaGroup === hint || metaGroup.replace(/^OUT_/, '') === hint.replace(/^OUT_/, '')) return true;
+      const gShort = metaGroup.split('.').pop().replace(/^OUT_/, '');
+      const hShort = hint.split('.').pop().replace(/^OUT_/, '');
       return gShort === hShort;
     };
 
@@ -3078,7 +3094,11 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         if (isGroupMatch(meta.group, groupHint) || (meta.element in container)) {
           const calculatedVal = evaluateCustomFormula(meta.calcFormula, container, data);
           if (calculatedVal !== undefined && calculatedVal !== null) {
+            const oldVal = container[meta.element];
             container[meta.element] = calculatedVal;
+            if (debugMode) {
+              store.addLog(`✨ [CÀLCUL CUSTOM] ${meta.group || groupHint}.${meta.element} = ${calculatedVal} (Fórmula: "${meta.calcFormula}", Anterior: ${oldVal})`, 'success');
+            }
           }
         }
       });
@@ -3174,7 +3194,13 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
               calculatedVal = numbers.length > 0 ? Math.max(...numbers) : 0;
             }
 
+            const oldVal = container[meta.element];
             container[meta.element] = calculatedVal;
+            if (debugMode) {
+              store.addLog(`📊 [CÀLCUL AGREGACIÓ] ${meta.group || groupHint}.${meta.element} = ${calculatedVal} (${fn} de '${targetVec}' [${childList.length} elements], Anterior: ${oldVal})`, 'success');
+            }
+          } else if (debugMode) {
+            store.addLog(`⚠️ [CÀLCUL AGREGACIÓ] No s'ha trobat la llista '${targetVec}' per calcular ${meta.element}.`, 'warning');
           }
         }
       });
