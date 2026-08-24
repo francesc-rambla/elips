@@ -449,22 +449,73 @@ def _extract_flat_rows_for_sheet(data, raw_sheet_name, has_prefixed_sheets, vali
 def excel_to_json(excel_path, date_format='iso', strict=False):
     wb = load_workbook(excel_path, data_only=True)
     parsed = {}
+    sheet_logs = []
     
     valid_prefixes = ('OUT_', 'JSON_', 'EXPORT_')
-    has_prefixed_sheets = any(sheet.upper().startswith(valid_prefixes) for sheet in wb.sheetnames)
+    has_prefixed_sheets = any(sheet.upper().startswith(valid_prefixes) for sheet in wb.sheetnames if not sheet.startswith('_'))
     
     sheet_order = []
     for raw_name in wb.sheetnames:
         if raw_name in ('editor_metadata', 'editormetadata', '_hierarchy_schema', '_hierarchy_metadata') or raw_name.startswith('_sheet_info'):
+            sheet_logs.append({
+                'name': raw_name,
+                'processed': False,
+                'kind': 'omès',
+                'reason': 'Pestanya interna del sistema'
+            })
             continue
-        if has_prefixed_sheets:
-            raw_upper = raw_name.upper()
-            if raw_upper.startswith(valid_prefixes):
-                parsed[raw_name] = _parse_sheet(wb[raw_name], date_format)
-                sheet_order.append(raw_name)
-        else:
-            parsed[raw_name] = _parse_sheet(wb[raw_name], date_format)
+
+        raw_upper = raw_name.upper()
+        should_process = True
+        if has_prefixed_sheets and not any(raw_upper.startswith(pfx) for pfx in valid_prefixes):
+            should_process = False
+
+        if not should_process:
+            sheet_logs.append({
+                'name': raw_name,
+                'processed': False,
+                'kind': 'omès',
+                'reason': 'Sense prefix de processament (OUT_)'
+            })
+            continue
+
+        try:
+            kind, data, headers = _parse_sheet(wb[raw_name], date_format)
+            parsed[raw_name] = (kind, data, headers)
             sheet_order.append(raw_name)
+
+            if kind == 'tabular':
+                n_cols = len(headers) if headers else (len(data[0].keys()) if (isinstance(data, list) and data) else 0)
+                n_rows = len(data) if isinstance(data, list) else 0
+                sheet_logs.append({
+                    'name': raw_name,
+                    'processed': True,
+                    'kind': 'tabular',
+                    'cols': n_cols,
+                    'rows': n_rows
+                })
+            elif kind == 'kv':
+                n_pairs = len(data) if isinstance(data, dict) else 0
+                sheet_logs.append({
+                    'name': raw_name,
+                    'processed': True,
+                    'kind': 'kv',
+                    'pairs': n_pairs
+                })
+            else:
+                sheet_logs.append({
+                    'name': raw_name,
+                    'processed': True,
+                    'kind': str(kind),
+                    'pairs': len(data) if isinstance(data, dict) else (len(data) if isinstance(data, list) else 0)
+                })
+        except Exception as err:
+            sheet_logs.append({
+                'name': raw_name,
+                'processed': False,
+                'kind': 'error',
+                'error': str(err)
+            })
 
     custom_hierarchy_keys = {}
     if "_hierarchy_metadata" in wb.sheetnames:
@@ -635,6 +686,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
         })
 
     root['_sheet_info'] = sheet_info_list
+    root['_sheet_logs'] = sheet_logs
     if 'editor_metadata' in parsed and isinstance(parsed['editor_metadata'][1], list):
         root['editor_metadata'] = parsed['editor_metadata'][1]
 
@@ -2285,8 +2337,25 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
       }
     }
 
-    if (parsedData && parsedData._hierarchy_schema) {
-      delete parsedData._hierarchy_schema;
+    if (parsedData && parsedData._sheet_logs) {
+      const logs = parsedData._sheet_logs;
+      let logMsg = `📊 [RESUM DE DEPURACIÓ DE PESTANYES EXCEL]\n` +
+                   `==================================================\n`;
+      logs.forEach(s => {
+        if (s.kind === 'omès') {
+          logMsg += `▫️ Full "${s.name}": Omès (${s.reason})\n`;
+        } else if (s.kind === 'error') {
+          logMsg += `❌ Full "${s.name}": Error -> ${s.error}\n`;
+        } else if (s.kind === 'tabular') {
+          logMsg += `📋 Full "${s.name}": SÍ processat | Tipus: Tabular | ${s.cols} columnes | ${s.rows} files\n`;
+        } else if (s.kind === 'kv') {
+          logMsg += `🔑 Full "${s.name}": SÍ processat | Tipus: Clau/Valor (kv) | ${s.pairs} parelles clau/valor\n`;
+        } else {
+          logMsg += `ℹ️ Full "${s.name}": SÍ processat | Tipus: ${s.kind}\n`;
+        }
+      });
+      store.addLog(logMsg, 'info');
+      delete parsedData._sheet_logs;
     }
 
     if (parsedData && parsedData.editor_metadata && Array.isArray(parsedData.editor_metadata)) {
