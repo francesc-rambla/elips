@@ -371,22 +371,18 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
     valid_prefixes = ('OUT_', 'JSON_', 'EXPORT_')
     has_prefixed_sheets = any(sheet.upper().startswith(valid_prefixes) for sheet in wb.sheetnames)
     
+    sheet_order = []
     for raw_name in wb.sheetnames:
+        if raw_name in ('editor_metadata', 'editormetadata', '_hierarchy_schema', '_hierarchy_metadata') or raw_name.startswith('_sheet_info'):
+            continue
         if has_prefixed_sheets:
             raw_upper = raw_name.upper()
             if raw_upper.startswith(valid_prefixes):
                 parsed[raw_name] = _parse_sheet(wb[raw_name], date_format)
+                sheet_order.append(raw_name)
         else:
             parsed[raw_name] = _parse_sheet(wb[raw_name], date_format)
-
-    def _sheet_depth(raw):
-        s = raw
-        if has_prefixed_sheets:
-            for pfx in valid_prefixes:
-                if raw.upper().startswith(pfx):
-                    s = raw[len(pfx):]
-                    break
-        return (s.count('.'), len(s))
+            sheet_order.append(raw_name)
 
     custom_hierarchy_keys = {}
     if "_hierarchy_metadata" in wb.sheetnames:
@@ -403,12 +399,10 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
         except Exception:
             pass
 
-    sorted_raw_names = sorted(parsed.keys(), key=_sheet_depth)
-    
     root = {}
     hierarchy_schema = {}
 
-    for raw_name in sorted_raw_names:
+    for raw_name in sheet_order:
         kind, data, headers = parsed[raw_name]
         stripped = raw_name
         if has_prefixed_sheets:
@@ -474,6 +468,13 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
             curr_sub_path = '.'.join(parts)
             
             parents = _get_nested_containers(root, parent_parts)
+            if not parents:
+                curr_n = root
+                for p in parent_parts:
+                    if p not in curr_n or not isinstance(curr_n[p], dict):
+                        curr_n[p] = {}
+                    curr_n = curr_n[p]
+                parents = _get_nested_containers(root, parent_parts)
             if not parents:
                 continue
                 
