@@ -425,6 +425,18 @@ header {
   font-weight: 500;
 }
 
+.outline-var-badge {
+  font-size: 0.6rem;
+  font-weight: 800;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(168, 85, 247, 0.18);
+  color: #a855f7;
+  font-family: monospace;
+  flex-shrink: 0;
+  letter-spacing: 0.3px;
+}
+
 .outline-tree-item.level-1 .outline-item-text {
   font-weight: 700;
 }

@@ -250,7 +250,9 @@ Un cop completades les dades:
 1. **Tauler de Control integrat (Pestanyes internar)**:
    - Ajustat verticalment entre el ribbon superior i el peu de pàgina de l'aplicació.
    - **Pestanya 1: Descàrregues**: Permet inicialitzar els motors WASM, executar la generació de documents i baixar els fitxers finals desglossats en format JSON (`dades.json`), Markdown (`.md`) i Word (`.docx`).
-   - **Pestanya 2: Esquema**: Mostra un **arbre jeràrquic interactiu dels encapçalaments del document** (`H1`, `H2`, `H3`...). En fer clic sobre qualsevol nivell de l'arbre, la vista es desplaça automàticament fins a la secció seleccionada al document.
+   - **Pestanya 2: Esquema (Navegació Contextual)**:
+     - **En mode Plantilla (`store.activeTab === 'template'`)**: Mostra l'estructura exacta del codi font de la plantilla Jinja2 conservant les **variables dinàmiques i etiquetes visibles** (ex: `## Partida {{ loop.index }}: {{ part.nom_partida }}`). En fer clic sobre un element, l'editor de codi es desplaça i posiciona el cursor exactament a la línia corresponent de la plantilla.
+     - **En mode Previsualització (`store.activeTab === 'preview'`)**: Mostra l'arbre jeràrquic del **document renderitzat i processat**. Si un encapçalament formava part d'un bucle `{% for %}` que itera 5 partides, l'esquema desplegarà els 5 encapçalaments resultants ja avaluats. En fer clic sobre un element, la vista es desplaça fins a la secció corresponent del document final.
 2. Previsualitzeu el document generat en temps real a la pestanya **Previsualització**.
 3. Feu clic a **Baixa Document Word (.docx)** per descarregar el document de Word oficial formatat segons l'estil corporatiu.
 4. *(Opcional)* Feu clic a **Exporta dades a Excel** a la pestanya de Dades per guardar totes les modificacions realitzades des de la web en un nou arxiu `.xlsx` que mantindrà intacta la configuració i les fórmules.

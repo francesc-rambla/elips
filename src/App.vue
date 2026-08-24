@@ -69,66 +69,112 @@ const documentsList = ref(JSON.parse(localStorage.getItem(`${currentProjectName.
 const controlPanelTab = ref('downloads');
 
 const documentOutline = computed(() => {
-  const text = store.cleanMarkdown || store.renderedMarkdown || store.templateText || '';
-  if (!text) return [];
+  // Context A: Mode Plantilla (Plantilles / Template Editor)
+  if (store.activeTab === 'template') {
+    const rawText = store.templateText || '';
+    if (!rawText) return [];
+    
+    const lines = rawText.split(/\r?\n/);
+    const outline = [];
+    let headingCount = 0;
+    
+    lines.forEach((line, index) => {
+      const match = line.match(/^(#{1,6})\s+(.+)$/);
+      if (match) {
+        const level = match[1].length;
+        const rawTitle = match[2].trim();
+        const hasVariables = /\{\{|\{%/.test(rawTitle);
+        
+        outline.push({
+          id: `tpl-heading-${headingCount}`,
+          index: headingCount,
+          lineIndex: index,
+          level,
+          rawTitle,
+          text: rawTitle,
+          isTemplate: true,
+          hasVariables
+        });
+        headingCount++;
+      }
+    });
+    return outline;
+  }
   
-  const lines = text.split(/\r?\n/);
+  // Context B: Mode Previsualització o altres pestanyes (Document renderitzat processat amb bucles expandits)
+  const renderedText = store.cleanMarkdown || store.renderedMarkdown || store.templateText || '';
+  if (!renderedText) return [];
+
+  const lines = renderedText.split(/\r?\n/);
   const outline = [];
   let headingCount = 0;
-  
+
   lines.forEach((line, index) => {
     const match = line.match(/^(#{1,6})\s+(.+)$/);
     if (match) {
       const level = match[1].length;
-      let rawTitle = match[2].trim();
+      const rawTitle = match[2].trim();
       
       let cleanText = rawTitle
-        .replace(/\{\{[\s\S]*?\}\}/g, '...')
-        .replace(/\{%[\s\S]*?%\}/g, '')
+        .replace(/<[^>]*>/g, '')
         .replace(/[*_~`]/g, '')
         .trim();
         
       if (!cleanText) cleanText = rawTitle;
-      
+
       outline.push({
-        id: `outline-heading-${headingCount}`,
+        id: `rendered-heading-${headingCount}`,
         index: headingCount,
         lineIndex: index,
         level,
         rawTitle,
-        text: cleanText
+        text: cleanText,
+        isTemplate: false,
+        hasVariables: false
       });
       headingCount++;
     }
   });
-  
+
   return outline;
 });
 
 const scrollToHeading = (item) => {
-  if (store.activeTab !== 'preview' && store.activeTab !== 'template') {
-    store.activeTab = 'preview';
-  }
-
-  setTimeout(() => {
-    const previewEl = document.getElementById('previewHtml');
-    if (previewEl) {
-      const headings = Array.from(previewEl.querySelectorAll('h1, h2, h3, h4, h5, h6, .metadata-card-title'));
-      if (headings.length > 0) {
-        let target = headings[item.index];
-        if (!target) {
-          target = headings.find(h => h.textContent.includes(item.text));
-        }
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          target.classList.add('heading-highlight');
-          setTimeout(() => {
-            target.classList.remove('heading-highlight');
-          }, 2000);
+  if (item.isTemplate || store.activeTab === 'template') {
+    // Mode Plantilla: Desplaça el cursor directament a l'editor Monaco / Codi
+    if (store.activeTab !== 'template') {
+      store.activeTab = 'template';
+    }
+    setTimeout(() => {
+      if (store.editorActions && typeof store.editorActions.scrollToLine === 'function') {
+        store.editorActions.scrollToLine(item.lineIndex);
+      }
+    }, 100);
+  } else {
+    // Mode Previsualització: Desplaça la vista fins al títol processat a l'HTML
+    if (store.activeTab !== 'preview') {
+      store.activeTab = 'preview';
+    }
+    setTimeout(() => {
+      const previewEl = document.getElementById('previewHtml');
+      if (previewEl) {
+        const headings = Array.from(previewEl.querySelectorAll('h1, h2, h3, h4, h5, h6, .metadata-card-title'));
+        if (headings.length > 0) {
+          let target = headings[item.index];
+          if (!target) {
+            target = headings.find(h => h.textContent.includes(item.text));
+          }
+          if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            target.classList.add('heading-highlight');
+            setTimeout(() => {
+              target.classList.remove('heading-highlight');
+            }, 2000);
+          }
         }
       }
-    }
-  }, 120);
+    }, 120);
+  }
 };
 
 const openProjectsModal = () => {
@@ -2075,16 +2121,23 @@ const generateDocuments = async () => {
 
             <!-- Tab 2: Esquema -->
             <div v-else-if="controlPanelTab === 'outline'" style="display: flex; flex-direction: column; gap: 0.5rem; height: 100%;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
-                <label style="margin: 0;">Estructura del Document</label>
-                <span style="font-size: 0.72rem; color: var(--text-muted);">{{ documentOutline.length }} nivells</span>
+              <div style="display: flex; flex-direction: column; gap: 2px; margin-bottom: 0.25rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <label style="margin: 0; font-size: 0.82rem;">Estructura del Document</label>
+                  <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 600;">{{ documentOutline.length }} elements</span>
+                </div>
+                <div style="font-size: 0.72rem; color: var(--color-primary); display: flex; align-items: center; gap: 4px; font-weight: 500;">
+                  <span v-if="store.activeTab === 'template'" style="color: var(--color-warning);">📝 Mode Plantilla (variables Jinja2)</span>
+                  <span v-else style="color: var(--color-success);">👁️ Mode Previsualització (processat)</span>
+                </div>
               </div>
 
               <div v-if="documentOutline.length === 0" style="padding: 1.5rem 0.5rem; text-align: center; color: var(--text-muted); font-size: 0.8rem; background: var(--bg-tertiary); border-radius: var(--radius-md); border: 1px dashed var(--border-color);">
                 <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">📄</div>
                 <p style="margin: 0; font-weight: 600; color: var(--text-primary);">Sense encapçalaments</p>
                 <p style="margin: 0.35rem 0 0 0; line-height: 1.4;">
-                  Genereu el document o afegiu títols (<code># H1</code>, <code>## H2</code>) a la plantilla per veure l'arbre jeràrquic.
+                  <span v-if="store.activeTab === 'template'">Afegiu encapçalaments (<code># H1</code>, <code>## H2</code>) a la plantilla.</span>
+                  <span v-else>Genereu el document per veure l'arbre d'encapçalaments processat.</span>
                 </p>
               </div>
 
@@ -2096,9 +2149,10 @@ const generateDocuments = async () => {
                   :class="`level-${item.level}`"
                   :style="{ paddingLeft: `${(item.level - 1) * 12 + 6}px` }"
                   @click="scrollToHeading(item)"
-                  title="Fes clic per anar a aquesta secció del document"
+                  :title="item.isTemplate ? `Anar a la línia ${item.lineIndex + 1} de la plantilla` : `Anar a la secció: ${item.text}`"
                 >
                   <span class="outline-level-badge" :class="`lvl-${item.level}`">H{{ item.level }}</span>
+                  <span v-if="item.hasVariables" class="outline-var-badge" title="Conté variables dinàmiques Jinja2">{ }</span>
                   <span class="outline-item-text">{{ item.text }}</span>
                 </div>
               </div>

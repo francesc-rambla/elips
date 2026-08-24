@@ -3557,6 +3557,33 @@ watch(() => editorText.value, () => {
 
 onMounted(() => {
   window.__openPandocMetadataModal = openMetadataModal;
+  const scrollToLine = (lineIndex) => {
+    if (activeEditorTab.value === 'visual' && canvasRef.value) {
+      const headings = canvasRef.value.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      if (headings && headings.length > 0) {
+        const target = headings[lineIndex] || headings[0];
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          target.classList.add('heading-highlight');
+          setTimeout(() => target.classList.remove('heading-highlight'), 2000);
+          return;
+        }
+      }
+    }
+    if (textareaRef.value) {
+      const text = editorText.value || '';
+      const lines = text.split('\n');
+      let charOffset = 0;
+      for (let i = 0; i < Math.min(lineIndex, lines.length); i++) {
+        charOffset += lines[i].length + 1;
+      }
+      textareaRef.value.focus();
+      textareaRef.value.setSelectionRange(charOffset, charOffset + (lines[lineIndex] ? lines[lineIndex].length : 0));
+      const lineHeight = 22;
+      textareaRef.value.scrollTop = Math.max(0, lineIndex * lineHeight - 60);
+    }
+  };
+
   store.editorActions = {
     switchEditorTab: (tab) => switchTab(tab),
     openMetadataModal: () => openMetadataModal(),
@@ -3570,6 +3597,7 @@ onMounted(() => {
     openSpecialCharModal: () => openSpecialCharModal(),
     emitGenerate: () => emitGenerate(),
     getActiveTab: () => activeEditorTab.value,
+    scrollToLine: (lineIndex) => scrollToLine(lineIndex),
   };
   syncCodeToVisual();
   window.addEventListener('keydown', handleGlobalKeyDown);
