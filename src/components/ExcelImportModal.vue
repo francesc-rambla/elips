@@ -132,9 +132,6 @@ const applyImport = () => {
           }
         });
         store.excelJsonData[cleanName] = finalRows;
-        if (rawName !== cleanName) {
-          store.excelJsonData[rawName] = finalRows;
-        }
       } else if (sInfo.kind === 'kv') {
         const kvObj = store.excelJsonData[cleanName] || {};
         (sInfo.rows || []).forEach(r => {
@@ -145,9 +142,6 @@ const applyImport = () => {
           }
         });
         store.excelJsonData[cleanName] = kvObj;
-        if (rawName !== cleanName) {
-          store.excelJsonData[rawName] = kvObj;
-        }
       }
     });
   }

@@ -2437,22 +2437,6 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
       store.showExcelImportModal = true;
     }
 
-    // Ensure both cleanName and OUT_cleanName exist in parsedData for template compatibility
-    if (parsedData && typeof parsedData === 'object') {
-      Object.keys(parsedData).forEach(k => {
-        if (!k.startsWith('_')) {
-          if (!k.startsWith('OUT_')) {
-            parsedData[`OUT_${k}`] = parsedData[k];
-          } else {
-            const clean = k.replace(/^OUT_/, '');
-            if (!parsedData[clean]) {
-              parsedData[clean] = parsedData[k];
-            }
-          }
-        }
-      });
-    }
-
     if (parsedData && parsedData.editor_metadata && Array.isArray(parsedData.editor_metadata)) {
       store.editorMetadata = parsedData.editor_metadata;
     }
