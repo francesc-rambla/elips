@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 
 import { useWasmEngines } from '../composables/useWasmEngines';
+import VisualGridEditorModal from './VisualGridEditorModal.vue';
 
 const props = defineProps({
   parentObj: {
@@ -521,6 +522,7 @@ const saveCellEditor = () => {
 
 // Group Config Modal for arrayKey
 const isConfigModalOpen = ref(false);
+const isVisualGridModalOpen = ref(false);
 const groupConfigList = ref([]);
 
 const getAvailableTables = () => {
@@ -1450,21 +1452,44 @@ const getItemPath = (idx, fieldKey) => {
         </div>
         
         <div class="modal-body" style="flex-grow: 1; overflow-y: auto; padding: 1rem 0;">
-          <!-- Etiqueta del grup / full (Label) -->
+          <!-- Top Control Header: Label Input + Action Buttons (Nova Clau, Editor Visual Grid) -->
           <div style="background: var(--bg-card); padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
-            <div style="display: flex; align-items: center; gap: 8px; flex-grow: 1;">
-              <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); white-space: nowrap;">Etiqueta al formulari per al grup/full:</span>
+            <!-- Left: Group Label Input -->
+            <div style="display: flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 240px;">
+              <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); white-space: nowrap;">Etiqueta formulari:</span>
               <input 
                 type="text" 
                 v-model="groupLabelInput" 
                 class="data-input" 
                 placeholder="ex: Pressupost, Partides, Activitats..." 
-                style="max-width: 320px; height: 32px; font-size: 0.85rem; flex-grow: 1;"
+                style="height: 30px; font-size: 0.85rem; flex-grow: 1;"
               />
             </div>
-            <span style="font-size: 0.75rem; color: var(--text-muted);">
-              (Nom visible a l'aplicació per al grup '{{ arrayKey }}')
-            </span>
+
+            <!-- Right: Action Buttons at the exact same row level -->
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <button 
+                type="button"
+                class="btn btn-secondary" 
+                style="width: auto; padding: 4px 10px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 5px;" 
+                @click="addNewFieldToConfig"
+                title="Afegeix una nova clau o camp a aquest grup"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>Afegeix camp</span>
+              </button>
+
+              <button 
+                type="button"
+                class="btn btn-secondary" 
+                style="width: auto; padding: 4px 12px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;" 
+                @click="isVisualGridModalOpen = true"
+                title="Editor Visual de Grid: Organitza files, assigna camps i mou-los fàcilment de forma visual"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                <span>Editor Visual de Grid</span>
+              </button>
+            </div>
           </div>
 
           <!-- Layout selector option (Vertical KV vs Horizontal Grid) -->
@@ -1696,6 +1721,13 @@ const getItemPath = (idx, fieldKey) => {
         </div>
       </div>
     </div>
+
+    <!-- Visual Grid Layout Editor Modal -->
+    <VisualGridEditorModal 
+      v-model="isVisualGridModalOpen" 
+      :groupName="arrayKey" 
+      :configList="groupConfigList" 
+    />
 
     <!-- Cell Text / Markdown + Jinja2 Editor Modal -->
     <div class="modal-overlay" v-if="isCellModalOpen" style="display: flex; z-index: 1100;">
