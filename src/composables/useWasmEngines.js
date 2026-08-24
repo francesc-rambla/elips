@@ -2491,11 +2491,16 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
     // Save to in.json in Pyodide FS as well
     _pyodide.FS.writeFile('/work/in.json', new TextEncoder().encode(cleanedJsonStr));
     
-    // Log structure details clearly to app log terminal
+    // Specific concise log for General / OUT_General tab requested by user
+    const genData = parsedData.General || parsedData.OUT_General || null;
+    if (genData) {
+      store.addLog(`📄 [DADES PESTANYA General / OUT_General (Python Dict)]:\n${JSON.stringify(genData, null, 2)}`, 'info');
+      store.addLog(`🐍 [JSON BRUT GENERAT PER A LA PESTANYA General / OUT_General]:\n${JSON.stringify(genData)}`, 'success');
+    }
+
     if (parsedSchema && Object.keys(parsedSchema).length > 0) {
       store.addLog(`Esquema jeràrquic del llibre Excel (hierarchySchema):\n${JSON.stringify(parsedSchema, null, 2)}`, 'info');
     }
-    store.addLog(`Arbre JSON de dades carregat des de l'Excel:\n${JSON.stringify(parsedData, null, 2)}`, 'info');
     
     return parsedData;
   };
