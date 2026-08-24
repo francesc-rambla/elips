@@ -145,11 +145,13 @@ def _custom_json_default(o):
         return float(o)
     if isinstance(o, bytes):
         return o.decode('utf-8', errors='ignore')
-    if hasattr(o, '__dict__'):
-        return o.__dict__
     return str(o)
 
 def _to_jsonable(v, date_format='iso'):
+    if v is None:
+        return None
+    if isinstance(v, (int, float, bool, str)):
+        return v
     if isinstance(v, datetime):
         v = v.date()
     if isinstance(v, date):
@@ -164,7 +166,7 @@ def _to_jsonable(v, date_format='iso'):
         return float(v)
     if isinstance(v, bytes):
         return v.decode('utf-8', errors='ignore')
-    return v
+    return str(v)
 
 def _read_rows(ws, date_format='iso'):
     rows = []
@@ -1855,7 +1857,7 @@ def filter_where(value, criteria=None, **kwargs):
 
 def render_json_text(excel_path, date_format='iso', strict=False):
     doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
-    return json.dumps(doc, ensure_ascii=False, indent=2, default=_custom_json_default)
+    return json.dumps(doc, ensure_ascii=False, default=_custom_json_default)
 
 def _filter_empty_rows(data, visited=None, depth=0, max_depth=15):
     if depth > max_depth:
