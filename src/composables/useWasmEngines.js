@@ -46,7 +46,7 @@ print('Instal·lació de dependències completada')
 import re
 import json
 import os
-from datetime import datetime, date
+from datetime import datetime, date, time, timedelta
 from collections import defaultdict
 from decimal import Decimal
 
@@ -122,15 +122,38 @@ def sanitize_id(s, allow_dots=False):
     return s
 
 # -------------------- Excel -> JSON --------------------
+def _custom_json_default(o):
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    if isinstance(o, time):
+        return o.isoformat()
+    if isinstance(o, timedelta):
+        return str(o)
+    if isinstance(o, Decimal):
+        if o == o.to_integral_value():
+            return int(o)
+        return float(o)
+    if isinstance(o, bytes):
+        return o.decode('utf-8', errors='ignore')
+    if hasattr(o, '__dict__'):
+        return o.__dict__
+    return str(o)
+
 def _to_jsonable(v, date_format='iso'):
     if isinstance(v, datetime):
         v = v.date()
     if isinstance(v, date):
         return v.isoformat() if date_format == 'iso' else v.strftime('%d/%m/%Y')
+    if isinstance(v, time):
+        return v.isoformat()
+    if isinstance(v, timedelta):
+        return str(v)
     if isinstance(v, Decimal):
         if v == v.to_integral_value():
             return int(v)
         return float(v)
+    if isinstance(v, bytes):
+        return v.decode('utf-8', errors='ignore')
     return v
 
 def _read_rows(ws, date_format='iso'):
@@ -1107,7 +1130,7 @@ def write_cell_value(ws, row_idx, col_idx, value):
         target_cell = ref_cell
     
     if isinstance(value, (list, dict)):
-        value = json.dumps(value, ensure_ascii=False)
+        value = json.dumps(value, ensure_ascii=False, default=_custom_json_default)
 
     # Cast value to correct type before writing
     if isinstance(value, str):
@@ -1751,7 +1774,7 @@ def filter_where(value, criteria=None, **kwargs):
 
 def render_json_text(excel_path, date_format='iso', strict=False):
     doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
-    return json.dumps(doc, ensure_ascii=False, indent=2)
+    return json.dumps(doc, ensure_ascii=False, indent=2, default=_custom_json_default)
 
 def _filter_empty_rows(data, visited=None, depth=0, max_depth=15):
     if depth > max_depth:
@@ -2052,7 +2075,7 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
             'markdown': out2_clean,
             'htmlMarkdown': out2_html,
             'issues': all_issues
-        }, ensure_ascii=False)
+        }, ensure_ascii=False, default=_custom_json_default)
     except Exception as ex:
         tb_str = traceback.format_exc()
         lineno = getattr(ex, 'lineno', None)
@@ -2063,7 +2086,7 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
             'message': msg,
             'traceback': tb_str,
             'line': lineno
-        }, ensure_ascii=False)
+        }, ensure_ascii=False, default=_custom_json_default)
       `;
       await _pyodide.runPythonAsync(pyCode);
       store.addLog("Motor de dades Python vinculat correctament a Pyodide.", 'success');
