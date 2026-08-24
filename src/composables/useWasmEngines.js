@@ -456,6 +456,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
     wb = load_workbook(excel_path, data_only=True)
     parsed = {}
     sheet_logs = []
+    import_inspection = {}
     
     valid_prefixes = ('OUT_', 'JSON_', 'EXPORT_')
     has_prefixed_sheets = any(sheet.upper().startswith(valid_prefixes) for sheet in wb.sheetnames if not sheet.startswith('_'))
@@ -489,6 +490,45 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
             kind, data, headers = _parse_sheet(wb[raw_name], date_format)
             parsed[raw_name] = (kind, data, headers)
             sheet_order.append(raw_name)
+
+            clean_n = raw_name
+            if has_prefixed_sheets:
+                for pfx in valid_prefixes:
+                    if raw_name.upper().startswith(pfx):
+                        clean_n = raw_name[len(pfx):]
+                        break
+
+            inspection_rows = []
+            if kind == 'tabular' and isinstance(data, list):
+                for r_idx, row in enumerate(data, 1):
+                    prims = [v for k, v in row.items() if not k.startswith('_') and not isinstance(v, (dict, list))]
+                    is_empty = (len(prims) == 0) or all(v in (0, 0.0, '', None, False, '0', '0.0') for v in prims)
+                    inspection_rows.append({
+                        'index': r_idx,
+                        'status': 'discarded' if is_empty else 'kept',
+                        'reason': 'Fila buida / ceros de fórmula' if is_empty else 'Conté dades vàlides',
+                        'data': row
+                    })
+            elif kind == 'kv' and isinstance(data, dict):
+                for k, v in data.items():
+                    is_empty = (v in ('', None, False))
+                    inspection_rows.append({
+                        'index': k,
+                        'status': 'discarded' if is_empty else 'kept',
+                        'reason': 'Valor buit' if is_empty else 'Clau amb valor',
+                        'data': { 'key': k, 'value': v }
+                    })
+
+            import_inspection[raw_name] = {
+                'raw_name': raw_name,
+                'clean_name': clean_n,
+                'kind': kind,
+                'headers': headers or [],
+                'total_rows': len(inspection_rows),
+                'kept_count': sum(1 for r in inspection_rows if r['status'] == 'kept'),
+                'discarded_count': sum(1 for r in inspection_rows if r['status'] == 'discarded'),
+                'rows': inspection_rows
+            }
 
             if kind == 'tabular':
                 n_cols = len(headers) if headers else (len(data[0].keys()) if (isinstance(data, list) and data) else 0)
@@ -693,6 +733,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
 
     root['_sheet_info'] = sheet_info_list
     root['_sheet_logs'] = sheet_logs
+    root['_excel_import_inspection'] = import_inspection
     if 'editor_metadata' in parsed and isinstance(parsed['editor_metadata'][1], list):
         root['editor_metadata'] = parsed['editor_metadata'][1]
 
@@ -2364,6 +2405,12 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
       });
       store.addLog(logMsg, 'info');
       delete parsedData._sheet_logs;
+    }
+
+    if (parsedData && parsedData._excel_import_inspection) {
+      store.excelImportInspection = parsedData._excel_import_inspection;
+      delete parsedData._excel_import_inspection;
+      store.showExcelImportModal = true;
     }
 
     if (parsedData && parsedData.editor_metadata && Array.isArray(parsedData.editor_metadata)) {

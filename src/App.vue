@@ -11,6 +11,7 @@ import TemplateEditor from './components/TemplateEditor.vue';
 import DocumentPreview from './components/DocumentPreview.vue';
 import TerminalLog from './components/TerminalLog.vue';
 import SettingsModal from './components/SettingsModal.vue';
+import ExcelImportModal from './components/ExcelImportModal.vue';
 
 const store = useWorkspaceStore();
 const { initEngines, parseExcel, renderMarkdown, compileDocx, saveExcelData, saveExcelHierarchy, writeVirtualExcel, isLoading } = useWasmEngines();
@@ -2292,6 +2293,9 @@ const generateDocuments = async () => {
 
     <!-- Advanced Configuration Modal -->
     <SettingsModal :isOpen="isSettingsOpen" @close="isSettingsOpen = false" />
+
+    <!-- Post-Import Excel Inspection Modal -->
+    <ExcelImportModal :isOpen="store.showExcelImportModal" @close="store.showExcelImportModal = false" @confirm="saveCurrentProject" />
 
     <!-- Warn Overwrite / Bind Excel Template Modal -->
     <div class="modal-overlay" v-if="showWarningModal" style="display: flex;">

@@ -1756,6 +1756,17 @@ onMounted(() => {
 
     <!-- Spreadsheet Accordion Inspector -->
     <div v-else-if="!showJsonView" class="sheets-accordion">
+      <div v-if="store.excelImportInspection" style="margin-bottom: 0.75rem; display: flex; justify-content: flex-end;">
+        <button 
+          class="btn btn-secondary" 
+          style="padding: 5px 12px; font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border-color); background: var(--bg-card);"
+          @click="store.showExcelImportModal = true"
+          title="Obre el modal d'inspecció detallada de l'Excel carregat"
+        >
+          <span>🔍</span>
+          <span>Inspecciona Importació Excel</span>
+        </button>
+      </div>
       
       <div 
         v-for="(sheetData, name) in store.excelJsonData" 

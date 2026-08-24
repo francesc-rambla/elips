@@ -55,6 +55,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     // UI state
     enginesReady: false,
     generating: false,
+    excelImportInspection: null,
+    showExcelImportModal: false,
     activeTab: (() => {
       const pName = localStorage.getItem('currentProjectName') || 'Default';
       const tab = localStorage.getItem(`${pName}:activeTab`);
