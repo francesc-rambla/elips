@@ -3653,44 +3653,44 @@ onUnmounted(() => {
 
 <template>
   <div style="display: flex; flex-direction: column; gap: 0.5rem; height: 100%; max-height: 100%; min-height: 0; flex: 1;">
-    <!-- Compact Formatting Toolbar (shown when isCellMode is true) -->
+    <!-- Compact Single-Line Horizontal Toolbar (shown when isCellMode is true) -->
     <div 
       v-if="isCellMode" 
       class="editor-cell-toolbar" 
-      style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 10px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: var(--radius-sm);"
+      style="display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow-x: auto; flex-shrink: 0;"
     >
       <!-- Group 1: Visual / Code Switcher -->
-      <div style="display: flex; align-items: center; gap: 4px;">
-        <div class="segmented-control" style="display: inline-flex; border: 1px solid var(--border-color); border-radius: 4px; padding: 1px; background: var(--bg-primary);">
-          <button 
-            type="button"
-            class="btn-segment" 
-            :class="{ active: activeEditorTab === 'visual' }"
-            @click="switchTab('visual')"
-            style="padding: 2px 8px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; color: var(--text-primary); display: inline-flex; align-items: center; gap: 4px;"
-            title="Editor Visual (WYSIWYG)"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-            <span>Visual</span>
-          </button>
-          <button 
-            type="button"
-            class="btn-segment" 
-            :class="{ active: activeEditorTab === 'code' }"
-            @click="switchTab('code')"
-            style="padding: 2px 8px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; color: var(--text-primary); display: inline-flex; align-items: center; gap: 4px;"
-            title="Codi Raw Markdown + Jinja2"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            <span>Codi</span>
-          </button>
-        </div>
+      <div class="segmented-control" style="display: inline-flex; border: 1px solid var(--border-color); border-radius: 4px; padding: 1px; background: var(--bg-primary); flex-shrink: 0;">
+        <button 
+          type="button"
+          class="btn-segment" 
+          :class="{ active: activeEditorTab === 'visual' }"
+          @click="switchTab('visual')"
+          style="padding: 2px 6px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; color: var(--text-primary); display: inline-flex; align-items: center; gap: 3px;"
+          title="Editor Visual (WYSIWYG)"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span>Visual</span>
+        </button>
+        <button 
+          type="button"
+          class="btn-segment" 
+          :class="{ active: activeEditorTab === 'code' }"
+          @click="switchTab('code')"
+          style="padding: 2px 6px; font-size: 0.72rem; border: none; background: transparent; cursor: pointer; border-radius: 3px; color: var(--text-primary); display: inline-flex; align-items: center; gap: 3px;"
+          title="Codi Raw Markdown + Jinja2"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          <span>Codi</span>
+        </button>
       </div>
 
-      <!-- Group 2: Formatting Tools (Format, Bold, Italic, Lists) -->
-      <div v-if="activeEditorTab === 'visual'" style="display: flex; align-items: center; gap: 4px;">
+      <div style="height: 18px; width: 1px; background: var(--border-color); margin: 0 2px; flex-shrink: 0;"></div>
+
+      <!-- Group 2: Formatting Tools -->
+      <template v-if="activeEditorTab === 'visual'">
         <select 
-          style="width: 105px; height: 26px; padding: 1px 4px; font-size: 0.75rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);" 
+          style="width: 95px; height: 26px; padding: 1px 4px; font-size: 0.72rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); flex-shrink: 0;" 
           @change="formatBlock($event.target.value); $event.target.value = '';" 
           title="Format de paràgraf (Títols H1-H6 o Paràgraf)"
         >
@@ -3704,38 +3704,38 @@ onUnmounted(() => {
           <option value="P">Paràgraf (p)</option>
         </select>
         
-        <button type="button" class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 26px; font-weight: bold;" @click="formatDoc('bold')" title="Negreta (Ctrl+B)"><b>B</b></button>
-        <button type="button" class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 26px; font-style: italic;" @click="formatDoc('italic')" title="Cursiva (Ctrl+I)"><i>I</i></button>
-        <button type="button" class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 26px;" @click="insertList('unordered')" title="Llista de punts">•</button>
-        <button type="button" class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 26px;" @click="insertList('ordered')" title="Llista numerada">1.</button>
-      </div>
+        <button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; font-weight: bold; flex-shrink: 0;" @click="formatDoc('bold')" title="Negreta (Ctrl+B)"><b>B</b></button>
+        <button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; font-style: italic; flex-shrink: 0;" @click="formatDoc('italic')" title="Cursiva (Ctrl+I)"><i>I</i></button>
+        <button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; flex-shrink: 0;" @click="insertList('unordered')" title="Llista de punts">•</button>
+        <button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; flex-shrink: 0;" @click="insertList('ordered')" title="Llista numerada">1.</button>
 
-      <!-- Group 3: Insertion Tools (Taula, Equació, IF, FOR, Ω) -->
-      <div style="display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
-        <button type="button" class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center; gap: 3px;" @click="openTableModal()" title="Insereix taula automàtica des de l'Excel">
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
-          <span>Taula</span>
-        </button>
+        <div style="height: 18px; width: 1px; background: var(--border-color); margin: 0 2px; flex-shrink: 0;"></div>
+      </template>
 
-        <button type="button" class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center; gap: 3px;" @click="openMathModal()" title="Insereix fórmula LaTeX / KaTeX">
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 4H6l6 8-6 8h12"/></svg>
-          <span>Equació</span>
-        </button>
+      <!-- Group 3: Insertion Tools -->
+      <button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0;" @click="openTableModal()" title="Insereix taula automàtica des de l'Excel">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+        <span>Taula</span>
+      </button>
 
-        <button type="button" class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center; gap: 3px;" @click="openBlockModal('if')" title="Insereix condicional IF">
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
-          <span>IF</span>
-        </button>
+      <button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0;" @click="openMathModal()" title="Insereix fórmula LaTeX / KaTeX">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 4H6l6 8-6 8h12"/></svg>
+        <span>Equació</span>
+      </button>
 
-        <button type="button" class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center; gap: 3px;" @click="openBlockModal('for')" title="Insereix bucle FOR">
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
-          <span>FOR</span>
-        </button>
+      <button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0;" @click="openBlockModal('if')" title="Insereix condicional IF">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+        <span>IF</span>
+      </button>
 
-        <button type="button" class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 26px; font-weight: bold; color: var(--color-primary);" @click="openSpecialCharModal()" title="Insereix caràcters especials (guió llarg, espai no separable, etc.)">
-          <span>Ω</span>
-        </button>
-      </div>
+      <button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0;" @click="openBlockModal('for')" title="Insereix bucle FOR">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+        <span>FOR</span>
+      </button>
+
+      <button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; font-weight: bold; color: var(--color-primary); flex-shrink: 0;" @click="openSpecialCharModal()" title="Insereix caràcters especials (guió llarg, espai no separable, etc.)">
+        <span>Ω</span>
+      </button>
     </div>
 
     <!-- Template Grid: Left Column Editor Container + Right Column Data Schema Sidebar -->
