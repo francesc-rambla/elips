@@ -266,15 +266,8 @@ def _parse_kv(rows, start_row=0):
 def _is_value_empty(val):
     if val is None:
         return True
-    if isinstance(val, bool):
-        return not val
-    if isinstance(val, (int, float, Decimal)):
-        return val == 0
     if isinstance(val, str):
-        s = val.strip()
-        if not s or s in ('0', '0.0', '0.00', '0,00', 'None', 'null', 'false', 'FALSE'):
-            return True
-        return False
+        return val.strip() == ''
     if isinstance(val, (list, dict)):
         return len(val) == 0
     return False
@@ -511,7 +504,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     })
             elif kind == 'kv' and isinstance(data, dict):
                 for k, v in data.items():
-                    is_empty = (v in ('', None, False))
+                    is_empty = (v is None or (isinstance(v, str) and v.strip() == ''))
                     inspection_rows.append({
                         'index': k,
                         'status': 'discarded' if is_empty else 'kept',
@@ -2411,6 +2404,22 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
       store.excelImportInspection = parsedData._excel_import_inspection;
       delete parsedData._excel_import_inspection;
       store.showExcelImportModal = true;
+    }
+
+    // Ensure both cleanName and OUT_cleanName exist in parsedData for template compatibility
+    if (parsedData && typeof parsedData === 'object') {
+      Object.keys(parsedData).forEach(k => {
+        if (!k.startsWith('_')) {
+          if (!k.startsWith('OUT_')) {
+            parsedData[`OUT_${k}`] = parsedData[k];
+          } else {
+            const clean = k.replace(/^OUT_/, '');
+            if (!parsedData[clean]) {
+              parsedData[clean] = parsedData[k];
+            }
+          }
+        }
+      });
     }
 
     if (parsedData && parsedData.editor_metadata && Array.isArray(parsedData.editor_metadata)) {
