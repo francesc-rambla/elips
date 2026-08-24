@@ -2800,8 +2800,13 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     const computedMetas = metadata.filter(m => m.type === 'Computed');
     if (computedMetas.length === 0) return data;
 
-    const customMetas = computedMetas.filter(m => (m.calcFn || '').toUpperCase() === 'CUSTOM' && m.calcFormula);
-    const aggMetas = computedMetas.filter(m => (m.calcFn || '').toUpperCase() !== 'CUSTOM');
+    const isCustomFn = (fn) => {
+      const upper = (fn || '').toUpperCase();
+      return upper === 'CUSTOM' || upper === 'FORMULA';
+    };
+
+    const customMetas = computedMetas.filter(m => isCustomFn(m.calcFn) && m.calcFormula);
+    const aggMetas = computedMetas.filter(m => !isCustomFn(m.calcFn));
 
     // Helper to evaluate CUSTOM formulas on a container (bottom-up)
     const runCustomPass = (container, groupHint = '') => {
@@ -2876,10 +2881,16 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
                 return sum + (isNaN(val) ? 0 : val);
               }, 0);
               calculatedVal = Math.round(total * 100) / 100;
-            } else if (fn === 'AVG' && col) {
+            } else if ((fn === 'AVG' || fn === 'AVERAGE') && col) {
               const numbers = childList.map(c => parseFloat(c[col])).filter(n => !isNaN(n));
               const avg = numbers.length > 0 ? numbers.reduce((a, b) => a + b, 0) / numbers.length : 0;
               calculatedVal = Math.round(avg * 100) / 100;
+            } else if (fn === 'MIN' && col) {
+              const numbers = childList.map(c => parseFloat(c[col])).filter(n => !isNaN(n));
+              calculatedVal = numbers.length > 0 ? Math.min(...numbers) : 0;
+            } else if (fn === 'MAX' && col) {
+              const numbers = childList.map(c => parseFloat(c[col])).filter(n => !isNaN(n));
+              calculatedVal = numbers.length > 0 ? Math.max(...numbers) : 0;
             }
 
             if (container[meta.element] !== calculatedVal) {

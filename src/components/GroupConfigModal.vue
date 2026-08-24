@@ -63,7 +63,16 @@ watch(() => props.modelValue, (newVal) => {
   if (newVal) {
     localGroupLabel.value = props.groupLabel || '';
     localSelectedLayout.value = props.selectedLayout || 'vertical';
-    localConfigList.value = JSON.parse(JSON.stringify(props.configList || []));
+    localConfigList.value = (props.configList || []).map(item => {
+      let fn = item.calcFn || 'SUM';
+      if (fn === 'CUSTOM') fn = 'FORMULA';
+      if (fn === 'AVG') fn = 'AVERAGE';
+      return {
+        ...item,
+        calcFn: fn,
+        calcFormula: item.calcFormula || ''
+      };
+    });
   }
 });
 
@@ -72,10 +81,22 @@ const closeModal = () => {
 };
 
 const handleSave = () => {
+  const cleanedList = localConfigList.value.map(item => {
+    const copy = { ...item };
+    if (copy.type === 'Computed') {
+      if (copy.calcFn === 'FORMULA') {
+        copy.calcFn = 'CUSTOM';
+      } else if (copy.calcFn === 'AVERAGE') {
+        copy.calcFn = 'AVG';
+      }
+    }
+    return copy;
+  });
+
   emit('save', {
     groupLabel: localGroupLabel.value,
     selectedLayout: localSelectedLayout.value,
-    configList: localConfigList.value
+    configList: cleanedList
   });
   closeModal();
 };
@@ -406,27 +427,44 @@ const saveFormulaModal = () => {
                   <template v-else-if="item.type === 'Computed'">
                     <div style="display: flex; flex-direction: column; gap: 4px;">
                       <div style="display: flex; gap: 4px; align-items: center;">
-                        <select v-model="item.calcFn" class="data-input" style="width: 90px; height: 26px; font-size: 0.75rem;">
-                          <option value="SUM">SUMA</option>
-                          <option value="AVERAGE">MITJANA</option>
-                          <option value="COUNT">RECOMPTE</option>
-                          <option value="MIN">MÍNIM</option>
-                          <option value="MAX">MÀXIM</option>
-                          <option value="FORMULA">FÓRMULA</option>
+                        <select v-model="item.calcFn" class="data-input" style="width: 100%; height: 26px; font-size: 0.75rem;">
+                          <option value="SUM">SUMA (Sub-taula)</option>
+                          <option value="AVERAGE">MITJANA (Sub-taula)</option>
+                          <option value="COUNT">RECOMPTE (Sub-taula)</option>
+                          <option value="MIN">MÍNIM (Sub-taula)</option>
+                          <option value="MAX">MÀXIM (Sub-taula)</option>
+                          <option value="FORMULA">FÓRMULA PERSONALITZADA</option>
                         </select>
-
-                        <button 
-                          v-if="item.calcFn === 'FORMULA'" 
-                          type="button" 
-                          class="btn btn-secondary" 
-                          style="height: 26px; font-size: 0.72rem; padding: 2px 8px; width: auto;"
-                          @click="openFormulaEditor(item)"
-                        >
-                          ✏️ Edita Fórmula
-                        </button>
                       </div>
 
-                      <template v-if="item.calcFn !== 'FORMULA'">
+                      <!-- If FORMULA or CUSTOM: show formula text input AND ampliada button! -->
+                      <template v-if="item.calcFn === 'FORMULA' || item.calcFn === 'CUSTOM'">
+                        <div style="display: flex; gap: 4px; align-items: center; margin-top: 2px;">
+                          <input 
+                            type="text" 
+                            v-model="item.calcFormula" 
+                            class="data-input" 
+                            placeholder="ex: preu * unitats o SI(unitats > 10; preu * 0.9; preu)"
+                            style="flex: 1; font-size: 0.75rem; height: 26px; font-family: var(--font-mono);"
+                            title="Fórmula personalitzada d'operació"
+                          />
+                          <button 
+                            type="button" 
+                            class="btn btn-secondary" 
+                            style="height: 26px; font-size: 0.72rem; padding: 2px 6px; width: auto; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;"
+                            @click="openFormulaEditor(item)"
+                            title="Obre l'editor ampliat de fórmules"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                            <span>Amplia</span>
+                          </button>
+                        </div>
+                        <span style="font-size: 0.68rem; color: var(--text-muted);">
+                          Operadors: +, -, *, /, %, ^ | Condició: SI(condició; cert; fals)
+                        </span>
+                      </template>
+
+                      <template v-else>
                         <select v-model="item.calcVector" class="data-input" style="width: 100%; font-size: 0.75rem; height: 26px;">
                           <option value="">-- Sub-taula --</option>
                           <option v-for="tbl in getAvailableTables()" :key="tbl" :value="tbl">{{ tbl }}</option>
