@@ -56,6 +56,15 @@ const isPrimitive = (val) => {
   return !Array.isArray(val) && (typeof val !== 'object' || val === null);
 };
 
+const getKvPrimitiveEntries = (sheetData) => {
+  if (!sheetData || typeof sheetData !== 'object' || Array.isArray(sheetData)) return {};
+  const res = {};
+  Object.keys(sheetData).filter(k => isPrimitive(sheetData[k])).forEach(k => {
+    res[k] = sheetData[k];
+  });
+  return res;
+};
+
 const getKvRowBlocks = (sheetData, groupName = '') => {
   if (!sheetData || typeof sheetData !== 'object' || Array.isArray(sheetData)) return [];
   const keys = Object.keys(sheetData).filter(k => isPrimitive(sheetData[k]));
