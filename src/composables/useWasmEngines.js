@@ -3092,8 +3092,12 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
       // Evaluate CUSTOM formulas for this node
       customMetas.forEach(meta => {
         if (isGroupMatch(meta.group, groupHint) || (meta.element in container)) {
+          const existingVal = container[meta.element];
+          if (existingVal !== undefined && existingVal !== null && existingVal !== '' && existingVal !== 0) {
+            return;
+          }
           const calculatedVal = evaluateCustomFormula(meta.calcFormula, container, data);
-          if (container[meta.element] !== calculatedVal) {
+          if (calculatedVal !== undefined && calculatedVal !== null && calculatedVal !== 0 && calculatedVal !== '') {
             container[meta.element] = calculatedVal;
           }
         }
@@ -3123,6 +3127,10 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
 
       // Evaluate Aggregation formulas for this node
       aggMetas.forEach(meta => {
+        const existingVal = container[meta.element];
+        if (existingVal !== undefined && existingVal !== null && existingVal !== '' && existingVal !== 0) {
+          return;
+        }
         const targetVec = meta.calcVector;
         const fn = (meta.calcFn || 'SUM').toUpperCase();
         const col = meta.calcTargetCol;
