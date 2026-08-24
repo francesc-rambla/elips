@@ -115,35 +115,42 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
 const applyImport = () => {
   if (!store.excelJsonData) store.excelJsonData = {};
   
-  // Re-build excelJsonData based on inspectionData and userOverrides
-  sheetKeys.value.forEach(rawName => {
-    const sInfo = inspectionData.value[rawName];
-    const cleanName = sInfo.clean_name || rawName.replace(/^OUT_/, '');
-    
-    if (sInfo.kind === 'tabular') {
-      const finalRows = [];
-      (sInfo.rows || []).forEach(r => {
-        if (isRowIncluded(rawName, r.index, r.status)) {
-          finalRows.push(r.data);
+  const hasUserOverrides = Object.keys(userOverrides.value).some(k => Object.keys(userOverrides.value[k]).length > 0);
+  
+  if (hasUserOverrides) {
+    sheetKeys.value.forEach(rawName => {
+      if (!userOverrides.value[rawName]) return;
+      const sInfo = inspectionData.value[rawName];
+      if (!sInfo) return;
+      const cleanName = sInfo.clean_name || rawName.replace(/^OUT_/, '');
+      
+      if (sInfo.kind === 'tabular') {
+        const finalRows = [];
+        (sInfo.rows || []).forEach(r => {
+          if (isRowIncluded(rawName, r.index, r.status)) {
+            finalRows.push(r.data);
+          }
+        });
+        store.excelJsonData[cleanName] = finalRows;
+        if (rawName !== cleanName) {
+          store.excelJsonData[rawName] = finalRows;
         }
-      });
-      store.excelJsonData[cleanName] = finalRows;
-      if (rawName !== cleanName) {
-        store.excelJsonData[rawName] = finalRows;
-      }
-    } else if (sInfo.kind === 'kv') {
-      const kvObj = {};
-      (sInfo.rows || []).forEach(r => {
-        if (isRowIncluded(rawName, r.index, r.status) && r.data && r.data.key) {
-          kvObj[r.data.key] = r.data.value;
+      } else if (sInfo.kind === 'kv') {
+        const kvObj = store.excelJsonData[cleanName] || {};
+        (sInfo.rows || []).forEach(r => {
+          if (isRowIncluded(rawName, r.index, r.status) && r.data && r.data.key) {
+            kvObj[r.data.key] = r.data.value;
+          } else if (!isRowIncluded(rawName, r.index, r.status) && r.data && r.data.key) {
+            delete kvObj[r.data.key];
+          }
+        });
+        store.excelJsonData[cleanName] = kvObj;
+        if (rawName !== cleanName) {
+          store.excelJsonData[rawName] = kvObj;
         }
-      });
-      store.excelJsonData[cleanName] = kvObj;
-      if (rawName !== cleanName) {
-        store.excelJsonData[rawName] = kvObj;
       }
-    }
-  });
+    });
+  }
 
   store.addLog("Importació de l'Excel confirmada amb èxit des del modal d'inspecció.", "success");
   emit('confirm');
