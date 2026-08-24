@@ -613,9 +613,9 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
             })
 
     custom_hierarchy_keys = {}
-    if "_hierarchy_metadata" in wb.sheetnames:
+    if "_hierarchy_metadata" in wb_data.sheetnames:
         try:
-            ws_meta = wb["_hierarchy_metadata"]
+            ws_meta = wb_data["_hierarchy_metadata"]
             rows = list(ws_meta.iter_rows(values_only=True))
             if len(rows) > 1:
                 for r in rows[1:]:
