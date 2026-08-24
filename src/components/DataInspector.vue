@@ -1511,7 +1511,36 @@ onMounted(() => {
     getRootSheetNames: () => {
       if (!store.excelJsonData) return [];
       return Object.keys(store.excelJsonData).filter(n => isRootSheet(n));
-    }
+    },
+    openNewSheetModal: () => openNewSheetModal(),
+    openGroupConfigActive: () => {
+      const rootNames = Object.keys(store.excelJsonData || {}).filter(n => isRootSheet(n));
+      const activeName = selectedCompactSheet.value && rootNames.includes(selectedCompactSheet.value)
+        ? selectedCompactSheet.value
+        : (rootNames.length > 0 ? rootNames[0] : null);
+      
+      if (activeName && store.excelJsonData && store.excelJsonData[activeName]) {
+        openGroupConfig(activeName, store.excelJsonData[activeName]);
+      } else {
+        openNewSheetModal();
+      }
+    },
+    copyGroupConfigActive: () => {
+      const rootNames = Object.keys(store.excelJsonData || {}).filter(n => isRootSheet(n));
+      const activeName = selectedCompactSheet.value && rootNames.includes(selectedCompactSheet.value)
+        ? selectedCompactSheet.value
+        : (rootNames.length > 0 ? rootNames[0] : null);
+      if (activeName) copyGroupConfig(activeName);
+    },
+    pasteGroupConfigActive: () => {
+      const rootNames = Object.keys(store.excelJsonData || {}).filter(n => isRootSheet(n));
+      const activeName = selectedCompactSheet.value && rootNames.includes(selectedCompactSheet.value)
+        ? selectedCompactSheet.value
+        : (rootNames.length > 0 ? rootNames[0] : null);
+      if (activeName) pasteGroupConfig(activeName);
+    },
+    copyGlobalConfig: () => copyGlobalConfig(),
+    pasteGlobalConfig: () => pasteGlobalConfig()
   };
 });
 </script>
