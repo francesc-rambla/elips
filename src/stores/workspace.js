@@ -55,6 +55,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     // UI state
     enginesReady: false,
     generating: false,
+    rawPythonJsonStr: '',
     excelImportInspection: null,
     showExcelImportModal: false,
     activeTab: (() => {

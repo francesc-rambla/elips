@@ -170,12 +170,11 @@ def _to_jsonable(v, date_format='iso'):
 
 def _read_rows(ws, date_format='iso'):
     rows = []
+    max_c = ws.max_column
     for r in range(1, ws.max_row + 1):
-        row = [_to_jsonable(ws.cell(r, c).value, date_format) for c in range(1, ws.max_column + 1)]
+        row = [_to_jsonable(ws.cell(r, c).value, date_format) for c in range(1, max_c + 1)]
         if all(v is None or v == '' for v in row):
             continue
-        while row and (row[-1] is None or row[-1] == ''):
-            row.pop()
         rows.append(row)
     return rows
 
@@ -2334,6 +2333,7 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
     const jsonStr = fn('/work/in.xlsx', store.config.dateFormat, store.config.strictMode);
     fn.destroy();
     
+    store.rawPythonJsonStr = jsonStr;
     const parsed = JSON.parse(jsonStr);
 
     // Clean blank formula rows (rows where ALL cells are 0, 0.0, '', null, undefined, false, '0', '0.0')

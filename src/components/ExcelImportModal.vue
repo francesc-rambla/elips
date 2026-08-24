@@ -11,6 +11,7 @@ const store = useWorkspaceStore();
 
 const selectedSheetKey = ref('');
 const activeFilter = ref('all'); // 'all', 'kept', 'discarded'
+const viewModeTab = ref('processed'); // 'processed' | 'raw_python'
 
 // Local override map for rows: { sheetKey: { rowIdx: boolean } }
 const userOverrides = ref({});
@@ -22,6 +23,23 @@ const currentSheetInfo = computed(() => {
   if (!selectedSheetKey.value || !inspectionData.value) return null;
   return inspectionData.value[selectedSheetKey.value] || null;
 });
+
+const formattedRawPythonJson = computed(() => {
+  if (!store.rawPythonJsonStr) return 'No hi ha cap sortida bruta de Python disponible.';
+  try {
+    const obj = JSON.parse(store.rawPythonJsonStr);
+    return JSON.stringify(obj, null, 2);
+  } catch (e) {
+    return store.rawPythonJsonStr;
+  }
+});
+
+const copyRawPythonJson = () => {
+  if (formattedRawPythonJson.value) {
+    navigator.clipboard.writeText(formattedRawPythonJson.value);
+    store.addLog("JSON brut de Python copiat al portaretalls.", "info");
+  }
+};
 
 // Auto-select first sheet when modal opens
 watch(() => props.isOpen, (newVal) => {
@@ -106,7 +124,7 @@ const applyImport = () => {
       const finalRows = [];
       (sInfo.rows || []).forEach(r => {
         if (isRowIncluded(rawName, r.index, r.status)) {
-          finalRows.append ? finalRows.append(r.data) : finalRows.push(r.data);
+          finalRows.push(r.data);
         }
       });
       store.excelJsonData[cleanName] = finalRows;
@@ -135,7 +153,7 @@ const applyImport = () => {
 
 <template>
   <div class="modal-overlay" :style="{ display: isOpen ? 'flex' : 'none' }">
-    <div class="modal-content" style="max-width: 1100px; width: 95%; max-height: 90vh; display: flex; flex-direction: column;">
+    <div class="modal-content" style="max-width: 1150px; width: 95%; max-height: 92vh; display: flex; flex-direction: column;">
       
       <!-- Header -->
       <div class="modal-header" style="padding: 1rem 1.25rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: var(--bg-secondary);">
@@ -144,7 +162,7 @@ const applyImport = () => {
             <span>🔍 Inspecció i Confirmació d'Importació Excel</span>
           </h3>
           <p style="margin: 0.25rem 0 0 0; font-size: 0.8rem; color: var(--text-muted);">
-            Revisa la diagnosi de cada full de l'Excel. Pots filtrar i forçar la inclusió o exclusió de qualsevol fila abans d'incorporar les dades al teu projecte.
+            Revisa la diagnosi de cada full de l'Excel. Pots consultar les dades brutes retornades per Python o la taula processada.
           </p>
         </div>
         <button 
@@ -156,187 +174,226 @@ const applyImport = () => {
         </button>
       </div>
 
-      <!-- Controls & Selector -->
-      <div style="padding: 0.85rem 1.25rem; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;">
-        
-        <!-- Sheet Dropdown -->
-        <div style="display: flex; align-items: center; gap: 8px; flex-grow: 1; max-width: 500px;">
-          <label style="font-weight: 600; font-size: 0.85rem; white-space: nowrap;">📄 Selecciona Full:</label>
-          <select 
-            v-model="selectedSheetKey" 
-            style="flex-grow: 1; padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); font-size: 0.88rem; font-weight: 600; background: var(--bg-card); color: var(--text-primary);"
+      <!-- Tab Switcher Bar -->
+      <div style="padding: 0.6rem 1.25rem; background: var(--bg-tertiary); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; gap: 8px;">
+          <button 
+            class="btn" 
+            style="padding: 5px 14px; font-size: 0.82rem; font-weight: 600; border-radius: 6px;"
+            :class="viewModeTab === 'processed' ? 'btn-primary' : 'btn-secondary'"
+            @click="viewModeTab = 'processed'"
           >
-            <option v-for="(sInfo, key) in inspectionData" :key="key" :value="key">
-              {{ key }} — {{ sInfo.kept_count }} vàlides / {{ sInfo.discarded_count }} buides (Total: {{ sInfo.total_rows }})
-            </option>
-          </select>
+            📊 Taula de Files Processades
+          </button>
+          <button 
+            class="btn" 
+            style="padding: 5px 14px; font-size: 0.82rem; font-weight: 600; border-radius: 6px;"
+            :class="viewModeTab === 'raw_python' ? 'btn-primary' : 'btn-secondary'"
+            @click="viewModeTab = 'raw_python'"
+          >
+            🐍 Dades de Python Brut (Sense Processar)
+          </button>
         </div>
 
-        <!-- Filter buttons -->
-        <div style="display: flex; align-items: center; gap: 6px;">
-          <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted); margin-right: 4px;">Filtra files:</span>
-          <button 
-            class="btn btn-secondary" 
-            style="padding: 4px 10px; font-size: 0.78rem; border-radius: 4px;"
-            :style="{ background: activeFilter === 'all' ? 'var(--color-primary)' : '', color: activeFilter === 'all' ? '#fff' : '' }"
-            @click="activeFilter = 'all'"
-          >
-            Totes ({{ currentSheetInfo?.total_rows || 0 }})
-          </button>
-          <button 
-            class="btn btn-secondary" 
-            style="padding: 4px 10px; font-size: 0.78rem; border-radius: 4px;"
-            :style="{ background: activeFilter === 'kept' ? '#10b981' : '', color: activeFilter === 'kept' ? '#fff' : '' }"
-            @click="activeFilter = 'kept'"
-          >
-            🟢 Només Vàlides ({{ currentSheetInfo?.kept_count || 0 }})
-          </button>
-          <button 
-            class="btn btn-secondary" 
-            style="padding: 4px 10px; font-size: 0.78rem; border-radius: 4px;"
-            :style="{ background: activeFilter === 'discarded' ? '#ef4444' : '', color: activeFilter === 'discarded' ? '#fff' : '' }"
-            @click="activeFilter = 'discarded'"
-          >
-            🔴 Només Buides ({{ currentSheetInfo?.discarded_count || 0 }})
-          </button>
-        </div>
+        <button 
+          v-if="viewModeTab === 'raw_python'" 
+          class="btn btn-secondary" 
+          style="padding: 4px 10px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 4px;"
+          @click="copyRawPythonJson"
+        >
+          📋 Copia JSON Brut
+        </button>
       </div>
 
-      <!-- Sheet Stats Summary Banner -->
-      <div v-if="currentSheetInfo" style="padding: 0.6rem 1.25rem; background: var(--bg-tertiary); font-size: 0.82rem; border-bottom: 1px solid var(--border-color); display: flex; gap: 20px; align-items: center;">
-        <div><strong>Tipus:</strong> <span class="accordion-badge" :class="currentSheetInfo.kind">{{ currentSheetInfo.kind }}</span></div>
-        <div><strong>Total Llegides:</strong> {{ currentSheetInfo.total_rows }}</div>
-        <div style="color: #059669;"><strong>🟢 Carregaran (Dades reals):</strong> {{ currentSheetInfo.kept_count }}</div>
-        <div style="color: #dc2626;"><strong>🔴 Descartaran (Fórmules a 0):</strong> {{ currentSheetInfo.discarded_count }}</div>
+      <!-- View Mode: Raw Python JSON Output -->
+      <div v-if="viewModeTab === 'raw_python'" class="modal-body" style="padding: 1rem; overflow-y: auto; flex-grow: 1; background: #0d1117;">
+        <pre style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.82rem; color: #e6edf3; white-space: pre-wrap; word-break: break-word;">{{ formattedRawPythonJson }}</pre>
       </div>
 
-      <!-- Main Body Table -->
-      <div class="modal-body" style="padding: 1rem; overflow-y: auto; flex-grow: 1;">
-        
-        <div v-if="!currentSheetInfo" style="text-align: center; padding: 2rem; color: var(--text-muted);">
-          No s'ha seleccionat cap full.
+      <!-- View Mode: Processed Table Inspector -->
+      <template v-else>
+        <!-- Controls & Selector -->
+        <div style="padding: 0.85rem 1.25rem; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;">
+          
+          <!-- Sheet Dropdown -->
+          <div style="display: flex; align-items: center; gap: 8px; flex-grow: 1; max-width: 500px;">
+            <label style="font-weight: 600; font-size: 0.85rem; white-space: nowrap;">📄 Selecciona Full:</label>
+            <select 
+              v-model="selectedSheetKey" 
+              style="flex-grow: 1; padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); font-size: 0.88rem; font-weight: 600; background: var(--bg-card); color: var(--text-primary);"
+            >
+              <option v-for="(sInfo, key) in inspectionData" :key="key" :value="key">
+                {{ key }} — {{ sInfo.kept_count }} vàlides / {{ sInfo.discarded_count }} buides (Total: {{ sInfo.total_rows }})
+              </option>
+            </select>
+          </div>
+
+          <!-- Filter buttons -->
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted); margin-right: 4px;">Filtra files:</span>
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 4px 10px; font-size: 0.78rem; border-radius: 4px;"
+              :style="{ background: activeFilter === 'all' ? 'var(--color-primary)' : '', color: activeFilter === 'all' ? '#fff' : '' }"
+              @click="activeFilter = 'all'"
+            >
+              Totes ({{ currentSheetInfo?.total_rows || 0 }})
+            </button>
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 4px 10px; font-size: 0.78rem; border-radius: 4px;"
+              :style="{ background: activeFilter === 'kept' ? '#10b981' : '', color: activeFilter === 'kept' ? '#fff' : '' }"
+              @click="activeFilter = 'kept'"
+            >
+              🟢 Només Vàlides ({{ currentSheetInfo?.kept_count || 0 }})
+            </button>
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 4px 10px; font-size: 0.78rem; border-radius: 4px;"
+              :style="{ background: activeFilter === 'discarded' ? '#ef4444' : '', color: activeFilter === 'discarded' ? '#fff' : '' }"
+              @click="activeFilter = 'discarded'"
+            >
+              🔴 Només Buides ({{ currentSheetInfo?.discarded_count || 0 }})
+            </button>
+          </div>
         </div>
 
-        <!-- Tabular Grid View -->
-        <div v-else-if="currentSheetInfo.kind === 'tabular'" style="overflow-x: auto;">
-          <table class="inspector-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
-            <thead>
-              <tr style="background: var(--bg-secondary); border-bottom: 2px solid var(--border-color);">
-                <th style="padding: 6px 10px; text-align: center; width: 60px;"># Fila</th>
-                <th style="padding: 6px 10px; text-align: center; width: 130px;">Estat Importació</th>
-                <th style="padding: 6px 10px; text-align: center; width: 70px;">Incloure?</th>
-                <th v-for="col in tableColumns" :key="col" style="padding: 6px 10px; text-align: left; font-weight: 600;">
-                  {{ col }}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr 
-                v-for="r in filteredRows" 
-                :key="r.index"
-                :style="{
-                  background: isRowIncluded(selectedSheetKey, r.index, r.status) ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
-                  borderBottom: '1px solid var(--border-color)'
-                }"
-              >
-                <!-- Row Index -->
-                <td style="padding: 6px 10px; text-align: center; font-weight: 600; color: var(--text-muted);">
-                  {{ r.index }}
-                </td>
+        <!-- Sheet Stats Summary Banner -->
+        <div v-if="currentSheetInfo" style="padding: 0.6rem 1.25rem; background: var(--bg-tertiary); font-size: 0.82rem; border-bottom: 1px solid var(--border-color); display: flex; gap: 20px; align-items: center;">
+          <div><strong>Tipus:</strong> <span class="accordion-badge" :class="currentSheetInfo.kind">{{ currentSheetInfo.kind }}</span></div>
+          <div><strong>Total Llegides:</strong> {{ currentSheetInfo.total_rows }}</div>
+          <div style="color: #059669;"><strong>🟢 Carregaran (Dades reals):</strong> {{ currentSheetInfo.kept_count }}</div>
+          <div style="color: #dc2626;"><strong>🔴 Descartaran (Fórmules a 0):</strong> {{ currentSheetInfo.discarded_count }}</div>
+        </div>
 
-                <!-- Status Badge -->
-                <td style="padding: 6px 10px; text-align: center;">
-                  <span 
-                    v-if="isRowIncluded(selectedSheetKey, r.index, r.status)"
-                    style="background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700; display: inline-block;"
-                  >
-                    🟢 S'IMPORTARÀ
-                  </span>
-                  <span 
-                    v-else
-                    style="background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700; display: inline-block;"
-                  >
-                    🔴 BUIDA / DESCARTADA
-                  </span>
-                </td>
+        <!-- Main Body Table -->
+        <div class="modal-body" style="padding: 1rem; overflow-y: auto; flex-grow: 1;">
+          
+          <div v-if="!currentSheetInfo" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+            No s'ha seleccionat cap full.
+          </div>
 
-                <!-- Checkbox Toggle -->
-                <td style="padding: 6px 10px; text-align: center;">
-                  <input 
-                    type="checkbox" 
-                    :checked="isRowIncluded(selectedSheetKey, r.index, r.status)"
-                    @change="toggleRowInclusion(selectedSheetKey, r.index, r.status)"
-                    style="cursor: pointer; width: 16px; height: 16px;"
-                  >
-                </td>
-
-                <!-- Cells -->
-                <td 
-                  v-for="col in tableColumns" 
-                  :key="col" 
-                  style="padding: 6px 10px; white-space: nowrap; max-width: 250px; overflow: hidden; text-overflow: ellipsis;"
+          <!-- Tabular Grid View -->
+          <div v-else-if="currentSheetInfo.kind === 'tabular'" style="overflow-x: auto;">
+            <table class="inspector-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+              <thead>
+                <tr style="background: var(--bg-secondary); border-bottom: 2px solid var(--border-color);">
+                  <th style="padding: 6px 10px; text-align: center; width: 60px;"># Fila</th>
+                  <th style="padding: 6px 10px; text-align: center; width: 130px;">Estat Importació</th>
+                  <th style="padding: 6px 10px; text-align: center; width: 70px;">Incloure?</th>
+                  <th v-for="col in tableColumns" :key="col" style="padding: 6px 10px; text-align: left; font-weight: 600;">
+                    {{ col }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr 
+                  v-for="r in filteredRows" 
+                  :key="r.index"
                   :style="{
-                    color: isRowIncluded(selectedSheetKey, r.index, r.status) ? 'var(--text-primary)' : 'var(--text-muted)',
-                    textDecoration: isRowIncluded(selectedSheetKey, r.index, r.status) ? 'none' : 'line-through'
+                    background: isRowIncluded(selectedSheetKey, r.index, r.status) ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+                    borderBottom: '1px solid var(--border-color)'
                   }"
                 >
-                  {{ r.data && r.data[col] !== undefined ? r.data[col] : '' }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                  <!-- Row Index -->
+                  <td style="padding: 6px 10px; text-align: center; font-weight: 600; color: var(--text-muted);">
+                    {{ r.index }}
+                  </td>
 
-        <!-- Key/Value Grid View -->
-        <div v-else-if="currentSheetInfo.kind === 'kv'" style="overflow-x: auto;">
-          <table class="inspector-table" style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
-            <thead>
-              <tr style="background: var(--bg-secondary); border-bottom: 2px solid var(--border-color);">
-                <th style="padding: 6px 10px; text-align: left; width: 220px;">Clau (Parameter)</th>
-                <th style="padding: 6px 10px; text-align: center; width: 130px;">Estat</th>
-                <th style="padding: 6px 10px; text-align: center; width: 70px;">Incloure?</th>
-                <th style="padding: 6px 10px; text-align: left;">Valor a l'Excel</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr 
-                v-for="r in filteredRows" 
-                :key="r.index"
-                :style="{
-                  background: isRowIncluded(selectedSheetKey, r.index, r.status) ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
-                  borderBottom: '1px solid var(--border-color)'
-                }"
-              >
-                <td style="padding: 6px 10px; font-weight: 600;">{{ r.index }}</td>
-                <td style="padding: 6px 10px; text-align: center;">
-                  <span 
-                    v-if="isRowIncluded(selectedSheetKey, r.index, r.status)"
-                    style="background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700;"
-                  >
-                    🟢 S'IMPORTARÀ
-                  </span>
-                  <span 
-                    v-else
-                    style="background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700;"
-                  >
-                    🔴 BUIDA / DESCARTADA
-                  </span>
-                </td>
-                <td style="padding: 6px 10px; text-align: center;">
-                  <input 
-                    type="checkbox" 
-                    :checked="isRowIncluded(selectedSheetKey, r.index, r.status)"
-                    @change="toggleRowInclusion(selectedSheetKey, r.index, r.status)"
-                    style="cursor: pointer;"
-                  >
-                </td>
-                <td style="padding: 6px 10px;">{{ r.data?.value }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                  <!-- Status Badge -->
+                  <td style="padding: 6px 10px; text-align: center;">
+                    <span 
+                      v-if="isRowIncluded(selectedSheetKey, r.index, r.status)"
+                      style="background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700; display: inline-block;"
+                    >
+                      🟢 S'IMPORTARÀ
+                    </span>
+                    <span 
+                      v-else
+                      style="background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700; display: inline-block;"
+                    >
+                      🔴 BUIDA / DESCARTADA
+                    </span>
+                  </td>
 
-      </div>
+                  <!-- Checkbox Toggle -->
+                  <td style="padding: 6px 10px; text-align: center;">
+                    <input 
+                      type="checkbox" 
+                      :checked="isRowIncluded(selectedSheetKey, r.index, r.status)"
+                      @change="toggleRowInclusion(selectedSheetKey, r.index, r.status)"
+                      style="cursor: pointer; width: 16px; height: 16px;"
+                    >
+                  </td>
+
+                  <!-- Cells -->
+                  <td 
+                    v-for="col in tableColumns" 
+                    :key="col" 
+                    style="padding: 6px 10px; white-space: nowrap; max-width: 250px; overflow: hidden; text-overflow: ellipsis;"
+                    :style="{
+                      color: isRowIncluded(selectedSheetKey, r.index, r.status) ? 'var(--text-primary)' : 'var(--text-muted)',
+                      textDecoration: isRowIncluded(selectedSheetKey, r.index, r.status) ? 'none' : 'line-through'
+                    }"
+                  >
+                    {{ r.data && r.data[col] !== undefined ? r.data[col] : '' }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Key/Value Grid View -->
+          <div v-else-if="currentSheetInfo.kind === 'kv'" style="overflow-x: auto;">
+            <table class="inspector-table" style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
+              <thead>
+                <tr style="background: var(--bg-secondary); border-bottom: 2px solid var(--border-color);">
+                  <th style="padding: 6px 10px; text-align: left; width: 220px;">Clau (Parameter)</th>
+                  <th style="padding: 6px 10px; text-align: center; width: 130px;">Estat</th>
+                  <th style="padding: 6px 10px; text-align: center; width: 70px;">Incloure?</th>
+                  <th style="padding: 6px 10px; text-align: left;">Valor a l'Excel</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr 
+                  v-for="r in filteredRows" 
+                  :key="r.index"
+                  :style="{
+                    background: isRowIncluded(selectedSheetKey, r.index, r.status) ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+                    borderBottom: '1px solid var(--border-color)'
+                  }"
+                >
+                  <td style="padding: 6px 10px; font-weight: 600;">{{ r.index }}</td>
+                  <td style="padding: 6px 10px; text-align: center;">
+                    <span 
+                      v-if="isRowIncluded(selectedSheetKey, r.index, r.status)"
+                      style="background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700;"
+                    >
+                      🟢 S'IMPORTARÀ
+                    </span>
+                    <span 
+                      v-else
+                      style="background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700;"
+                    >
+                      🔴 BUIDA / DESCARTADA
+                    </span>
+                  </td>
+                  <td style="padding: 6px 10px; text-align: center;">
+                    <input 
+                      type="checkbox" 
+                      :checked="isRowIncluded(selectedSheetKey, r.index, r.status)"
+                      @change="toggleRowInclusion(selectedSheetKey, r.index, r.status)"
+                      style="cursor: pointer;"
+                    >
+                  </td>
+                  <td style="padding: 6px 10px;">{{ r.data?.value }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+      </template>
 
       <!-- Footer Action Buttons -->
       <div class="modal-footer" style="padding: 0.85rem 1.25rem; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: var(--bg-secondary);">
