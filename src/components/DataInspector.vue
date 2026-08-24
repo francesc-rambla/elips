@@ -2265,21 +2265,44 @@ onMounted(() => {
         </div>
         
         <div class="modal-body" style="flex-grow: 1; overflow-y: auto; padding: 1rem 0;">
-          <!-- Etiqueta del grup / full (Label) -->
+          <!-- Top Control Header: Label Input + Action Buttons (Nova Clau, Editor Visual Grid) -->
           <div style="background: var(--bg-card); padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
-            <div style="display: flex; align-items: center; gap: 8px; flex-grow: 1;">
-              <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); white-space: nowrap;">Etiqueta al formulari per al grup/full:</span>
+            <!-- Left: Group Label Input -->
+            <div style="display: flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 240px;">
+              <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); white-space: nowrap;">Etiqueta formulari:</span>
               <input 
                 type="text" 
                 v-model="groupLabelInput" 
                 class="data-input" 
                 placeholder="ex: Pressupost, Partides, Activitats..." 
-                style="max-width: 320px; height: 32px; font-size: 0.85rem; flex-grow: 1;"
+                style="height: 30px; font-size: 0.85rem; flex-grow: 1;"
               />
             </div>
-            <span style="font-size: 0.75rem; color: var(--text-muted);">
-              (Nom visible a l'aplicació per al grup '{{ activeConfigGroup }}')
-            </span>
+
+            <!-- Right: Action Buttons at the exact same row level -->
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <button 
+                type="button"
+                class="btn btn-secondary" 
+                style="width: auto; padding: 4px 10px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 5px;" 
+                @click="addNewFieldToConfig"
+                title="Afegeix una nova clau o camp a aquest grup"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>Afegeix camp</span>
+              </button>
+
+              <button 
+                type="button"
+                class="btn btn-secondary" 
+                style="width: auto; padding: 4px 12px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;" 
+                @click="openVisualGridEditor"
+                title="Editor Visual de Grid: Organitza files, assigna camps i mou-los fàcilment de forma visual"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                <span>Editor Visual de Grid</span>
+              </button>
+            </div>
           </div>
           <table class="inspector-table" style="width: 100%;">
             <thead>
@@ -2508,30 +2531,6 @@ onMounted(() => {
               </tr>
             </tbody>
           </table>
-          
-          <!-- Add field / key button & Visual Grid Editor button -->
-          <div style="margin-top: 0.75rem; padding: 0 0.5rem; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
-            <button 
-              class="btn btn-secondary" 
-              style="width: auto; padding: 4px 10px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px;" 
-              @click="addNewFieldToConfig"
-              title="Afegeix una nova clau o camp a aquest grup"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              <span>Afegeix nova clau / camp</span>
-            </button>
-
-            <button 
-              type="button"
-              class="btn btn-primary" 
-              style="width: auto; padding: 4px 12px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 6px;" 
-              @click="openVisualGridEditor"
-              title="📐 Editor Visual de Grid: Organitza files, assigna camps i mou-los fàcilment de forma visual"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-              <span>📐 Editor Visual de Grid</span>
-            </button>
-          </div>
         </div>
         
         <div class="modal-footer" style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
@@ -2541,18 +2540,20 @@ onMounted(() => {
               class="btn btn-secondary" 
               style="width: auto; padding: 3px 8px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 4px;"
               @click="copyGroupConfig(activeConfigGroup)"
-              title="📋 Copia la configuració d'aquest grup al portaretalls"
+              title="Copia la configuració d'aquest grup al portaretalls"
             >
-              📋 Copia Grup
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <span>Copia Grup</span>
             </button>
             <button 
               type="button"
               class="btn btn-secondary" 
               style="width: auto; padding: 3px 8px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 4px;"
               @click="pasteGroupConfig(activeConfigGroup)"
-              title="📥 Enganxa la configuració del portaretalls sobre aquest grup"
+              title="Enganxa la configuració del portaretalls sobre aquest grup"
             >
-              📥 Enganxa Grup
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+              <span>Enganxa Grup</span>
             </button>
           </div>
           <div style="display: flex; gap: 8px;">
@@ -2692,7 +2693,7 @@ onMounted(() => {
       <div class="modal-content" style="max-width: 860px; width: 95%; max-height: 85vh; display: flex; flex-direction: column;">
         <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
           <h3 style="margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
-            <span style="color: var(--color-primary);">📐</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
             <span>Editor Visual de Grid: <strong style="color: var(--color-primary);">{{ activeConfigGroup }}</strong></span>
           </h3>
           <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isVisualGridModalOpen = false">&times;</button>
@@ -2748,22 +2749,24 @@ onMounted(() => {
                   <button 
                     type="button" 
                     class="btn btn-secondary" 
-                    style="padding: 2px 6px; font-size: 0.72rem; width: auto;" 
+                    style="padding: 2px 6px; font-size: 0.72rem; width: auto; display: inline-flex; align-items: center; gap: 3px;" 
                     :disabled="rIdx === 0"
                     @click="moveVisualRow(rIdx, -1)"
                     title="Mou tota la fila amunt"
                   >
-                    ⬆️ Amunt
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                    <span>Amunt</span>
                   </button>
                   <button 
                     type="button" 
                     class="btn btn-secondary" 
-                    style="padding: 2px 6px; font-size: 0.72rem; width: auto;" 
+                    style="padding: 2px 6px; font-size: 0.72rem; width: auto; display: inline-flex; align-items: center; gap: 3px;" 
                     :disabled="rIdx === visualGridRows.length - 1"
                     @click="moveVisualRow(rIdx, 1)"
                     title="Mou tota la fila avall"
                   >
-                    ⬇️ Avall
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+                    <span>Avall</span>
                   </button>
                   <!-- Add field to row select -->
                   <select 
@@ -2816,7 +2819,7 @@ onMounted(() => {
                         @click="moveFieldInRow(rIdx, fIdx, -1)"
                         title="Mou a l'esquerra"
                       >
-                        ⬅️
+                        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
                       </button>
                       <button 
                         type="button" 
@@ -2826,7 +2829,7 @@ onMounted(() => {
                         @click="moveFieldInRow(rIdx, fIdx, 1)"
                         title="Mou a la dreta"
                       >
-                        ➔
+                        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
                       </button>
                       <button 
                         type="button" 
@@ -2872,10 +2875,11 @@ onMounted(() => {
             <button 
               type="button" 
               class="btn btn-secondary" 
-              style="width: auto; padding: 4px 12px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 4px;"
+              style="width: auto; padding: 4px 12px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 5px;"
               @click="addVisualRow"
             >
-              ➕ Afegir Nova Fila (Fila {{ visualGridRows.length + 1 }})
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>Afegir Nova Fila (Fila {{ visualGridRows.length + 1 }})</span>
             </button>
           </div>
 
@@ -2883,8 +2887,9 @@ onMounted(() => {
 
         <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
           <button type="button" class="btn btn-secondary" style="width: auto;" @click="isVisualGridModalOpen = false">Cancel·la</button>
-          <button type="button" class="btn btn-primary" style="width: auto;" @click="saveVisualGridEditor">
-            ✓ Aplica Distribució
+          <button type="button" class="btn btn-primary" style="width: auto; display: inline-flex; align-items: center; gap: 5px;" @click="saveVisualGridEditor">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <span>Aplica Distribució</span>
           </button>
         </div>
       </div>
