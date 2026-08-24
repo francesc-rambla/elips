@@ -446,6 +446,12 @@ def _extract_flat_rows_for_sheet(data, raw_sheet_name, has_prefixed_sheets, vali
                     flat_rows.append(row)
     return flat_rows
 
+def _is_dummy_key(val):
+    if val is None:
+        return True
+    s = str(val).strip()
+    return s in ('', '0', '0.0', '0.00', 'None', 'null', 'false', 'FALSE')
+
 def excel_to_json(excel_path, date_format='iso', strict=False):
     wb = load_workbook(excel_path, data_only=True)
     parsed = {}
@@ -639,7 +645,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                                     parent[sub_key] = matched_children
                                     continue
 
-                            common_keys = [k for k in sample_child.keys() if k in parent and parent[k] is not None and str(parent[k]).strip() != '']
+                            common_keys = [k for k in sample_child.keys() if k in parent and parent[k] is not None and not _is_dummy_key(parent[k])]
                             id_keys = [k for k in common_keys if any(term in k.lower() for term in ['id', 'codi', 'code', 'ref', 'key', 'num'])]
                             matching_keys = id_keys if id_keys else common_keys
                             
@@ -650,9 +656,9 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                                 ]
                                 parent[sub_key] = matched_children
                             else:
-                                parent[sub_key] = data_to_set
+                                parent[sub_key] = []
                         else:
-                            parent[sub_key] = data_to_set
+                            parent[sub_key] = []
                     else:
                         parent[sub_key] = data_to_set
 
