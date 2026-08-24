@@ -1919,6 +1919,20 @@ onMounted(() => {
                       class="data-input"
                       style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                     >
+
+                    <!-- Boolean Type -->
+                    <select 
+                      v-else-if="getElementType(name, item.key) === 'Boolean'"
+                      :id="'data-field-' + name + '-' + item.key"
+                      :data-path="name + '.' + item.key"
+                      v-model="store.excelJsonData[name][item.key]"
+                      class="data-input"
+                      style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                    >
+                      <option value="">[Buit / Sense valor]</option>
+                      <option :value="true">Cert (True)</option>
+                      <option :value="false">Fals (False)</option>
+                    </select>
                     
                     <!-- Number Type -->
                     <input 
