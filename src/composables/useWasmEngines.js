@@ -2434,7 +2434,6 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
     if (parsedData && parsedData._excel_import_inspection) {
       store.excelImportInspection = parsedData._excel_import_inspection;
       delete parsedData._excel_import_inspection;
-      store.showExcelImportModal = true;
     }
 
     if (parsedData && parsedData.editor_metadata && Array.isArray(parsedData.editor_metadata)) {
