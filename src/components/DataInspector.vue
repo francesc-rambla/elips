@@ -1188,6 +1188,182 @@ const openOrNavigateToSubTable = (parentGroup, keyName) => {
   openSheets.value[subPath] = true;
 };
 
+// --- Copy & Paste Configuration (Individual Group & Global) ---
+const isPasteModalOpen = ref(false);
+const pasteBufferText = ref('');
+const pasteTargetGroup = ref(null);
+
+const copyGroupConfig = async (groupName) => {
+  if (!store.editorMetadata) store.editorMetadata = [];
+  const groupMetadata = store.editorMetadata.filter(m => m.group === groupName);
+  
+  if (groupMetadata.length === 0) {
+    alert(`El grup '${groupName}' no té cap configuració personalitzada de camps.`);
+    return;
+  }
+  
+  const payload = {
+    type: 'elips_group_config',
+    version: 1,
+    group: groupName,
+    exportedAt: new Date().toISOString(),
+    metadata: groupMetadata
+  };
+  
+  const jsonStr = JSON.stringify(payload, null, 2);
+  try {
+    await navigator.clipboard.writeText(jsonStr);
+    store.addLog(`📋 Configuració del grup '${groupName}' copiada al portaretalls (${groupMetadata.length} regles).`, 'success');
+  } catch (err) {
+    prompt("Copia aquest text JSON de configuració del grup:", jsonStr);
+  }
+};
+
+const pasteGroupConfig = async (targetGroupName) => {
+  let text = '';
+  try {
+    text = await navigator.clipboard.readText();
+  } catch (err) {
+    pasteTargetGroup.value = targetGroupName;
+    pasteBufferText.value = '';
+    isPasteModalOpen.value = true;
+    return;
+  }
+  
+  if (text && text.trim()) {
+    applyGroupConfigJson(text, targetGroupName);
+  } else {
+    pasteTargetGroup.value = targetGroupName;
+    pasteBufferText.value = '';
+    isPasteModalOpen.value = true;
+  }
+};
+
+const applyGroupConfigJson = (jsonStr, targetGroupName) => {
+  try {
+    const data = JSON.parse(jsonStr.trim());
+    let itemsToApply = [];
+    
+    if (data.type === 'elips_group_config' && Array.isArray(data.metadata)) {
+      itemsToApply = data.metadata;
+    } else if (Array.isArray(data)) {
+      itemsToApply = data;
+    } else if (typeof data === 'object') {
+      itemsToApply = [data];
+    }
+    
+    if (!itemsToApply.length) {
+      alert("El contingut no és una configuració de grup vàlida.");
+      return;
+    }
+
+    if (!store.editorMetadata) store.editorMetadata = [];
+    
+    store.editorMetadata = store.editorMetadata.filter(m => m.group !== targetGroupName);
+    
+    itemsToApply.forEach(item => {
+      const copyItem = JSON.parse(JSON.stringify(item));
+      copyItem.group = targetGroupName;
+      store.editorMetadata.push(copyItem);
+    });
+    
+    if (store.excelJsonData) {
+      store.excelJsonData.editor_metadata = store.editorMetadata;
+      evaluateComputedFields(store.excelJsonData);
+    }
+    
+    if (isConfigModalOpen.value && activeConfigGroup.value === targetGroupName) {
+      const sheetData = store.excelJsonData ? store.excelJsonData[targetGroupName] : null;
+      if (sheetData) openGroupConfig(targetGroupName, sheetData);
+    }
+    
+    isPasteModalOpen.value = false;
+    store.addLog(`📥 Configuració aplicada amb èxit al grup '${targetGroupName}'.`, 'success');
+  } catch (err) {
+    alert(`Error en enganxar la configuració: ${err.message}`);
+  }
+};
+
+const copyGlobalConfig = async () => {
+  if (!store.editorMetadata || store.editorMetadata.length === 0) {
+    alert("El projecte no té cap configuració de grups o camps per exportar.");
+    return;
+  }
+  
+  const payload = {
+    type: 'elips_global_config',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    metadata: store.editorMetadata
+  };
+  
+  const jsonStr = JSON.stringify(payload, null, 2);
+  try {
+    await navigator.clipboard.writeText(jsonStr);
+    store.addLog(`📋 Configuració GLOBAL de TOTS els conjunts de dades copiada al portaretalls (${store.editorMetadata.length} regles).`, 'success');
+  } catch (err) {
+    prompt("Copia aquest text JSON de la configuració global:", jsonStr);
+  }
+};
+
+const pasteGlobalConfig = async () => {
+  let text = '';
+  try {
+    text = await navigator.clipboard.readText();
+  } catch (err) {
+    pasteTargetGroup.value = null;
+    pasteBufferText.value = '';
+    isPasteModalOpen.value = true;
+    return;
+  }
+  
+  if (text && text.trim()) {
+    applyGlobalConfigJson(text);
+  } else {
+    pasteTargetGroup.value = null;
+    pasteBufferText.value = '';
+    isPasteModalOpen.value = true;
+  }
+};
+
+const applyGlobalConfigJson = (jsonStr) => {
+  try {
+    const data = JSON.parse(jsonStr.trim());
+    let itemsToApply = [];
+    
+    if (data.type === 'elips_global_config' && Array.isArray(data.metadata)) {
+      itemsToApply = data.metadata;
+    } else if (Array.isArray(data)) {
+      itemsToApply = data;
+    }
+    
+    if (!itemsToApply.length) {
+      alert("El contingut no és una configuració global de dades vàlida.");
+      return;
+    }
+    
+    store.editorMetadata = itemsToApply;
+    if (store.excelJsonData) {
+      store.excelJsonData.editor_metadata = store.editorMetadata;
+      evaluateComputedFields(store.excelJsonData);
+    }
+    
+    isPasteModalOpen.value = false;
+    store.addLog(`📥 Configuració GLOBAL de TOTS els conjunts de dades aplicada al projecte (${itemsToApply.length} regles).`, 'success');
+  } catch (err) {
+    alert(`Error en enganxar la configuració global: ${err.message}`);
+  }
+};
+
+const processPasteModalSubmit = () => {
+  if (!pasteBufferText.value.trim()) return;
+  if (pasteTargetGroup.value) {
+    applyGroupConfigJson(pasteBufferText.value, pasteTargetGroup.value);
+  } else {
+    applyGlobalConfigJson(pasteBufferText.value);
+  }
+};
+
 const handleCellKeyDown = (e) => {
   if (!isCellModalOpen.value) return;
   if (e.key === 'Escape') {
@@ -1397,7 +1573,23 @@ onMounted(() => {
                   title="Crea un nou full o grup de dades des de l'aplicació"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  <span v-if="store.config.showButtonTexts">Nou Full / Grup</span>
+                  <span v-if="store.config.showButtonTexts">Nou Full</span>
+                </button>
+                <button 
+                  class="btn btn-secondary" 
+                  style="width: auto; padding: 3px 6px; font-size: 0.72rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--border-color);"
+                  @click="copyGlobalConfig"
+                  title="📋 Copia la configuració de TOTS els conjunts de dades del projecte al portaretalls"
+                >
+                  <span>📋 Copia Config Global</span>
+                </button>
+                <button 
+                  class="btn btn-secondary" 
+                  style="width: auto; padding: 3px 6px; font-size: 0.72rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--border-color);"
+                  @click="pasteGlobalConfig"
+                  title="📥 Enganxa la configuració de TOTS els conjunts de dades des del portaretalls a aquest projecte"
+                >
+                  <span>📥 Enganxa Config Global</span>
                 </button>
                 <button 
                   class="btn btn-secondary" 
@@ -2069,9 +2261,31 @@ onMounted(() => {
           </div>
         </div>
         
-        <div class="modal-footer" style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem; display: flex; justify-content: flex-end; gap: 8px;">
-          <button class="btn btn-secondary" style="width: auto;" @click="isConfigModalOpen = false">Cancel·la</button>
-          <button class="btn btn-primary" style="width: auto;" @click="saveGroupConfig">Aplica</button>
+        <div class="modal-footer" style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+          <div style="display: flex; gap: 6px;">
+            <button 
+              type="button"
+              class="btn btn-secondary" 
+              style="width: auto; padding: 3px 8px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 4px;"
+              @click="copyGroupConfig(activeConfigGroup)"
+              title="📋 Copia la configuració d'aquest grup al portaretalls"
+            >
+              📋 Copia Grup
+            </button>
+            <button 
+              type="button"
+              class="btn btn-secondary" 
+              style="width: auto; padding: 3px 8px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 4px;"
+              @click="pasteGroupConfig(activeConfigGroup)"
+              title="📥 Enganxa la configuració del portaretalls sobre aquest grup"
+            >
+              📥 Enganxa Grup
+            </button>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-secondary" style="width: auto;" @click="isConfigModalOpen = false">Cancel·la</button>
+            <button class="btn btn-primary" style="width: auto;" @click="saveGroupConfig">Aplica</button>
+          </div>
         </div>
       </div>
     </div>
@@ -2249,6 +2463,38 @@ onMounted(() => {
           <button class="btn btn-secondary" style="width: auto;" @click="isNewSheetModalOpen = false">Cancel·la</button>
           <button class="btn btn-primary" style="width: auto;" @click="createNewSheet" :disabled="!newSheetNameInput.trim()">
             ✓ Crear Full / Grup
+          </button>
+        </div>
+      </div>
+    </div>
+    <!-- Modal for Pasting Configuration Text -->
+    <div class="modal-overlay" v-if="isPasteModalOpen" style="display: flex; z-index: 1150;">
+      <div class="modal-content" style="max-width: 550px; width: 95%;">
+        <div class="modal-header">
+          <h3 style="border: none; padding-bottom: 0; margin: 0; display: flex; align-items: center; gap: 8px;">
+            <span style="color: var(--color-primary); font-size: 1.2rem;">📥</span>
+            <span>Enganxar Configuració {{ pasteTargetGroup ? `del grup '${pasteTargetGroup}'` : 'GLOBAL' }}</span>
+          </h3>
+          <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isPasteModalOpen = false">&times;</button>
+        </div>
+        
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 0.75rem; padding: 0.75rem 0;">
+          <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0;">
+            Enganxa el codi JSON de la configuració de dades {{ pasteTargetGroup ? `per al grup '${pasteTargetGroup}'` : 'global de tot el projecte' }} a continuació:
+          </p>
+          <textarea 
+            v-model="pasteBufferText"
+            rows="8"
+            class="data-input"
+            style="font-family: var(--font-mono); font-size: 0.78rem; width: 100%; resize: vertical;"
+            placeholder="Enganxa aquí el text JSON (Ctrl+V)..."
+          ></textarea>
+        </div>
+
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
+          <button class="btn btn-secondary" style="width: auto;" @click="isPasteModalOpen = false">Cancel·la</button>
+          <button class="btn btn-primary" style="width: auto;" @click="processPasteModalSubmit" :disabled="!pasteBufferText.trim()">
+            ✓ Aplica Configuració
           </button>
         </div>
       </div>
