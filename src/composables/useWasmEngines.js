@@ -168,12 +168,68 @@ def _to_jsonable(v, date_format='iso'):
         return v.decode('utf-8', errors='ignore')
     return str(v)
 
-def _read_rows(ws, date_format='iso'):
+def _resolve_formula_ref(form_str, wb_data, wb_formula, current_ws_name, date_format='iso', visited=None):
+    if visited is None:
+        visited = set()
+    if not isinstance(form_str, str) or not form_str.startswith('='):
+        return form_str
+    
+    clean_form = form_str.strip()
+    if clean_form in visited:
+        return ''
+    visited.add(clean_form)
+
+    m = re.match(r"^='?([^'!]+)'?!([A-Z]+)(\d+)$", clean_form, re.IGNORECASE)
+    if m:
+        target_sheet = m.group(1)
+        col_str = m.group(2).upper()
+        row_num = int(m.group(3))
+
+        resolved_sheet = target_sheet
+        if resolved_sheet not in wb_data.sheetnames:
+            if f"OUT_{resolved_sheet}" in wb_data.sheetnames:
+                resolved_sheet = f"OUT_{resolved_sheet}"
+            elif resolved_sheet.startswith("OUT_") and resolved_sheet[4:] in wb_data.sheetnames:
+                resolved_sheet = resolved_sheet[4:]
+
+        if resolved_sheet in wb_data.sheetnames:
+            col_num = 0
+            for char in col_str:
+                col_num = col_num * 26 + (ord(char) - ord('A') + 1)
+
+            ws_t_d = wb_data[resolved_sheet]
+            ws_t_f = wb_formula[resolved_sheet]
+
+            val_d = ws_t_d.cell(row_num, col_num).value
+            if val_d not in (None, ''):
+                return val_d
+
+            val_f = ws_t_f.cell(row_num, col_num).value
+            if isinstance(val_f, str) and val_f.startswith('='):
+                return _resolve_formula_ref(val_f, wb_data, wb_formula, resolved_sheet, date_format, visited)
+            return val_f if val_f is not None else ''
+    return ''
+
+def _read_rows(ws_d, ws_f, wb_data, wb_formula, ws_name, date_format='iso'):
     rows = []
-    max_c = ws.max_column
-    for r in range(1, ws.max_row + 1):
-        row = [_to_jsonable(ws.cell(r, c).value, date_format) for c in range(1, max_c + 1)]
-        if all(v is None or v == '' for v in row):
+    max_c = ws_d.max_column
+    for r in range(1, ws_d.max_row + 1):
+        row = []
+        for c in range(1, max_c + 1):
+            val_d = ws_d.cell(r, c).value
+            val_f = ws_f.cell(r, c).value
+            
+            val = _to_jsonable(val_d, date_format)
+            if val in (None, ''):
+                if isinstance(val_f, str) and val_f.startswith('='):
+                    val_res = _resolve_formula_ref(val_f, wb_data, wb_formula, ws_name, date_format)
+                    val = _to_jsonable(val_res, date_format) if val_res not in (None, '') else ''
+                else:
+                    val = _to_jsonable(val_f, date_format) if val_f is not None else ''
+
+            row.append(val)
+
+        if all(v in (None, '') for v in row):
             continue
         rows.append(row)
     return rows
@@ -329,9 +385,9 @@ def _parse_table(rows, header_row_idx=0):
             out.append(obj)
     return out
 
-def _parse_sheet(ws, date_format='iso'):
-    rows = _read_rows(ws, date_format)
-    kind_res = _validate_and_detect_kind(rows, ws.title)
+def _parse_sheet(ws_d, ws_f, wb_data, wb_formula, date_format='iso'):
+    rows = _read_rows(ws_d, ws_f, wb_data, wb_formula, ws_d.title, date_format)
+    kind_res = _validate_and_detect_kind(rows, ws_d.title)
     if isinstance(kind_res, tuple):
         kind, header_row_idx = kind_res
     else:
@@ -445,16 +501,17 @@ def _is_dummy_key(val):
     return s in ('', '0', '0.0', '0.00', 'None', 'null', 'false', 'FALSE')
 
 def excel_to_json(excel_path, date_format='iso', strict=False):
-    wb = load_workbook(excel_path, data_only=True)
+    wb_data = load_workbook(excel_path, data_only=True)
+    wb_formula = load_workbook(excel_path, data_only=False)
     parsed = {}
     sheet_logs = []
     import_inspection = {}
     
     valid_prefixes = ('OUT_', 'JSON_', 'EXPORT_')
-    has_prefixed_sheets = any(sheet.upper().startswith(valid_prefixes) for sheet in wb.sheetnames if not sheet.startswith('_'))
+    has_prefixed_sheets = any(sheet.upper().startswith(valid_prefixes) for sheet in wb_data.sheetnames if not sheet.startswith('_'))
     
     sheet_order = []
-    for raw_name in wb.sheetnames:
+    for raw_name in wb_data.sheetnames:
         if raw_name in ('editor_metadata', 'editormetadata', '_hierarchy_schema', '_hierarchy_metadata') or raw_name.startswith('_sheet_info'):
             sheet_logs.append({
                 'name': raw_name,
@@ -479,7 +536,7 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
             continue
 
         try:
-            kind, data, headers = _parse_sheet(wb[raw_name], date_format)
+            kind, data, headers = _parse_sheet(wb_data[raw_name], wb_formula[raw_name], wb_data, wb_formula, date_format)
             parsed[raw_name] = (kind, data, headers)
             sheet_order.append(raw_name)
 
