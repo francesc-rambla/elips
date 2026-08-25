@@ -219,10 +219,11 @@ const universalFindSchema = (targetPath, dict) => {
 
 const formatPercentageDisplay = (val) => {
   if (val === undefined || val === null || val === '') return '';
-  const num = parseFloat(val);
+  let strVal = String(val).replace('%', '').replace(',', '.').trim();
+  const num = parseFloat(strVal);
   if (isNaN(num)) return val;
-  // Always display percentage scale (0.5 -> 50%)
-  // If val is already > 1.0 (e.g. 50 legacy), display 50
+  // Always display percentage scale (0.21 -> 21)
+  // If val is already > 1.0 (e.g. 21 legacy), display 21
   if (-1.0 <= num && num <= 1.0 && num !== 0) {
     return Math.round(num * 100 * 10000) / 10000;
   }
@@ -235,12 +236,13 @@ const updatePercentageValue = (targetObj, key, eventVal) => {
     targetObj[key] = '';
     return;
   }
-  const num = parseFloat(eventVal);
+  let strVal = String(eventVal).replace('%', '').replace(',', '.').trim();
+  const num = parseFloat(strVal);
   if (isNaN(num)) {
     targetObj[key] = eventVal;
     return;
   }
-  // Convert user entered percentage (50%) into internal proportion of 1 (0.5)
+  // Convert user entered percentage (21%) into internal proportion of 1 (0.21)
   targetObj[key] = num / 100.0;
 };
 
@@ -475,7 +477,12 @@ const getFieldLabel = (elementName) => {
 
 const getElementType = (elementName) => {
   const meta = getElementMetadata(elementName);
-  return meta ? meta.type : 'Text';
+  if (!meta || !meta.type) return 'Text';
+  const t = String(meta.type).trim();
+  if (t === 'Percentage' || t === 'Percentatge' || t === 'Porcentaje' || t === 'Percent' || t === '%') {
+    return 'Percentage';
+  }
+  return t;
 };
 
 const resolveSelectOptions = (meta) => {
