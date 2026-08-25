@@ -319,9 +319,62 @@ const globalFormulaPaths = computed(() => {
   return paths;
 });
 
+// Autocomplete state for formula modal
+const autocompleteQuery = ref('');
+const autocompleteIndex = ref(0);
+const showAutocomplete = ref(false);
+
+const builtinFunctions = [
+  { name: 'SI(condició; cert; fals)', insert: 'SI(condició; cert; fals)', label: 'SI / IF (Condicional)', category: 'Funció' },
+  { name: 'ARRODONEIX(valor; decimals)', insert: 'ARRODONEIX(valor; 2)', label: 'ARRODONEIX / ROUND', category: 'Funció' },
+  { name: 'ABS(valor)', insert: 'ABS(valor)', label: 'Valor absolut', category: 'Funció' },
+  { name: 'MIN(val1; val2)', insert: 'MIN(val1; val2)', label: 'Mínim de valors', category: 'Funció' },
+  { name: 'MAX(val1; val2)', insert: 'MAX(val1; val2)', label: 'Màxim de valors', category: 'Funció' },
+  { name: 'PERCENT(valor)', insert: 'PERCENT(valor)', label: 'Escala percentatge (* 100)', category: 'Funció' },
+  { name: 'ISNULL(valor)', insert: 'ISNULL(valor)', label: 'Comprova si és nul', category: 'Funció' },
+  { name: 'CONCAT(text1; text2)', insert: 'CONCAT(text1; text2)', label: 'Concatena text', category: 'Funció' },
+  { name: 'TEXT(valor)', insert: 'TEXT(valor)', label: 'Converteix a text', category: 'Funció' },
+  { name: 'REMPLAÇA(text; vell; nou)', insert: 'REMPLAÇA(text; vell; nou)', label: 'Reemplaça text', category: 'Funció' },
+  { name: 'UPPER(text)', insert: 'UPPER(text)', label: 'Majúscules', category: 'Funció' },
+  { name: 'LOWER(text)', insert: 'LOWER(text)', label: 'Minúscules', category: 'Funció' },
+];
+
+const autocompleteCandidates = computed(() => {
+  const q = autocompleteQuery.value.trim().toLowerCase();
+  if (!q) return [];
+
+  const results = [];
+
+  // Local fields
+  availableFormulaFields.value.forEach(field => {
+    if (field.toLowerCase().includes(q)) {
+      results.push({ name: field, insert: field, label: `Camp: ${field}`, category: '🏷️ Camp' });
+    }
+  });
+
+  // Global paths
+  globalFormulaPaths.value.forEach(path => {
+    if (path.toLowerCase().includes(q)) {
+      results.push({ name: path, insert: path, label: `Ruta: ${path}`, category: '🌐 Global' });
+    }
+  });
+
+  // Builtin functions
+  builtinFunctions.forEach(fn => {
+    if (fn.name.toLowerCase().includes(q) || fn.label.toLowerCase().includes(q)) {
+      results.push({ name: fn.name, insert: fn.insert, label: fn.label, category: '⚡ Funció' });
+    }
+  });
+
+  return results.slice(0, 10);
+});
+
 const openFormulaEditor = (item) => {
   editingFormulaItem.value = item;
   formulaTextBuffer.value = item.calcFormula || '';
+  showAutocomplete.value = false;
+  autocompleteQuery.value = '';
+  autocompleteIndex.value = 0;
   isFormulaModalOpen.value = true;
 };
 
@@ -342,6 +395,64 @@ const insertTokenIntoFormula = (token) => {
   });
 };
 
+const onFormulaInputKey = (e) => {
+  const el = formulaTextareaRef.value;
+  if (!el) return;
+
+  const pos = el.selectionStart || 0;
+  const textBefore = formulaTextBuffer.value.substring(0, pos);
+  const match = textBefore.match(/([a-zA-Z0-9_.]+)$/);
+
+  if (match) {
+    autocompleteQuery.value = match[1];
+    showAutocomplete.value = true;
+  } else {
+    showAutocomplete.value = false;
+    autocompleteQuery.value = '';
+  }
+
+  if (showAutocomplete.value && autocompleteCandidates.value.length > 0) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      autocompleteIndex.value = (autocompleteIndex.value + 1) % autocompleteCandidates.value.length;
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      autocompleteIndex.value = (autocompleteIndex.value - 1 + autocompleteCandidates.value.length) % autocompleteCandidates.value.length;
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      if (autocompleteIndex.value < autocompleteCandidates.value.length) {
+        e.preventDefault();
+        selectAutocompleteCandidate(autocompleteCandidates.value[autocompleteIndex.value]);
+      }
+    } else if (e.key === 'Escape') {
+      showAutocomplete.value = false;
+    }
+  }
+};
+
+const selectAutocompleteCandidate = (candidate) => {
+  const el = formulaTextareaRef.value;
+  if (!el) return;
+  const pos = el.selectionStart || 0;
+  const textBefore = formulaTextBuffer.value.substring(0, pos);
+  const textAfter = formulaTextBuffer.value.substring(pos);
+  const match = textBefore.match(/([a-zA-Z0-9_.]+)$/);
+  
+  if (match) {
+    const startPos = pos - match[1].length;
+    formulaTextBuffer.value = textBefore.substring(0, startPos) + candidate.insert + textAfter;
+    nextTick(() => {
+      el.focus();
+      const newPos = startPos + candidate.insert.length;
+      el.setSelectionRange(newPos, newPos);
+    });
+  } else {
+    insertTokenIntoFormula(candidate.insert);
+  }
+  showAutocomplete.value = false;
+  autocompleteQuery.value = '';
+  autocompleteIndex.value = 0;
+};
+
 const saveFormulaModal = () => {
   if (editingFormulaItem.value) {
     editingFormulaItem.value.calcFormula = formulaTextBuffer.value;
@@ -359,44 +470,28 @@ const saveFormulaModal = () => {
         <!-- Modal Header -->
         <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
           <h3 style="margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-            <span>Configuració del grup / formulari: <strong style="color: var(--color-primary);">{{ groupName }}</strong></span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span>Configuració del Grup: <strong style="color: var(--color-primary);">{{ groupName }}</strong></span>
           </h3>
           <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="closeModal">&times;</button>
         </div>
 
-        <!-- Modal Body -->
-        <div class="modal-body" style="flex-grow: 1; overflow-y: auto; padding: 0.75rem 0;">
-          
-          <!-- Top Control Header: Label Input + Action Buttons (Nova Clau, Editor Visual Grid) -->
-          <div style="background: var(--bg-card); padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 0.75rem; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
-            <!-- Left: Group Label Input -->
-            <div style="display: flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 240px;">
-              <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); white-space: nowrap;">Etiqueta formulari:</span>
-              <input 
-                type="text" 
-                v-model="localGroupLabel" 
-                class="data-input" 
-                placeholder="ex: Pressupost, Partides, Activitats..." 
-                style="height: 30px; font-size: 0.85rem; flex-grow: 1;"
-              />
-            </div>
+        <div class="modal-body" style="flex: 1; overflow-y: auto; padding: 1rem 0;">
+          <!-- Action Buttons Bar (Afegir camp + Editor Visual Grid) -->
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 8px;">
+            <button 
+              type="button" 
+              class="btn btn-secondary" 
+              style="width: auto; padding: 4px 12px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 4px;" 
+              @click="addNewFieldToConfig"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>Afegir camp/clau al grup</span>
+            </button>
 
-            <!-- Right: Action Buttons at the exact same row level -->
-            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <div style="display: flex; gap: 8px; align-items: center;">
               <button 
-                type="button"
-                class="btn btn-secondary" 
-                style="width: auto; padding: 4px 10px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 5px;" 
-                @click="addNewFieldToConfig"
-                title="Afegeix una nova clau o camp a aquest grup"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                <span>Afegeix camp</span>
-              </button>
-
-              <button 
-                type="button"
+                type="button" 
                 class="btn btn-secondary" 
                 style="width: auto; padding: 4px 12px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;" 
                 @click="isVisualGridModalOpen = true"
@@ -405,21 +500,6 @@ const saveFormulaModal = () => {
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
                 <span>Editor Visual de Grid</span>
               </button>
-            </div>
-          </div>
-
-          <!-- Layout selector option (Vertical KV vs Horizontal Grid) -->
-          <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); padding: 8px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 0.75rem; flex-wrap: wrap; gap: 8px;">
-            <span style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary);">Disposició visual dels camps de formulari:</span>
-            <div style="display: flex; gap: 16px;">
-              <label style="display: flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 600; cursor: pointer; color: var(--text-primary);">
-                <input type="radio" value="vertical" v-model="localSelectedLayout" style="cursor: pointer;" />
-                <span>Vertical (Taula Clau-Valor 2-Columnes - Per defecte)</span>
-              </label>
-              <label style="display: flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 600; cursor: pointer; color: var(--text-primary);">
-                <input type="radio" value="horizontal" v-model="localSelectedLayout" style="cursor: pointer;" />
-                <span>Horitzontal (Graella / Grid)</span>
-              </label>
             </div>
           </div>
 
@@ -476,7 +556,6 @@ const saveFormulaModal = () => {
                     <input 
                       type="checkbox" 
                       v-model="item.isCalculated" 
-                      @change="onCalculatedToggle(item)"
                     />
                     <span style="font-weight: 700; color: var(--color-primary);" v-if="item.isCalculated">🔒 Sí</span>
                     <span style="color: var(--text-muted);" v-else>No</span>
@@ -537,57 +616,54 @@ const saveFormulaModal = () => {
                     </select>
                   </template>
 
-                  <!-- Calculation / Formula Config Section (Shown if isCalculated OR type === 'Computed') -->
+                  <!-- Calculation / Formula Config Section -->
                   <template v-if="item.isCalculated || item.type === 'Computed' || item.calcFormula || (item.calcFn && item.calcFn !== 'NONE')">
                     <div style="display: flex; flex-direction: column; gap: 4px; background: rgba(0,0,0,0.02); padding: 6px; border-radius: 4px; border: 1px solid var(--border-color);">
                       <div style="display: flex; gap: 4px; align-items: center;">
-                        <span style="font-size: 0.7rem; font-weight: 700; color: var(--color-primary); white-space: nowrap;">Funció de càlcul:</span>
+                        <span style="font-size: 0.7rem; font-weight: 700; color: var(--color-primary); white-space: nowrap;">Funció:</span>
                         <select v-model="item.calcFn" class="data-input" style="width: 100%; height: 26px; font-size: 0.75rem;">
-                          <option value="FORMULA">FÓRMULA PERSONALITZADA</option>
-                          <option value="SUM">SUMA (Sub-taula)</option>
-                          <option value="AVERAGE">MITJANA (Sub-taula)</option>
-                          <option value="COUNT">RECOMPTE (Sub-taula)</option>
-                          <option value="MIN">MÍNIM (Sub-taula)</option>
-                          <option value="MAX">MÀXIM (Sub-taula)</option>
-                          <option value="NONE">-- Sense càlcul --</option>
+                          <option value="FORMULA">FÓRMULA</option>
+                          <option value="SUM">SUMA</option>
+                          <option value="AVERAGE">MITJANA</option>
+                          <option value="COUNT">RECOMPTE</option>
+                          <option value="MIN">MÍNIM</option>
+                          <option value="MAX">MÀXIM</option>
+                          <option value="NONE">-- Sense --</option>
                         </select>
                       </div>
 
-                      <!-- If FORMULA or CUSTOM: show formula text input AND ampliada button! -->
-                      <template v-if="item.calcFn === 'FORMULA' || item.calcFn === 'CUSTOM'">
+                      <template v-if="item.calcFn === 'FORMULA'">
                         <div style="display: flex; gap: 4px; align-items: center; margin-top: 2px;">
                           <input 
                             type="text" 
                             v-model="item.calcFormula" 
                             class="data-input" 
-                            placeholder="ex: preu * unitats o SI(unitats > 10; preu * 0.9; preu)"
+                            placeholder="ex: preu * unitats"
                             style="flex: 1; min-width: 260px; font-size: 0.75rem; height: 26px; font-family: var(--font-mono);"
                             title="Fórmula personalitzada d'operació"
                           />
                           <button 
                             type="button" 
                             class="btn btn-secondary" 
-                            style="height: 26px; font-size: 0.72rem; padding: 2px 8px; width: auto; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;"
+                            style="width: auto; padding: 2px 6px; font-size: 0.7rem; height: 26px; font-weight: 600; white-space: nowrap; display: inline-flex; align-items: center; gap: 3px;"
                             @click="openFormulaEditor(item)"
-                            title="Obre l'editor ampliat de fórmules"
+                            title="Obre l'editor ampliat de fórmules amb autocompletat"
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                             <span>Amplia</span>
                           </button>
                         </div>
-                        <span style="font-size: 0.68rem; color: var(--text-muted);">
-                          Operadors: +, -, *, /, %, ^ | Condició: SI(condició; cert; fals)
-                        </span>
                       </template>
 
+                      <!-- If SUM, AVG, COUNT, MIN, MAX: show target sub-table options -->
                       <template v-else-if="item.calcFn && item.calcFn !== 'NONE'">
-                        <select v-model="item.calcVector" class="data-input" style="width: 100%; font-size: 0.75rem; height: 26px;">
-                          <option value="">-- Sub-taula --</option>
+                        <select v-model="item.calcVector" class="data-input" style="width: 100%; font-size: 0.75rem; height: 26px; margin-top: 2px;">
+                          <option value="">-- Tria Sub-taula Origen --</option>
                           <option v-for="tbl in getAvailableTables()" :key="tbl" :value="tbl">{{ tbl }}</option>
                         </select>
 
-                        <select v-if="item.calcFn !== 'COUNT' && item.calcVector" v-model="item.calcTargetCol" class="data-input" style="width: 100%; font-size: 0.75rem; height: 26px;">
-                          <option value="">-- Columna --</option>
+                        <select v-if="item.calcFn !== 'COUNT' && item.calcVector" v-model="item.calcTargetCol" class="data-input" style="width: 100%; font-size: 0.75rem; height: 26px; margin-top: 2px;">
+                          <option value="">-- Tria Columna a operar --</option>
                           <option v-for="col in getChildTableColumns(item.calcVector)" :key="col" :value="col">{{ col }}</option>
                         </select>
                       </template>
@@ -595,41 +671,45 @@ const saveFormulaModal = () => {
                   </template>
                 </td>
 
-                <!-- Grid Position Options -->
-                <td style="padding: 6px 4px; vertical-align: top;">
-                  <div style="display: flex; flex-direction: column; gap: 3px;">
-                    <div style="display: flex; gap: 4px; align-items: center;">
-                      <span style="font-size: 0.7rem; color: var(--text-muted); width: 32px;">Fila:</span>
-                      <input type="number" min="1" v-model="item.gridRow" class="data-input" style="height: 22px; font-size: 0.7rem; width: 45px; padding: 1px 3px;" placeholder="Auto" />
-                      <span style="font-size: 0.7rem; color: var(--text-muted); width: 35px;">Ordre:</span>
-                      <input type="number" min="1" v-model="item.gridOrder" class="data-input" style="height: 22px; font-size: 0.7rem; width: 45px; padding: 1px 3px;" placeholder="Auto" />
+                <!-- Grid Position Controls (Row & Order) -->
+                <td style="padding: 6px 8px; vertical-align: top; text-align: center;">
+                  <div style="display: flex; flex-direction: column; gap: 4px; align-items: center;">
+                    <div style="display: flex; gap: 4px; align-items: center; width: 100%;">
+                      <span style="font-size: 0.68rem; color: var(--text-muted); width: 28px; text-align: right;">Fila:</span>
+                      <input 
+                        type="number" 
+                        v-model.number="item.gridRow" 
+                        min="1"
+                        placeholder="1"
+                        class="data-input" 
+                        style="width: 45px; height: 24px; font-size: 0.75rem; text-align: center;"
+                        title="Número de fila visual a la graella"
+                      />
+                      <span style="font-size: 0.68rem; color: var(--text-muted); width: 28px; text-align: right;">Ordre:</span>
+                      <input 
+                        type="number" 
+                        v-model.number="item.gridOrder" 
+                        min="1"
+                        placeholder="1"
+                        class="data-input" 
+                        style="width: 45px; height: 24px; font-size: 0.75rem; text-align: center;"
+                        title="Ordre de columna dins de la fila"
+                      />
                     </div>
-                    <div style="display: flex; gap: 4px; align-items: center;">
-                      <span style="font-size: 0.7rem; color: var(--text-muted); width: 32px;">Amp:</span>
-                      <select v-model="item.width" class="data-input" style="height: 22px; font-size: 0.7rem; flex: 1; padding: 1px 3px;">
-                        <option value="">Auto</option>
-                        <option value="25%">25%</option>
-                        <option value="33%">33%</option>
-                        <option value="50%">50%</option>
-                        <option value="66%">66%</option>
-                        <option value="75%">75%</option>
-                        <option value="100%">100%</option>
-                      </select>
-                      <label style="font-size: 0.68rem; color: var(--text-muted); display: flex; align-items: center; gap: 2px; cursor: pointer;">
-                        <input type="checkbox" v-model="item.gridFill" style="width: 12px; height: 12px;" /> Omple
-                      </label>
-                    </div>
+                    <label style="display: flex; align-items: center; gap: 4px; font-size: 0.7rem; color: var(--text-secondary); cursor: pointer;" title="Fes que aquest camp s'expandeixi tot l'ample de la fila">
+                      <input type="checkbox" v-model="item.gridFill" /> Ocupa tota la fila
+                    </label>
                   </div>
                 </td>
 
-                <!-- Delete Action -->
+                <!-- Row Delete Button -->
                 <td style="padding: 6px 4px; vertical-align: top; text-align: center;">
                   <button 
                     type="button" 
-                    class="btn-icon-only text-danger" 
-                    style="border: none; background: transparent; font-size: 1.1rem; cursor: pointer;"
-                    @click="removeFieldFromConfig(idx)"
-                    title="Eliminar camp"
+                    class="btn-icon-only" 
+                    style="color: var(--color-danger); border: none; background: transparent; cursor: pointer; padding: 4px;" 
+                    @click="localConfigList.splice(idx, 1)"
+                    title="Elimina aquest camp de la configuració"
                   >
                     &times;
                   </button>
@@ -637,101 +717,102 @@ const saveFormulaModal = () => {
               </tr>
             </tbody>
           </table>
-
         </div>
-        
-        <!-- Modal Footer -->
-        <div class="modal-footer" style="margin-top: 0.75rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
-          <div style="display: flex; gap: 6px;">
-            <button 
-              type="button"
-              class="btn btn-secondary" 
-              style="width: auto; padding: 3px 8px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 4px;"
-              @click="emit('copyGroup', groupName)"
-              title="Copia la configuració d'aquest grup al portaretalls"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-              <span>Copia Grup</span>
-            </button>
-            <button 
-              type="button"
-              class="btn btn-secondary" 
-              style="width: auto; padding: 3px 8px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 4px;"
-              @click="emit('pasteGroup', groupName)"
-              title="Enganxa la configuració del portaretalls sobre aquest grup"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
-              <span>Enganxa Grup</span>
-            </button>
-          </div>
 
-          <div style="display: flex; gap: 8px;">
-            <button type="button" class="btn btn-secondary" style="width: auto;" @click="closeModal">Cancel·la</button>
-            <button type="button" class="btn btn-primary" style="width: auto;" @click="handleSave">Aplica</button>
-          </div>
+        <!-- Modal Footer -->
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 0.5rem;">
+          <button type="button" class="btn btn-secondary" style="width: auto;" @click="closeModal">Cancel·la</button>
+          <button type="button" class="btn btn-primary" style="width: auto;" @click="handleSave">Desa Configuració</button>
         </div>
 
       </div>
     </div>
 
-    <!-- Integrated Reusable Visual Grid Layout Editor Modal -->
+    <!-- Visual Grid Layout Drag&Drop Editor Modal -->
     <VisualGridEditorModal 
-      v-model="isVisualGridModalOpen" 
+      v-model="isVisualGridModalOpen"
       :groupName="groupName" 
       :configList="localConfigList" 
     />
 
-    <!-- Integrated Formula Editor Modal -->
+    <!-- Integrated Formula Editor Modal (Wider + Autocomplete + Rich Functions) -->
     <div class="modal-overlay" v-if="isFormulaModalOpen" style="display: flex; z-index: 1200;">
-      <div class="modal-content" style="max-width: 650px; width: 90%; display: flex; flex-direction: column; gap: 12px;">
-        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
-          <h3 style="margin: 0; font-size: 1.05rem; display: flex; align-items: center; gap: 6px;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-            <span>Editor de Fórmula: <strong style="color: var(--color-primary);">{{ editingFormulaItem?.element }}</strong></span>
+      <div class="modal-content" style="max-width: 1050px; width: 95vw; max-height: 90vh; display: flex; flex-direction: column; gap: 14px; overflow-y: auto;">
+        
+        <!-- Header -->
+        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+          <h3 style="margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+            <span>Editor Ampliat de Fórmula: <strong style="color: var(--color-primary);">{{ editingFormulaItem?.element }}</strong></span>
           </h3>
           <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isFormulaModalOpen = false">&times;</button>
         </div>
 
-        <div class="modal-body" style="display: flex; flex-direction: column; gap: 10px;">
-          <!-- Field Insert Badges -->
-          <div v-if="availableFormulaFields.length > 0">
-            <span style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Camps de la fila disponibles (Clica per inserir):</span>
-            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-              <button 
-                v-for="col in availableFormulaFields" 
-                :key="col" 
-                type="button" 
-                class="btn btn-secondary" 
-                style="padding: 3px 8px; font-size: 0.75rem; font-family: var(--font-mono); width: auto; background: var(--bg-tertiary);"
-                @click="insertTokenIntoFormula(col)"
-              >
-                + {{ col }}
-              </button>
+        <div class="modal-body" style="display: grid; grid-template-columns: 280px 1fr; gap: 16px;">
+          <!-- Left Column: Variable & Function Palette -->
+          <div style="display: flex; flex-direction: column; gap: 12px; border-right: 1px solid var(--border-color); padding-right: 14px; max-height: 60vh; overflow-y: auto;">
+            
+            <!-- Row Fields -->
+            <div>
+              <span style="font-size: 0.78rem; font-weight: 700; color: var(--text-primary); display: block; margin-bottom: 6px;">🏷️ Camps de la fila:</span>
+              <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                <button 
+                  v-for="col in availableFormulaFields" 
+                  :key="col" 
+                  type="button" 
+                  class="btn btn-secondary" 
+                  style="padding: 3px 8px; font-size: 0.73rem; font-family: var(--font-mono); width: auto; background: var(--bg-tertiary);"
+                  @click="insertTokenIntoFormula(col)"
+                  :title="'Insereix el camp ' + col"
+                >
+                  + {{ col }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Global Model Paths -->
+            <div v-if="globalFormulaPaths.length > 0">
+              <span style="font-size: 0.78rem; font-weight: 700; color: var(--text-primary); display: block; margin-bottom: 6px;">🌐 Rutes globals:</span>
+              <div style="display: flex; flex-wrap: wrap; gap: 4px; max-height: 120px; overflow-y: auto;">
+                <button 
+                  v-for="gPath in globalFormulaPaths" 
+                  :key="gPath" 
+                  type="button" 
+                  class="btn btn-secondary" 
+                  style="padding: 2px 6px; font-size: 0.72rem; font-family: var(--font-mono); width: auto; border: 1px dashed var(--color-primary); color: var(--color-primary);"
+                  @click="insertTokenIntoFormula(gPath)"
+                  :title="'Insereix la ruta global ' + gPath"
+                >
+                  + {{ gPath }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Functions Palette -->
+            <div>
+              <span style="font-size: 0.78rem; font-weight: 700; color: var(--text-primary); display: block; margin-bottom: 6px;">⚡ Funcions disponibles:</span>
+              <div style="display: flex; flex-direction: column; gap: 4px;">
+                <button 
+                  v-for="fn in builtinFunctions" 
+                  :key="fn.name" 
+                  type="button" 
+                  class="btn btn-secondary" 
+                  style="text-align: left; padding: 4px 8px; font-size: 0.72rem; width: 100%; justify-content: flex-start; display: flex; flex-direction: column; gap: 2px;"
+                  @click="insertTokenIntoFormula(fn.insert)"
+                  :title="fn.label"
+                >
+                  <strong style="color: var(--color-primary); font-family: var(--font-mono);">{{ fn.name }}</strong>
+                  <span style="font-size: 0.68rem; color: var(--text-muted);">{{ fn.label }}</span>
+                </button>
+              </div>
             </div>
           </div>
 
-          <!-- Global Model Paths Badges -->
-          <div v-if="globalFormulaPaths.length > 0">
-            <span style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Rutes globals del model de dades:</span>
-            <div style="display: flex; flex-wrap: wrap; gap: 6px; max-height: 80px; overflow-y: auto;">
-              <button 
-                v-for="gPath in globalFormulaPaths" 
-                :key="gPath" 
-                type="button" 
-                class="btn btn-secondary" 
-                style="padding: 2px 7px; font-size: 0.73rem; font-family: var(--font-mono); width: auto; border: 1px dashed var(--color-primary); color: var(--color-primary);"
-                @click="insertTokenIntoFormula(gPath)"
-                :title="'Insereix la ruta global ' + gPath"
-              >
-                + {{ gPath }}
-              </button>
-            </div>
-          </div>
-
-          <!-- Quick Operators & Functions -->
-          <div>
-            <span style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px;">Operadors i Funcions:</span>
-            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+          <!-- Right Column: Formula Textarea & Quick Toolbar & Autocomplete -->
+          <div style="display: flex; flex-direction: column; gap: 10px; position: relative;">
+            
+            <!-- Quick Operators Toolbar -->
+            <div style="display: flex; flex-wrap: wrap; gap: 4px; background: var(--bg-tertiary); padding: 6px; border-radius: var(--radius-xs); border: 1px solid var(--border-color);">
               <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' + ')">+</button>
               <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' - ')">-</button>
               <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' * ')">*</button>
@@ -740,26 +821,59 @@ const saveFormulaModal = () => {
               <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' ^ ')">^</button>
               <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' ( ')">(</button>
               <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' ) ')">)</button>
-              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto; font-weight: bold; color: var(--color-primary);" @click="insertTokenIntoFormula('SI(condició; cert; fals)')">SI(condició; cert; fals)</button>
-              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto; font-weight: bold; color: var(--color-primary);" @click="insertTokenIntoFormula('ARRODONEIX(valor; 2)')">ARRODONEIX(valor; prec)</button>
-              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto; font-weight: bold; color: var(--color-primary);" @click="insertTokenIntoFormula('ABS(valor)')">ABS(valor)</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' == ')">==</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' != ')">!=</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' > ')">&gt;</button>
+              <button type="button" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; width: auto;" @click="insertTokenIntoFormula(' < ')">&lt;</button>
+            </div>
+
+            <!-- Formula Textarea with Autocomplete listener -->
+            <div style="position: relative; flex-grow: 1;">
+              <textarea 
+                ref="formulaTextareaRef"
+                v-model="formulaTextBuffer" 
+                @keyup="onFormulaInputKey"
+                @keydown="onFormulaInputKey"
+                @click="onFormulaInputKey"
+                class="data-input" 
+                rows="8" 
+                style="width: 100%; font-family: var(--font-mono); font-size: 0.88rem; padding: 10px; line-height: 1.5; resize: vertical;"
+                placeholder="Escriu la fórmula. Comença a escriure el nom d'un camp o funció per veure l'autocompletat..."
+              ></textarea>
+
+              <!-- Floating Autocomplete Dropdown Panel -->
+              <div 
+                v-if="showAutocomplete && autocompleteCandidates.length > 0"
+                style="position: absolute; left: 10px; bottom: -10px; transform: translateY(100%); z-index: 1300; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: var(--shadow-md); max-height: 220px; overflow-y: auto; min-width: 280px; padding: 4px;"
+              >
+                <div style="font-size: 0.68rem; font-weight: 700; color: var(--text-muted); padding: 4px 8px; border-bottom: 1px solid var(--border-color); text-transform: uppercase;">
+                  Suggereixis d'autocompletat (Prem Enter o Tab)
+                </div>
+                <div 
+                  v-for="(cand, cIdx) in autocompleteCandidates" 
+                  :key="cand.name"
+                  @mousedown.prevent="selectAutocompleteCandidate(cand)"
+                  style="padding: 6px 10px; font-size: 0.78rem; cursor: pointer; display: flex; align-items: center; justify-content: space-between; border-radius: 4px;"
+                  :style="{ background: cIdx === autocompleteIndex ? 'var(--color-primary-light, #e0f2fe)' : 'transparent', color: cIdx === autocompleteIndex ? 'var(--color-primary, #0284c7)' : 'var(--text-primary)' }"
+                >
+                  <div style="display: flex; align-items: center; gap: 6px; font-family: var(--font-mono);">
+                    <span style="font-weight: 700;">{{ cand.insert }}</span>
+                  </div>
+                  <span style="font-size: 0.68rem; color: var(--text-muted); font-weight: 600;">{{ cand.category }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="font-size: 0.72rem; color: var(--text-muted); line-height: 1.4;">
+              💡 <strong>Consell d'autocompletat:</strong> Comença a escriure qualsevol lletra (ex: <code>perc</code>, <code>doc.</code>, <code>SI</code>) per veure el menú desplegable. Utilitza les fletxes ⬆️ / ⬇️ i prem <strong>Enter</strong> o <strong>Tab</strong> per autocompletar.
             </div>
           </div>
-
-          <!-- Multi-line Textarea -->
-          <textarea 
-            ref="formulaTextareaRef"
-            v-model="formulaTextBuffer" 
-            class="data-input" 
-            rows="5" 
-            style="width: 100%; font-family: var(--font-mono); font-size: 0.85rem; padding: 8px; resize: vertical;"
-            placeholder="ex: preu * unitats o SI(unitats > 10; preu * 0.9; preu)"
-          ></textarea>
         </div>
 
-        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 0.5rem;">
+        <!-- Footer -->
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
           <button type="button" class="btn btn-secondary" style="width: auto;" @click="isFormulaModalOpen = false">Cancel·la</button>
-          <button type="button" class="btn btn-primary" style="width: auto;" @click="saveFormulaModal">Desa Fórmula</button>
+          <button type="button" class="btn btn-primary" style="width: auto;" @click="saveFormulaModal">Desa la Fórmula</button>
         </div>
       </div>
     </div>
