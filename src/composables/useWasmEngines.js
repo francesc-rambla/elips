@@ -2004,6 +2004,23 @@ def filter_where(value, criteria=None, **kwargs):
     res = [item for item in lst if _matches_item(item)]
     return _wrap_tracked(res, orig_path, enable_links) if orig_path else res
 
+def is_excel_true(val):
+    if hasattr(val, 'val'):
+        val = val.val
+    if val in (None, '', 0, 0.0, False, '0', '0.0'):
+        return False
+    if isinstance(val, str):
+        v_str = val.strip().upper()
+        if v_str in ('NO', 'FALS', 'FALSE', '0', '0.0', 'N', 'OFF', 'DESACTIVAT'):
+            return False
+    return True
+
+def filter_cert(value):
+    return is_excel_true(value)
+
+def filter_fals(value):
+    return not is_excel_true(value)
+
 def render_json_text(excel_path, date_format='iso', strict=False):
     doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
     return json.dumps(doc, ensure_ascii=False, default=_custom_json_default)
@@ -2262,10 +2279,29 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         env_clean.filters['sort'] = filter_sort
         env_clean.filters['filter'] = filter_where
         env_clean.filters['where'] = filter_where
+        env_clean.filters['CERT'] = filter_cert
+        env_clean.filters['cert'] = filter_cert
+        env_clean.filters['FALS'] = filter_fals
+        env_clean.filters['fals'] = filter_fals
+        env_clean.filters['IS_CERT'] = filter_cert
+        env_clean.filters['is_cert'] = filter_cert
+        env_clean.filters['IS_FALS'] = filter_fals
+        env_clean.filters['is_fals'] = filter_fals
+        env_clean.tests['CERT'] = filter_cert
+        env_clean.tests['cert'] = filter_cert
+        env_clean.tests['FALS'] = filter_fals
+        env_clean.tests['fals'] = filter_fals
+        env_clean.tests['is_cert'] = filter_cert
+        env_clean.tests['is_fals'] = filter_fals
         env_clean.globals['TRUE'] = True
         env_clean.globals['FALSE'] = False
         env_clean.globals['true'] = True
         env_clean.globals['false'] = False
+        env_clean.globals['CERT'] = filter_cert
+        env_clean.globals['FALS'] = filter_fals
+        env_clean.globals['cert'] = filter_cert
+        env_clean.globals['fals'] = filter_fals
+        env_clean.globals['is_excel_true'] = is_excel_true
 
         out1_clean, issues1 = render_with_recovery(env_clean, tpl_src, clean_ctx, 'primera')
         if '{{' in out1_clean or '{%' in out1_clean:
@@ -2288,10 +2324,29 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         env_html.filters['sort'] = filter_sort
         env_html.filters['filter'] = filter_where
         env_html.filters['where'] = filter_where
+        env_html.filters['CERT'] = filter_cert
+        env_html.filters['cert'] = filter_cert
+        env_html.filters['FALS'] = filter_fals
+        env_html.filters['fals'] = filter_fals
+        env_html.filters['IS_CERT'] = filter_cert
+        env_html.filters['is_cert'] = filter_cert
+        env_html.filters['IS_FALS'] = filter_fals
+        env_html.filters['is_fals'] = filter_fals
+        env_html.tests['CERT'] = filter_cert
+        env_html.tests['cert'] = filter_cert
+        env_html.tests['FALS'] = filter_fals
+        env_html.tests['fals'] = filter_fals
+        env_html.tests['is_cert'] = filter_cert
+        env_html.tests['is_fals'] = filter_fals
         env_html.globals['TRUE'] = True
         env_html.globals['FALSE'] = False
         env_html.globals['true'] = True
         env_html.globals['false'] = False
+        env_html.globals['CERT'] = filter_cert
+        env_html.globals['FALS'] = filter_fals
+        env_html.globals['cert'] = filter_cert
+        env_html.globals['fals'] = filter_fals
+        env_html.globals['is_excel_true'] = is_excel_true
 
         out1_html, _ = render_with_recovery(env_html, tpl_src, html_ctx, 'primera_html')
         if '{{' in out1_html or '{%' in out1_html:
@@ -2882,8 +2937,17 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         return str;
       };
 
+      // 2. Transform CERT(...) and FALS(...) into JS helper calls
+      const transformCertFals = (str) => {
+        let exprStr = str;
+        exprStr = exprStr.replace(/\b(CERT|is_cert)\s*\(/gi, '__is_cert(');
+        exprStr = exprStr.replace(/\b(FALS|is_fals)\s*\(/gi, '__is_fals(');
+        return exprStr;
+      };
+
       expr = transformIf(expr);
       expr = transformRound(expr);
+      expr = transformCertFals(expr);
 
       // 3. Math replacements
       expr = expr.replace(/\bABS\s*\(/gi, 'Math.abs(');
@@ -2980,6 +3044,7 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
       const tokenRegex = /\b(?:[a-zA-Z_][a-zA-Z0-9_]*|doc\.[a-zA-Z0-9_.]+|dades\.[a-zA-Z0-9_.]+)(?:\[\d+\])?(?:\.[a-zA-Z_][a-zA-Z0-9_.]*(?:\[\d+\])?)*\b/g;
       const reservedKeywords = new Set([
         'SI', 'IF', 'ARRODONEIX', 'ROUND', 'ABS', 'MIN', 'MAX', 'Math', '__round',
+        'CERT', 'FALS', 'cert', 'fals', 'is_cert', 'is_fals', '__is_cert', '__is_fals',
         'true', 'false', 'null', 'undefined', 'doc', 'dades', 'return', 'function'
       ]);
 
@@ -3003,13 +3068,27 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         }
       });
 
-      const safeEval = new Function('__round', `"use strict"; return (${expr});`);
+      const __is_cert = (val) => {
+        if (val === undefined || val === null || val === false || val === '' || val === 0 || val === 0.0 || val === '0' || val === '0.0') {
+          return false;
+        }
+        if (typeof val === 'string') {
+          const s = val.trim().toUpperCase();
+          if (['NO', 'FALS', 'FALSE', '0', '0.0', 'N', 'OFF', 'DESACTIVAT'].includes(s)) {
+            return false;
+          }
+        }
+        return true;
+      };
+      const __is_fals = (val) => !__is_cert(val);
+
+      const safeEval = new Function('__round', '__is_cert', '__is_fals', 'CERT', 'FALS', 'cert', 'fals', `"use strict"; return (${expr});`);
       const __round = (val, prec = 0) => {
         const p = Math.pow(10, prec);
         return Math.round(parseFloat(val) * p) / p;
       };
 
-      const result = safeEval(__round);
+      const result = safeEval(__round, __is_cert, __is_fals, __is_cert, __is_fals, __is_cert, __is_fals);
 
       if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
         return Math.round(result * 100) / 100;
