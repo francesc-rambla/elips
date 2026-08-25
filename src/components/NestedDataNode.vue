@@ -483,7 +483,16 @@ const getElementMetadata = (elementName) => {
 const isCalculatedField = (elementName) => {
   const meta = getElementMetadata(elementName);
   if (!meta) return false;
-  return meta.type === 'Computed' || meta.sourceType === 'computed' || (Boolean(meta.calcFn) && meta.calcFn !== 'NONE') || (Boolean(meta.calcFormula) && meta.calcFormula.trim() !== '');
+  if (meta.isCalculated === true || meta.sourceType === 'computed' || meta.type === 'Computed') {
+    return true;
+  }
+  if (meta.calcFormula && String(meta.calcFormula).trim() !== '') {
+    return true;
+  }
+  if (meta.calcFn && meta.calcFn !== 'NONE' && meta.calcFn !== '') {
+    return Boolean(meta.calcVector || meta.calcFormula);
+  }
+  return false;
 };
 
 const getFieldLabel = (elementName) => {
@@ -774,7 +783,7 @@ const openGroupConfig = () => {
       valueField: meta.valueField || '',
       multiple: !!meta.multiple,
       width: meta.width || '',
-      calcFn: meta.calcFn || 'SUM',
+      calcFn: meta.calcFn || 'NONE',
       calcVector: meta.calcVector || '',
       calcTargetCol: meta.calcTargetCol || '',
       calcFormula: meta.calcFormula || '',
@@ -815,7 +824,7 @@ const addNewFieldToConfig = () => {
       valueField: '',
       multiple: false,
       width: '',
-      calcFn: 'SUM',
+      calcFn: 'NONE',
       calcVector: '',
       calcTargetCol: '',
       calcFormula: '',

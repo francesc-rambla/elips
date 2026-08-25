@@ -1650,6 +1650,20 @@ const generateDocuments = async () => {
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span v-if="store.config.showButtonTexts">{{ store.dataActions?.savingExcel && store.dataActions.savingExcel() ? 'Guardant...' : 'Baixa Excel' }}</span>
             </button>
+
+            <!-- Checkbox Depuració Càlculs -->
+            <label 
+              style="display: inline-flex; align-items: center; gap: 5px; font-size: 0.72rem; font-weight: 600; cursor: pointer; color: var(--text-primary); padding: 0 8px; grid-row: 1 / span 2; height: 100%; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-primary); user-select: none;"
+              title="Activa o desactiva els missatges detallats de depuració de càlculs al registre del terminal"
+            >
+              <input 
+                type="checkbox" 
+                v-model="store.debugComputedFields" 
+                @change="localStorage.setItem('debugComputedFields', String(store.debugComputedFields))"
+                style="cursor: pointer;"
+              />
+              <span v-if="store.config.showButtonTexts">Depura Càlculs</span>
+            </label>
           </div>
           <div class="ribbon-group-label">DADES</div>
         </div>

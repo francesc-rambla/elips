@@ -3166,7 +3166,7 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     }
   };
 
-  const evaluateComputedFields = (dataObj, metadataList = [], debugMode = true) => {
+  const evaluateComputedFields = (dataObj, metadataList = [], debugMode = store.debugComputedFields) => {
     if (!dataObj || typeof dataObj !== 'object') return dataObj;
     const metadata = metadataList.length > 0 ? metadataList : (dataObj.editor_metadata || store.editorMetadata || []);
 

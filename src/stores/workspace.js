@@ -67,6 +67,9 @@ export const useWorkspaceStore = defineStore('workspace', {
       const pName = localStorage.getItem('currentProjectName') || 'Default';
       return localStorage.getItem(`${pName}:isMaximized`) === 'true';
     })(),
+    debugComputedFields: (() => {
+      return localStorage.getItem('debugComputedFields') === 'true';
+    })(),
     
     // Active Tool Action Handlers (for super-toolbar integration)
     editorActions: {

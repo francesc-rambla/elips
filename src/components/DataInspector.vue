@@ -655,7 +655,16 @@ const getElementMetadata = (groupName, elementName) => {
 const isCalculatedField = (groupName, elementName) => {
   const meta = getElementMetadata(groupName, elementName);
   if (!meta) return false;
-  return meta.type === 'Computed' || meta.sourceType === 'computed' || (Boolean(meta.calcFn) && meta.calcFn !== 'NONE') || (Boolean(meta.calcFormula) && meta.calcFormula.trim() !== '');
+  if (meta.isCalculated === true || meta.sourceType === 'computed' || meta.type === 'Computed') {
+    return true;
+  }
+  if (meta.calcFormula && String(meta.calcFormula).trim() !== '') {
+    return true;
+  }
+  if (meta.calcFn && meta.calcFn !== 'NONE' && meta.calcFn !== '') {
+    return Boolean(meta.calcVector || meta.calcFormula);
+  }
+  return false;
 };
 
 const getElementType = (groupName, elementName) => {
@@ -1131,7 +1140,7 @@ const openGroupConfig = (groupName, sheetData) => {
       valueField: meta.valueField || '',
       multiple: !!meta.multiple,
       width: meta.width || '',
-      calcFn: meta.calcFn || 'SUM',
+      calcFn: meta.calcFn || 'NONE',
       calcVector: meta.calcVector || '',
       calcTargetCol: meta.calcTargetCol || '',
       calcFormula: meta.calcFormula || '',
@@ -1173,7 +1182,7 @@ const addNewFieldToConfig = () => {
       valueField: '',
       multiple: false,
       width: '',
-      calcFn: 'SUM',
+      calcFn: 'NONE',
       calcVector: '',
       calcTargetCol: '',
       calcFormula: '',
@@ -1285,11 +1294,18 @@ const saveGroupConfig = () => {
         meta.options = item.optionsRaw.split(',').map(x => x.trim()).filter(x => x);
       }
     }
-    if (item.type === 'Computed') {
-      meta.calcFn = item.calcFn || 'SUM';
+    meta.isCalculated = !!item.isCalculated;
+    if (item.isCalculated || item.type === 'Computed' || item.calcFormula || (item.calcFn && item.calcFn !== 'NONE')) {
+      meta.calcFn = item.calcFn || 'FORMULA';
       meta.calcVector = item.calcVector || '';
       meta.calcTargetCol = item.calcTargetCol || '';
       meta.calcFormula = item.calcFormula || '';
+      meta.sourceType = 'computed';
+    } else {
+      meta.calcFn = 'NONE';
+      meta.calcVector = '';
+      meta.calcTargetCol = '';
+      meta.calcFormula = '';
     }
     if (item.width) {
       meta.width = item.width;
