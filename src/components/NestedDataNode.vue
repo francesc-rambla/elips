@@ -477,12 +477,23 @@ const getFieldLabel = (elementName) => {
 
 const getElementType = (elementName) => {
   const meta = getElementMetadata(elementName);
-  if (!meta || !meta.type) return 'Text';
-  const t = String(meta.type).trim();
-  if (t === 'Percentage' || t === 'Percentatge' || t === 'Porcentaje' || t === 'Percent' || t === '%') {
+  if (meta && meta.type) {
+    const t = String(meta.type).trim();
+    if (t === 'Percentage' || t === 'Percentatge' || t === 'Porcentaje' || t === 'Percent' || t === '%') {
+      return 'Percentage';
+    }
+    if (t !== 'Text' && t !== 'String' && t !== '') {
+      return t;
+    }
+  }
+
+  // Auto-detection by field name / key / label / title if type is not explicitly configured
+  const checkStr = `${elementName || ''} ${meta?.label || ''} ${meta?.title || ''}`.toLowerCase();
+  if (checkStr.includes('perc') || checkStr.includes('percent') || checkStr.includes('porcent') || checkStr.includes('pct') || checkStr.includes('%')) {
     return 'Percentage';
   }
-  return t;
+
+  return meta ? (meta.type || 'Text') : 'Text';
 };
 
 const resolveSelectOptions = (meta) => {
