@@ -1171,8 +1171,8 @@ const getItemPath = (idx, fieldKey) => {
                     <input 
                       :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
                       :data-path="getItemPath(rIdx, h)"
-                      type="number"
-                      step="any"
+                      type="text"
+                      inputmode="decimal"
                       :value="formatPercentageDisplay(row[h])"
                       @input="updatePercentageValue(row, h, $event.target.value)"
                       class="data-input"

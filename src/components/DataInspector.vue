@@ -138,8 +138,8 @@ const formatPercentageDisplay = (val) => {
   let strVal = String(val).replace('%', '').replace(',', '.').trim();
   const num = parseFloat(strVal);
   if (isNaN(num)) return val;
-  // Always convert internal proportion (e.g. 0.21 -> 21, 1 -> 100, 100 -> 10000)
-  return Math.round(num * 100 * 10000) / 10000;
+  const scaled = Math.round(num * 100 * 1000000) / 1000000;
+  return String(scaled).replace('.', ',');
 };
 
 const updatePercentageValue = (targetObj, key, eventVal) => {
@@ -154,8 +154,7 @@ const updatePercentageValue = (targetObj, key, eventVal) => {
     targetObj[key] = eventVal;
     return;
   }
-  // Always divide user input scale by 100 for internal proportion storage (21 -> 0.21, 100 -> 1)
-  targetObj[key] = num / 100.0;
+  targetObj[key] = Math.round((num / 100.0) * 1000000) / 1000000;
 };
 
 const isRootSheet = (name) => {
@@ -2034,8 +2033,8 @@ onMounted(() => {
                           <input 
                             :id="'data-field-' + name + '-' + idx + '-' + col"
                             :data-path="name + '.' + idx + '.' + col"
-                            type="number"
-                            step="any"
+                            type="text"
+                            inputmode="decimal"
                             :value="formatPercentageDisplay(store.excelJsonData[name][idx][col])"
                             @input="updatePercentageValue(store.excelJsonData[name][idx], col, $event.target.value)"
                             class="data-input"
@@ -2248,8 +2247,8 @@ onMounted(() => {
                       <input 
                         :id="'data-field-' + name + '-' + item.key"
                         :data-path="name + '.' + item.key"
-                        type="number"
-                        step="any"
+                        type="text"
+                        inputmode="decimal"
                         :value="formatPercentageDisplay(store.excelJsonData[name][item.key])"
                         @input="updatePercentageValue(store.excelJsonData[name], item.key, $event.target.value)"
                         class="data-input"
