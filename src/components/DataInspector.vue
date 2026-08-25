@@ -138,10 +138,8 @@ const formatPercentageDisplay = (val) => {
   let strVal = String(val).replace('%', '').replace(',', '.').trim();
   const num = parseFloat(strVal);
   if (isNaN(num)) return val;
-  if (-1.0 <= num && num <= 1.0 && num !== 0) {
-    return Math.round(num * 100 * 10000) / 10000;
-  }
-  return num;
+  // Always convert internal proportion (e.g. 0.21 -> 21, 1 -> 100, 100 -> 10000)
+  return Math.round(num * 100 * 10000) / 10000;
 };
 
 const updatePercentageValue = (targetObj, key, eventVal) => {
@@ -156,14 +154,8 @@ const updatePercentageValue = (targetObj, key, eventVal) => {
     targetObj[key] = eventVal;
     return;
   }
-  // Always store internally as proportion of 1 (0.7 for 70%)
-  // If user typed 0.7 or 0,7 (already <= 1.0), store 0.7
-  // If user typed 70 (> 1.0), store 70 / 100 = 0.7
-  if (-1.0 <= num && num <= 1.0 && num !== 0) {
-    targetObj[key] = num;
-  } else {
-    targetObj[key] = num / 100.0;
-  }
+  // Always divide user input scale by 100 for internal proportion storage (21 -> 0.21, 100 -> 1)
+  targetObj[key] = num / 100.0;
 };
 
 const isRootSheet = (name) => {
@@ -2044,7 +2036,8 @@ onMounted(() => {
                             :data-path="name + '.' + idx + '.' + col"
                             type="number"
                             step="any"
-                            v-model="store.excelJsonData[name][idx][col]"
+                            :value="formatPercentageDisplay(store.excelJsonData[name][idx][col])"
+                            @input="updatePercentageValue(store.excelJsonData[name][idx], col, $event.target.value)"
                             class="data-input"
                             style="flex-grow: 1; height: 32px; padding-right: 26px;"
                             placeholder="0"
@@ -2257,7 +2250,8 @@ onMounted(() => {
                         :data-path="name + '.' + item.key"
                         type="number"
                         step="any"
-                        v-model="store.excelJsonData[name][item.key]"
+                        :value="formatPercentageDisplay(store.excelJsonData[name][item.key])"
+                        @input="updatePercentageValue(store.excelJsonData[name], item.key, $event.target.value)"
                         class="data-input"
                         style="flex-grow: 1; height: 28px; font-size: 0.8rem; padding-right: 24px;"
                         placeholder="0"

@@ -222,12 +222,8 @@ const formatPercentageDisplay = (val) => {
   let strVal = String(val).replace('%', '').replace(',', '.').trim();
   const num = parseFloat(strVal);
   if (isNaN(num)) return val;
-  // Always display percentage scale (0.21 -> 21)
-  // If val is already > 1.0 (e.g. 21 legacy), display 21
-  if (-1.0 <= num && num <= 1.0 && num !== 0) {
-    return Math.round(num * 100 * 10000) / 10000;
-  }
-  return num;
+  // Always convert internal proportion (e.g. 0.21 -> 21, 1 -> 100, 100 -> 10000)
+  return Math.round(num * 100 * 10000) / 10000;
 };
 
 const updatePercentageValue = (targetObj, key, eventVal) => {
@@ -242,14 +238,8 @@ const updatePercentageValue = (targetObj, key, eventVal) => {
     targetObj[key] = eventVal;
     return;
   }
-  // Always store internally as proportion of 1 (0.7 for 70%)
-  // If user typed 0.7 or 0,7 (already <= 1.0), store 0.7
-  // If user typed 70 (> 1.0), store 70 / 100 = 0.7
-  if (-1.0 <= num && num <= 1.0 && num !== 0) {
-    targetObj[key] = num;
-  } else {
-    targetObj[key] = num / 100.0;
-  }
+  // Always divide user input scale by 100 for internal proportion storage (21 -> 0.21, 100 -> 1)
+  targetObj[key] = num / 100.0;
 };
 
 const nodeSchema = computed(() => {
