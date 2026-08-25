@@ -137,8 +137,10 @@ const formatPercentageDisplay = (val) => {
   if (val === undefined || val === null || val === '') return '';
   const num = parseFloat(val);
   if (isNaN(num)) return val;
+  // Always display percentage scale (0.5 -> 50%)
+  // If val is already > 1.0 (e.g. 50 legacy), display 50
   if (-1.0 <= num && num <= 1.0 && num !== 0) {
-    return Math.round(num * 100 * 100) / 100;
+    return Math.round(num * 100 * 10000) / 10000;
   }
   return num;
 };
@@ -154,7 +156,8 @@ const updatePercentageValue = (targetObj, key, eventVal) => {
     targetObj[key] = eventVal;
     return;
   }
-  targetObj[key] = num;
+  // Convert user entered percentage (50%) into internal proportion of 1 (0.5)
+  targetObj[key] = num / 100.0;
 };
 
 const isRootSheet = (name) => {
