@@ -1769,6 +1769,61 @@ def filter_number(context, value, precision=2):
     return _wrap_res(res, orig_path, enable_links)
 
 @pass_context
+def filter_percent(context, value, precision=2, force_symbol=True):
+    orig_path = getattr(value, '_path', None)
+    enable_links = getattr(value, 'enable_links', True)
+    val_raw = value.val if isinstance(value, TrackedValue) else value
+    locale_code = get_locale_from_context(context)
+    if val_raw in (None, ''):
+        return _wrap_res('', orig_path, enable_links)
+    
+    if isinstance(val_raw, str):
+        val_raw = val_raw.replace('%', '').strip()
+        
+    try:
+        val = float(val_raw)
+        precision = int(precision)
+    except (ValueError, TypeError):
+        return _wrap_res(val_raw, orig_path, enable_links)
+    
+    # Scale proportion to percentage if in range [-1.0, 1.0] non-zero (0.5 -> 50.0%)
+    if -1.0 <= val <= 1.0 and val != 0:
+        val = val * 100.0
+
+    dec_sep = ','
+    thousands_sep = '.'
+    locale_lower = locale_code.lower()
+    if any(x in locale_lower for x in ('en_us', 'en_gb', 'en_ca', 'en_au')):
+        dec_sep = '.'
+        thousands_sep = ','
+        
+    val_str = f"{val:.{precision}f}"
+    parts = val_str.split('.')
+    integer_part = parts[0]
+    decimal_part = parts[1] if len(parts) > 1 else ''
+    is_neg = integer_part.startswith('-')
+    if is_neg:
+        integer_part = integer_part[1:]
+    thousands_list = []
+    while len(integer_part) > 3:
+        thousands_list.insert(0, integer_part[-3:])
+        integer_part = integer_part[:-3]
+    thousands_list.insert(0, integer_part)
+    formatted_int = (('-' if is_neg else '') + thousands_sep.join(thousands_list))
+    
+    if precision > 0:
+        res_num = f"{formatted_int}{dec_sep}{decimal_part}"
+        if res_num.endswith(dec_sep + '00'):
+            res_num = res_num[:-3]
+        elif res_num.endswith('0') and dec_sep in res_num:
+            res_num = res_num[:-1]
+    else:
+        res_num = formatted_int
+        
+    res = f"{res_num}%" if force_symbol else res_num
+    return _wrap_res(res, orig_path, enable_links)
+
+@pass_context
 def filter_words(context, value, mode=None):
     orig_path = getattr(value, '_path', None)
     enable_links = getattr(value, 'enable_links', True)
@@ -2274,6 +2329,10 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         env_clean = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=False, lstrip_blocks=False)
         env_clean.filters['coin'] = filter_coin
         env_clean.filters['number'] = filter_number
+        env_clean.filters['percent'] = filter_percent
+        env_clean.filters['percentatge'] = filter_percent
+        env_clean.filters['porcentaje'] = filter_percent
+        env_clean.filters['pct'] = filter_percent
         env_clean.filters['words'] = filter_words
         env_clean.filters['prefix'] = filter_prefix
         env_clean.filters['sort'] = filter_sort
@@ -2319,6 +2378,10 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         env_html = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=False, lstrip_blocks=False)
         env_html.filters['coin'] = filter_coin
         env_html.filters['number'] = filter_number
+        env_html.filters['percent'] = filter_percent
+        env_html.filters['percentatge'] = filter_percent
+        env_html.filters['porcentaje'] = filter_percent
+        env_html.filters['pct'] = filter_percent
         env_html.filters['words'] = filter_words
         env_html.filters['prefix'] = filter_prefix
         env_html.filters['sort'] = filter_sort

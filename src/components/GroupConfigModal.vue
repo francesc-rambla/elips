@@ -421,6 +421,7 @@ const saveFormulaModal = () => {
                   <select v-model="item.type" class="data-input" style="width: 100%; font-size: 0.8rem; height: 28px;">
                     <option value="Text">Text</option>
                     <option value="Number">Número</option>
+                    <option value="Percentage">Percentatge (%)</option>
                     <option value="Date">Data</option>
                     <option value="Boolean">Booleà</option>
                     <option value="Select">Desplegable</option>
