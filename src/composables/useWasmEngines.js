@@ -3154,7 +3154,7 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
       const result = safeEval(__round, __is_cert, __is_fals, __is_cert, __is_fals, __is_cert, __is_fals);
 
       if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
-        return Math.round(result * 100) / 100;
+        return Math.round(result * 1000000) / 1000000;
       } else if (typeof result === 'boolean') {
         return result;
           } else if (result !== undefined && result !== null) {
@@ -3324,11 +3324,11 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
               calculatedVal = childList.length;
             } else if (fn === 'SUM') {
               const total = childList.reduce((sum, child) => sum + extractVal(child), 0);
-              calculatedVal = Math.round(total * 100) / 100;
+              calculatedVal = Math.round(total * 1000000) / 1000000;
             } else if (fn === 'AVG' || fn === 'AVERAGE') {
               const numbers = childList.map(extractVal);
               const avg = numbers.length > 0 ? numbers.reduce((a, b) => a + b, 0) / numbers.length : 0;
-              calculatedVal = Math.round(avg * 100) / 100;
+              calculatedVal = Math.round(avg * 1000000) / 1000000;
             } else if (fn === 'MIN') {
               const numbers = childList.map(extractVal);
               calculatedVal = numbers.length > 0 ? Math.min(...numbers) : 0;
