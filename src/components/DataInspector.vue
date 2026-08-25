@@ -2587,6 +2587,12 @@ onMounted(() => {
   resize: vertical;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
+
+select.data-input, select {
+  padding: 3px 8px;
+  box-sizing: border-box;
+}
+
 .data-input:focus {
   outline: none;
   border-color: var(--color-primary);

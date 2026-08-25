@@ -61,7 +61,10 @@ watch(() => props.modelValue, (newVal) => {
     localGroupLabel.value = props.groupLabel || '';
     localSelectedLayout.value = props.selectedLayout || 'vertical';
     localConfigList.value = (props.configList || []).map(item => {
-      let fn = item.calcFn || 'SUM';
+      let fn = item.calcFn;
+      if (!fn) {
+        fn = item.type === 'Computed' ? 'FORMULA' : 'NONE';
+      }
       if (fn === 'CUSTOM') fn = 'FORMULA';
       if (fn === 'AVG') fn = 'AVERAGE';
       return {
@@ -80,12 +83,19 @@ const closeModal = () => {
 const handleSave = () => {
   const cleanedList = localConfigList.value.map(item => {
     const copy = { ...item };
-    if (copy.type === 'Computed') {
-      if (copy.calcFn === 'FORMULA') {
-        copy.calcFn = 'CUSTOM';
-      } else if (copy.calcFn === 'AVERAGE') {
-        copy.calcFn = 'AVG';
+    if (copy.calcFn === 'NONE' || !copy.calcFn) {
+      copy.calcFn = '';
+      if (copy.type !== 'Computed') {
+        copy.sourceType = 'static';
       }
+    } else if (copy.calcFn === 'FORMULA') {
+      copy.calcFn = 'CUSTOM';
+      copy.sourceType = 'computed';
+    } else if (copy.calcFn === 'AVERAGE') {
+      copy.calcFn = 'AVG';
+      copy.sourceType = 'computed';
+    } else if (copy.calcFn) {
+      copy.sourceType = 'computed';
     }
     return copy;
   });
@@ -115,7 +125,7 @@ const addNewFieldToConfig = () => {
       valueField: '',
       multiple: false,
       width: '',
-      calcFn: 'SUM',
+      calcFn: 'NONE',
       calcVector: '',
       calcTargetCol: '',
       calcFormula: '',
