@@ -89,7 +89,9 @@ const onCalculatedToggle = (item) => {
       item.calcFn = 'FORMULA';
     }
   } else {
-    item.sourceType = 'static';
+    if (item.type !== 'Select') {
+      item.sourceType = 'static';
+    }
     item.calcFn = 'NONE';
     if (item.type !== 'Computed') {
       item.calcFormula = '';
@@ -109,7 +111,7 @@ const handleSave = () => {
       copy.sourceType = 'computed';
     }
     
-    if (copy.isCalculated || copy.sourceType === 'computed') {
+    if (copy.isCalculated) {
       copy.isCalculated = true;
       copy.sourceType = 'computed';
       if (copy.calcFn === 'FORMULA') {
@@ -121,9 +123,13 @@ const handleSave = () => {
       }
     } else {
       copy.isCalculated = false;
-      copy.sourceType = 'static';
+      if (copy.type !== 'Select') {
+        copy.sourceType = 'static';
+      }
       copy.calcFn = 'NONE';
-      copy.calcFormula = '';
+      if (copy.type !== 'Computed') {
+        copy.calcFormula = '';
+      }
     }
     return copy;
   });
@@ -607,6 +613,7 @@ const saveFormulaModal = () => {
                     <input 
                       type="checkbox" 
                       v-model="item.isCalculated" 
+                      @change="onCalculatedToggle(item)"
                     />
                     <span style="font-weight: 700; color: var(--color-primary);" v-if="item.isCalculated">🔒 Sí</span>
                     <span style="color: var(--text-muted);" v-else>No</span>

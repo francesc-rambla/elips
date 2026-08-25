@@ -1024,7 +1024,7 @@ const handleSaveGroupConfig = (data) => {
       }
     }
     meta.isCalculated = !!item.isCalculated;
-    if (item.isCalculated || item.type === 'Computed' || (item.calcFormula && item.calcFormula.trim() !== '') || (item.calcFn && item.calcFn !== 'NONE')) {
+    if (item.isCalculated || item.type === 'Computed') {
       meta.isCalculated = true;
       meta.sourceType = 'computed';
       meta.calcFn = item.calcFn || 'CUSTOM';
