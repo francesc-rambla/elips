@@ -138,8 +138,6 @@ const formatPercentageDisplay = (val) => {
   let strVal = String(val).replace('%', '').replace(',', '.').trim();
   const num = parseFloat(strVal);
   if (isNaN(num)) return val;
-  // Always display percentage scale (0.21 -> 21)
-  // If val is already > 1.0 (e.g. 21 legacy), display 21
   if (-1.0 <= num && num <= 1.0 && num !== 0) {
     return Math.round(num * 100 * 10000) / 10000;
   }
@@ -158,8 +156,14 @@ const updatePercentageValue = (targetObj, key, eventVal) => {
     targetObj[key] = eventVal;
     return;
   }
-  // Convert user entered percentage (21%) into internal proportion of 1 (0.21)
-  targetObj[key] = num / 100.0;
+  // Always store internally as proportion of 1 (0.7 for 70%)
+  // If user typed 0.7 or 0,7 (already <= 1.0), store 0.7
+  // If user typed 70 (> 1.0), store 70 / 100 = 0.7
+  if (-1.0 <= num && num <= 1.0 && num !== 0) {
+    targetObj[key] = num;
+  } else {
+    targetObj[key] = num / 100.0;
+  }
 };
 
 const isRootSheet = (name) => {
@@ -648,12 +652,12 @@ const getElementType = (groupName, elementName) => {
     if (t === 'Percentage' || t === 'Percentatge' || t === 'Porcentaje' || t === 'Percent' || t === '%') {
       return 'Percentage';
     }
-    if (t !== 'Text' && t !== 'String' && t !== '') {
+    if (['Select', 'Computed', 'Table', 'Date', 'Boolean'].includes(t)) {
       return t;
     }
   }
 
-  // Auto-detection by field name / key / label / title if type is not explicitly configured
+  // Auto-detection by field name / key / label / title if type is not explicitly configured to a complex structure
   const checkStr = `${elementName || ''} ${meta?.label || ''} ${meta?.title || ''}`.toLowerCase();
   if (checkStr.includes('perc') || checkStr.includes('percent') || checkStr.includes('porcent') || checkStr.includes('pct') || checkStr.includes('%')) {
     return 'Percentage';
