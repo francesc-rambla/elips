@@ -1220,12 +1220,26 @@ const handleSaveGroupConfig = (data) => {
       } else {
         meta.options = (item.optionsRaw || '').split(',').map(x => x.trim()).filter(x => x);
       }
-    } else if (item.type === 'Computed') {
-      meta.calcFn = item.calcFn;
-      meta.calcVector = item.calcVector;
-      meta.calcTargetCol = item.calcTargetCol;
-      meta.calcFormula = item.calcFormula;
-    } else if (item.type === 'Table') {
+    }
+    meta.isCalculated = !!item.isCalculated;
+    if (item.isCalculated || item.type === 'Computed' || (item.calcFormula && item.calcFormula.trim() !== '') || (item.calcFn && item.calcFn !== 'NONE')) {
+      meta.isCalculated = true;
+      meta.sourceType = 'computed';
+      meta.calcFn = item.calcFn || 'CUSTOM';
+      meta.calcVector = item.calcVector || '';
+      meta.calcTargetCol = item.calcTargetCol || '';
+      meta.calcFormula = item.calcFormula || '';
+    } else {
+      meta.isCalculated = false;
+      if (item.type !== 'Select') {
+        meta.sourceType = 'static';
+      }
+      meta.calcFn = 'NONE';
+      meta.calcVector = '';
+      meta.calcTargetCol = '';
+      meta.calcFormula = '';
+    }
+    if (item.type === 'Table') {
       meta.vectorPath = item.vectorPath;
     }
 
