@@ -62,19 +62,40 @@ watch(() => props.modelValue, (newVal) => {
     localSelectedLayout.value = props.selectedLayout || 'vertical';
     localConfigList.value = (props.configList || []).map(item => {
       let fn = item.calcFn;
+      const isCalc = item.isCalculated === true || 
+                     item.sourceType === 'computed' || 
+                     item.type === 'Computed' || 
+                     Boolean(item.calcFormula && item.calcFormula.trim() !== '') || 
+                     (Boolean(fn) && fn !== 'NONE' && fn !== '');
       if (!fn) {
-        fn = item.type === 'Computed' ? 'FORMULA' : 'NONE';
+        fn = isCalc ? 'FORMULA' : 'NONE';
       }
       if (fn === 'CUSTOM') fn = 'FORMULA';
       if (fn === 'AVG') fn = 'AVERAGE';
       return {
         ...item,
+        isCalculated: isCalc,
         calcFn: fn,
         calcFormula: item.calcFormula || ''
       };
     });
   }
 });
+
+const onCalculatedToggle = (item) => {
+  if (item.isCalculated) {
+    item.sourceType = 'computed';
+    if (!item.calcFn || item.calcFn === 'NONE') {
+      item.calcFn = 'FORMULA';
+    }
+  } else {
+    item.sourceType = 'static';
+    item.calcFn = 'NONE';
+    if (item.type !== 'Computed') {
+      item.calcFormula = '';
+    }
+  }
+};
 
 const closeModal = () => {
   emit('update:modelValue', false);
@@ -83,19 +104,26 @@ const closeModal = () => {
 const handleSave = () => {
   const cleanedList = localConfigList.value.map(item => {
     const copy = { ...item };
-    if (copy.calcFn === 'NONE' || !copy.calcFn) {
-      copy.calcFn = '';
-      if (copy.type !== 'Computed') {
-        copy.sourceType = 'static';
+    if (copy.type === 'Computed') {
+      copy.isCalculated = true;
+      copy.sourceType = 'computed';
+    }
+    
+    if (copy.isCalculated || copy.sourceType === 'computed') {
+      copy.isCalculated = true;
+      copy.sourceType = 'computed';
+      if (copy.calcFn === 'FORMULA') {
+        copy.calcFn = 'CUSTOM';
+      } else if (copy.calcFn === 'AVERAGE') {
+        copy.calcFn = 'AVG';
+      } else if (!copy.calcFn || copy.calcFn === 'NONE') {
+        copy.calcFn = 'CUSTOM';
       }
-    } else if (copy.calcFn === 'FORMULA') {
-      copy.calcFn = 'CUSTOM';
-      copy.sourceType = 'computed';
-    } else if (copy.calcFn === 'AVERAGE') {
-      copy.calcFn = 'AVG';
-      copy.sourceType = 'computed';
-    } else if (copy.calcFn) {
-      copy.sourceType = 'computed';
+    } else {
+      copy.isCalculated = false;
+      copy.sourceType = 'static';
+      copy.calcFn = 'NONE';
+      copy.calcFormula = '';
     }
     return copy;
   });
@@ -118,6 +146,7 @@ const addNewFieldToConfig = () => {
       element: cleanKey,
       label: '',
       type: 'Text',
+      isCalculated: false,
       sourceType: 'static',
       optionsRaw: '',
       vectorPath: '',
@@ -399,10 +428,11 @@ const saveFormulaModal = () => {
             <thead>
               <tr style="background: var(--bg-tertiary);">
                 <th style="padding: 8px; text-align: left; width: 140px;">Element / Camp</th>
-                <th style="padding: 8px; text-align: left; width: 220px;">Etiqueta formulari</th>
+                <th style="padding: 8px; text-align: left; width: 200px;">Etiqueta formulari</th>
                 <th style="padding: 8px; text-align: left; width: 140px;">Tipus Dada</th>
-                <th style="padding: 8px; text-align: left; min-width: 380px;">Configuració / Propietats / Càlcul</th>
-                <th style="padding: 8px; text-align: center; width: 150px;">Posició Grid</th>
+                <th style="padding: 8px; text-align: center; width: 90px;" title="Activa per calcular automàticament aquest camp amb una fórmula">Calculat?</th>
+                <th style="padding: 8px; text-align: left; min-width: 360px;">Configuració / Propietats / Càlcul</th>
+                <th style="padding: 8px; text-align: center; width: 140px;">Posició Grid</th>
                 <th style="padding: 8px; text-align: center; width: 40px;"></th>
               </tr>
             </thead>
@@ -422,7 +452,7 @@ const saveFormulaModal = () => {
                     v-model="item.label" 
                     class="data-input" 
                     placeholder="Etiqueta visible..."
-                    style="width: 100%; min-width: 200px; font-size: 0.8rem; height: 28px;"
+                    style="width: 100%; min-width: 180px; font-size: 0.8rem; height: 28px;"
                   />
                 </td>
 
@@ -440,11 +470,24 @@ const saveFormulaModal = () => {
                   </select>
                 </td>
 
+                <!-- Checkbox IsCalculated -->
+                <td style="padding: 6px 8px; vertical-align: top; text-align: center;">
+                  <label style="display: inline-flex; align-items: center; justify-content: center; gap: 4px; font-size: 0.78rem; cursor: pointer; user-select: none; margin-top: 4px;" title="Marca per activar el càlcul automàtic">
+                    <input 
+                      type="checkbox" 
+                      v-model="item.isCalculated" 
+                      @change="onCalculatedToggle(item)"
+                    />
+                    <span style="font-weight: 700; color: var(--color-primary);" v-if="item.isCalculated">🔒 Sí</span>
+                    <span style="color: var(--text-muted);" v-else>No</span>
+                  </label>
+                </td>
+
                 <!-- Dynamic Type Configuration Properties -->
                 <td style="padding: 6px 8px; vertical-align: top;">
                   <!-- Select Config -->
                   <template v-if="item.type === 'Select'">
-                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                    <div style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px;">
                       <div style="display: flex; gap: 8px; align-items: center;">
                         <label style="font-size: 0.72rem; cursor: pointer;">
                           <input type="radio" value="static" v-model="item.sourceType" /> Estàtic
@@ -494,19 +537,19 @@ const saveFormulaModal = () => {
                     </select>
                   </template>
 
-                  <!-- Calculation / Formula Config Section (Available for Text, Number, Percentage, Date, Computed) -->
-                  <template v-if="item.type === 'Computed' || item.type === 'Number' || item.type === 'Percentage' || item.type === 'Text' || item.calcFormula || (item.calcFn && item.calcFn !== 'NONE')">
-                    <div style="display: flex; flex-direction: column; gap: 4px; border-top: 1px dashed var(--border-color); padding-top: 4px; margin-top: 4px;">
+                  <!-- Calculation / Formula Config Section (Shown if isCalculated OR type === 'Computed') -->
+                  <template v-if="item.isCalculated || item.type === 'Computed' || item.calcFormula || (item.calcFn && item.calcFn !== 'NONE')">
+                    <div style="display: flex; flex-direction: column; gap: 4px; background: rgba(0,0,0,0.02); padding: 6px; border-radius: 4px; border: 1px solid var(--border-color);">
                       <div style="display: flex; gap: 4px; align-items: center;">
-                        <span style="font-size: 0.7rem; font-weight: 600; color: var(--text-secondary); white-space: nowrap;">Càlcul:</span>
+                        <span style="font-size: 0.7rem; font-weight: 700; color: var(--color-primary); white-space: nowrap;">Funció de càlcul:</span>
                         <select v-model="item.calcFn" class="data-input" style="width: 100%; height: 26px; font-size: 0.75rem;">
-                          <option value="NONE">-- Sense càlcul (Manual) --</option>
                           <option value="FORMULA">FÓRMULA PERSONALITZADA</option>
                           <option value="SUM">SUMA (Sub-taula)</option>
                           <option value="AVERAGE">MITJANA (Sub-taula)</option>
                           <option value="COUNT">RECOMPTE (Sub-taula)</option>
                           <option value="MIN">MÍNIM (Sub-taula)</option>
                           <option value="MAX">MÀXIM (Sub-taula)</option>
+                          <option value="NONE">-- Sense càlcul --</option>
                         </select>
                       </div>
 

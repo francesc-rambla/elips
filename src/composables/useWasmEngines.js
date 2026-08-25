@@ -3171,10 +3171,11 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
     const metadata = metadataList.length > 0 ? metadataList : (dataObj.editor_metadata || store.editorMetadata || []);
 
     const computedMetas = metadata.filter(m => 
+      m.isCalculated === true ||
       m.type === 'Computed' || 
       m.sourceType === 'computed' || 
-      (m.calcFn && m.calcFn !== '') || 
-      (m.calcFormula && m.calcFormula !== '')
+      (m.calcFn && m.calcFn !== '' && m.calcFn !== 'NONE') || 
+      (m.calcFormula && m.calcFormula.trim() !== '')
     );
 
     if (debugMode) {
@@ -3192,9 +3193,10 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
 
     const data = hydrateModelWithForeignKeys(dataObj, metadata);
 
-    const isCustomFn = (fn) => {
+    const isCustomFn = (fn, formula) => {
+      if (formula && formula.trim()) return true;
       const upper = (fn || '').toUpperCase();
-      return upper === 'CUSTOM' || upper === 'FORMULA';
+      return upper === 'CUSTOM' || upper === 'FORMULA' || upper === '' || upper === 'NONE';
     };
 
     const isGroupMatch = (metaGroup, hint) => {
@@ -3206,8 +3208,8 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
       return gShort === hShort;
     };
 
-    const customMetas = computedMetas.filter(m => isCustomFn(m.calcFn) && m.calcFormula);
-    const aggMetas = computedMetas.filter(m => !isCustomFn(m.calcFn));
+    const customMetas = computedMetas.filter(m => isCustomFn(m.calcFn, m.calcFormula) && m.calcFormula);
+    const aggMetas = computedMetas.filter(m => !isCustomFn(m.calcFn, m.calcFormula));
 
     // Helper to evaluate CUSTOM formulas on a container (bottom-up)
     const runCustomPass = (container, groupHint = '', visited = new Set()) => {
