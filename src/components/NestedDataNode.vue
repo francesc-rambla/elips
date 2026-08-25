@@ -1101,6 +1101,21 @@ const getItemPath = (idx, fieldKey) => {
                     style="flex-grow: 1; height: 28px; font-size: 0.78rem;"
                   >
 
+                  <!-- Percentage Type -->
+                  <div v-else-if="getElementType(h) === 'Percentage'" style="display: flex; align-items: center; flex-grow: 1; position: relative;">
+                    <input 
+                      :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
+                      :data-path="getItemPath(rIdx, h)"
+                      type="number"
+                      step="any"
+                      v-model="row[h]"
+                      class="data-input"
+                      style="flex-grow: 1; height: 28px; font-size: 0.78rem; padding-right: 24px;"
+                      placeholder="0"
+                    >
+                    <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.78rem; color: var(--text-muted); pointer-events: none;">%</span>
+                  </div>
+
                   <!-- Boolean Type -->
                   <select 
                     v-else-if="getElementType(h) === 'Boolean'"

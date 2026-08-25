@@ -1957,6 +1957,21 @@ onMounted(() => {
                           style="flex-grow: 1; height: 32px;"
                         >
                         
+                        <!-- Percentage Type -->
+                        <div v-else-if="getElementType(name, col) === 'Percentage'" style="display: flex; align-items: center; flex-grow: 1; position: relative;">
+                          <input 
+                            :id="'data-field-' + name + '-' + idx + '-' + col"
+                            :data-path="name + '.' + idx + '.' + col"
+                            type="number"
+                            step="any"
+                            v-model="store.excelJsonData[name][idx][col]"
+                            class="data-input"
+                            style="flex-grow: 1; height: 32px; padding-right: 26px;"
+                            placeholder="0"
+                          >
+                          <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.82rem; color: var(--text-muted); pointer-events: none;">%</span>
+                        </div>
+                        
                         <!-- Boolean Type -->
                         <select 
                           v-else-if="getElementType(name, col) === 'Boolean'"
@@ -2154,6 +2169,21 @@ onMounted(() => {
                       class="data-input"
                       style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                     >
+                    
+                    <!-- Percentage Type -->
+                    <div v-else-if="getElementType(name, item.key) === 'Percentage'" style="display: flex; align-items: center; flex-grow: 1; position: relative;">
+                      <input 
+                        :id="'data-field-' + name + '-' + item.key"
+                        :data-path="name + '.' + item.key"
+                        type="number"
+                        step="any"
+                        v-model="store.excelJsonData[name][item.key]"
+                        class="data-input"
+                        style="flex-grow: 1; height: 28px; font-size: 0.8rem; padding-right: 24px;"
+                        placeholder="0"
+                      >
+                      <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.8rem; color: var(--text-muted); pointer-events: none;">%</span>
+                    </div>
                     
                     <!-- Table Sub-structure Type -->
                     <div 
