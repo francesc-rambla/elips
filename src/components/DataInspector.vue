@@ -2149,8 +2149,23 @@ onMounted(() => {
 
                   <!-- Input Controls -->
                   <div style="display: flex; gap: 4px; align-items: stretch; width: 100%; flex-grow: 1;">
+                    <!-- Calculated Field (Non-editable, Read-only with lock badge and type-specific formatting) -->
+                    <div 
+                      v-if="isCalculatedField(name, item.key)" 
+                      :id="'data-field-' + name + '-' + item.key"
+                      :data-path="name + '.' + item.key"
+                      style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 28px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: not-allowed;" 
+                      title="🔒 Camp calculat automàticament"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-muted); opacity: 0.85; flex-shrink: 0;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                      <span style="flex-grow: 1;">
+                        {{ getElementType(name, item.key) === 'Percentage' ? (formatPercentageDisplay(store.excelJsonData[name][item.key]) + ' %') : (store.excelJsonData[name][item.key] !== undefined ? store.excelJsonData[name][item.key] : 0) }}
+                      </span>
+                      <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
+                    </div>
+
                     <!-- Select Type -->
-                    <template v-if="getElementType(name, item.key) === 'Select'">
+                    <template v-else-if="getElementType(name, item.key) === 'Select'">
                       <!-- Multiple select -->
                       <div 
                         v-if="getElementMetadata(name, item.key)?.multiple"
@@ -2192,19 +2207,6 @@ onMounted(() => {
                       </select>
                     </template>
                     
-                    <!-- Computed Type (Non-editable) -->
-                    <div 
-                      v-else-if="getElementType(name, item.key) === 'Computed'" 
-                      :id="'data-field-' + name + '-' + item.key"
-                      :data-path="name + '.' + item.key"
-                      style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 28px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; cursor: not-allowed;" 
-                      title="🔒 Camp calculat automàticament"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary); flex-shrink: 0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
-                      <span style="flex-grow: 1;">{{ store.excelJsonData[name][item.key] !== undefined ? store.excelJsonData[name][item.key] : 0 }}</span>
-                      <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
-                    </div>
-
                     <!-- Date Type -->
                     <input 
                       v-else-if="getElementType(name, item.key) === 'Date'"
