@@ -217,6 +217,30 @@ const universalFindSchema = (targetPath, dict) => {
   return { fields: [], children: {} };
 };
 
+const formatPercentageDisplay = (val) => {
+  if (val === undefined || val === null || val === '') return '';
+  const num = parseFloat(val);
+  if (isNaN(num)) return val;
+  if (-1.0 <= num && num <= 1.0 && num !== 0) {
+    return Math.round(num * 100 * 100) / 100;
+  }
+  return num;
+};
+
+const updatePercentageValue = (targetObj, key, eventVal) => {
+  if (!targetObj) return;
+  if (eventVal === undefined || eventVal === null || eventVal === '') {
+    targetObj[key] = '';
+    return;
+  }
+  const num = parseFloat(eventVal);
+  if (isNaN(num)) {
+    targetObj[key] = eventVal;
+    return;
+  }
+  targetObj[key] = num;
+};
+
 const nodeSchema = computed(() => {
   const schemaDict = store.hierarchySchema || {};
   if (isNonEmptySchema(props.schema)) {
@@ -1108,7 +1132,8 @@ const getItemPath = (idx, fieldKey) => {
                       :data-path="getItemPath(rIdx, h)"
                       type="number"
                       step="any"
-                      v-model="row[h]"
+                      :value="formatPercentageDisplay(row[h])"
+                      @input="updatePercentageValue(row, h, $event.target.value)"
                       class="data-input"
                       style="flex-grow: 1; height: 28px; font-size: 0.78rem; padding-right: 24px;"
                       placeholder="0"
