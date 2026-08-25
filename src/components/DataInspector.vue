@@ -639,10 +639,23 @@ onUnmounted(() => {
 const getElementMetadata = (groupName, elementName) => {
   if (!store.editorMetadata) return null;
   const shortName = groupName ? groupName.split('.').pop() : '';
+  const cleanGroup = groupName ? groupName.replace(/^OUT_/, '') : '';
+  const cleanShort = shortName ? shortName.replace(/^OUT_/, '') : '';
   return store.editorMetadata.find(m => 
-    (m.group === groupName || (shortName && m.group === shortName)) && 
-    m.element === elementName
+    m && m.element === elementName && (
+      m.group === groupName || 
+      m.group === shortName || 
+      m.group === cleanGroup || 
+      m.group === cleanShort ||
+      m.group === `OUT_${cleanGroup}`
+    )
   ) || null;
+};
+
+const isCalculatedField = (groupName, elementName) => {
+  const meta = getElementMetadata(groupName, elementName);
+  if (!meta) return false;
+  return meta.type === 'Computed' || meta.sourceType === 'computed' || (Boolean(meta.calcFn) && meta.calcFn !== 'NONE') || (Boolean(meta.calcFormula) && meta.calcFormula.trim() !== '');
 };
 
 const getElementType = (groupName, elementName) => {
@@ -1927,8 +1940,23 @@ onMounted(() => {
                         [Complex]
                       </span>
                       <div v-else style="display: flex; gap: 4px; align-items: stretch; width: 100%;">
+                        <!-- Calculated Field (Non-editable, Read-only with lock badge and type-specific formatting) -->
+                        <div 
+                          v-if="isCalculatedField(name, col)" 
+                          :id="'data-field-' + name + '-' + idx + '-' + col"
+                          :data-path="name + '.' + idx + '.' + col"
+                          style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 32px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.82rem; font-weight: 600; cursor: not-allowed;" 
+                          title="🔒 Camp calculat automàticament"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary); flex-shrink: 0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
+                          <span style="flex-grow: 1;">
+                            {{ getElementType(name, col) === 'Percentage' ? (formatPercentageDisplay(store.excelJsonData[name][idx][col]) + ' %') : (store.excelJsonData[name][idx][col] !== undefined ? store.excelJsonData[name][idx][col] : 0) }}
+                          </span>
+                          <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
+                        </div>
+
                         <!-- Select Type -->
-                        <template v-if="getElementType(name, col) === 'Select'">
+                        <template v-else-if="getElementType(name, col) === 'Select'">
                           <!-- Multiple select -->
                           <div 
                             v-if="getElementMetadata(name, col)?.multiple"
@@ -1969,19 +1997,6 @@ onMounted(() => {
                             </option>
                           </select>
                         </template>
-                        
-                        <!-- Computed Type (Non-editable) -->
-                        <div 
-                          v-else-if="getElementType(name, col) === 'Computed'" 
-                          :id="'data-field-' + name + '-' + idx + '-' + col"
-                          :data-path="name + '.' + idx + '.' + col"
-                          style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 32px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.82rem; font-weight: 600; cursor: not-allowed;" 
-                          title="🔒 Camp calculat automàticament"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary); flex-shrink: 0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
-                          <span style="flex-grow: 1;">{{ store.excelJsonData[name][idx][col] !== undefined ? store.excelJsonData[name][idx][col] : 0 }}</span>
-                          <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
-                        </div>
 
                         <!-- Date Type -->
                         <input 

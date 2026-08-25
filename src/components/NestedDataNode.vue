@@ -462,15 +462,28 @@ const getGroupLabel = (groupName) => {
   return groupName;
 };
 
-// Metadata & Custom Data Type Config Helpers
+// Metadata Schema helpers for custom types
 const getElementMetadata = (elementName) => {
   if (!store.editorMetadata) return null;
   const gName = props.arrayKey;
   const shortName = gName ? gName.split('.').pop() : '';
+  const cleanGroup = gName ? gName.replace(/^OUT_/, '') : '';
+  const cleanShort = shortName ? shortName.replace(/^OUT_/, '') : '';
   return store.editorMetadata.find(m => 
-    (m.group === gName || (shortName && m.group === shortName)) && 
-    m.element === elementName
+    m && m.element === elementName && (
+      m.group === gName || 
+      m.group === shortName || 
+      m.group === cleanGroup || 
+      m.group === cleanShort ||
+      m.group === `OUT_${cleanGroup}`
+    )
   ) || null;
+};
+
+const isCalculatedField = (elementName) => {
+  const meta = getElementMetadata(elementName);
+  if (!meta) return false;
+  return meta.type === 'Computed' || meta.sourceType === 'computed' || (Boolean(meta.calcFn) && meta.calcFn !== 'NONE') || (Boolean(meta.calcFormula) && meta.calcFormula.trim() !== '');
 };
 
 const getFieldLabel = (elementName) => {
@@ -1075,8 +1088,23 @@ const getItemPath = (idx, fieldKey) => {
             <tr v-for="(row, rIdx) in items" :key="rIdx">
               <td v-for="h in getLeafTableHeaders" :key="h" style="padding: 4px 6px; border-bottom: 1px solid var(--border-color);">
                 <div style="display: flex; gap: 4px; align-items: stretch; width: 100%;">
+                  <!-- Calculated Field (Non-editable, Read-only with lock badge and type-specific formatting) -->
+                  <div 
+                    v-if="isCalculatedField(h)" 
+                    :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
+                    :data-path="getItemPath(rIdx, h)"
+                    style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 28px; padding: 2px 8px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.78rem; font-weight: 600; cursor: not-allowed;" 
+                    title="🔒 Camp calculat automàticament"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary); flex-shrink: 0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
+                    <span style="flex-grow: 1;">
+                      {{ getElementType(h) === 'Percentage' ? (formatPercentageDisplay(row[h]) + ' %') : (row[h] !== undefined ? row[h] : 0) }}
+                    </span>
+                    <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
+                  </div>
+
                   <!-- Select Type -->
-                  <template v-if="getElementType(h) === 'Select'">
+                  <template v-else-if="getElementType(h) === 'Select'">
                     <div 
                       v-if="getElementMetadata(h)?.multiple"
                       :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
@@ -1115,19 +1143,6 @@ const getItemPath = (idx, fieldKey) => {
                       </option>
                     </select>
                   </template>
-
-                  <!-- Computed Type (Non-editable) -->
-                  <div 
-                    v-else-if="getElementType(h) === 'Computed'" 
-                    :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
-                    :data-path="getItemPath(rIdx, h)"
-                    style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 28px; padding: 2px 8px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.78rem; font-weight: 600; cursor: not-allowed;" 
-                    title="🔒 Camp calculat automàticament"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary); flex-shrink: 0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
-                    <span style="flex-grow: 1;">{{ row[h] !== undefined ? row[h] : 0 }}</span>
-                    <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
-                  </div>
 
                   <!-- Date Type -->
                   <input 

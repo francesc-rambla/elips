@@ -315,7 +315,7 @@ const saveFormulaModal = () => {
   <div>
     <!-- Main Unified Group Configuration Modal -->
     <div class="modal-overlay" v-if="modelValue" style="display: flex; z-index: 1080;">
-      <div class="modal-content" style="max-width: 880px; width: 95%; max-height: 85vh; display: flex; flex-direction: column;">
+      <div class="modal-content" style="max-width: 1400px; width: 95vw; max-height: 90vh; display: flex; flex-direction: column;">
         
         <!-- Modal Header -->
         <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
@@ -389,10 +389,10 @@ const saveFormulaModal = () => {
             <thead>
               <tr style="background: var(--bg-tertiary);">
                 <th style="padding: 8px; text-align: left; width: 140px;">Element / Camp</th>
-                <th style="padding: 8px; text-align: left;">Etiqueta formulari</th>
-                <th style="padding: 8px; text-align: left; width: 125px;">Tipus Dada</th>
-                <th style="padding: 8px; text-align: left;">Configuració / Propietats</th>
-                <th style="padding: 8px; text-align: center; width: 160px;">Posició Grid</th>
+                <th style="padding: 8px; text-align: left; width: 220px;">Etiqueta formulari</th>
+                <th style="padding: 8px; text-align: left; width: 140px;">Tipus Dada</th>
+                <th style="padding: 8px; text-align: left; min-width: 380px;">Configuració / Propietats / Càlcul</th>
+                <th style="padding: 8px; text-align: center; width: 150px;">Posició Grid</th>
                 <th style="padding: 8px; text-align: center; width: 40px;"></th>
               </tr>
             </thead>
@@ -412,7 +412,7 @@ const saveFormulaModal = () => {
                     v-model="item.label" 
                     class="data-input" 
                     placeholder="Etiqueta visible..."
-                    style="width: 100%; font-size: 0.8rem; height: 28px;"
+                    style="width: 100%; min-width: 200px; font-size: 0.8rem; height: 28px;"
                   />
                 </td>
 
@@ -476,17 +476,27 @@ const saveFormulaModal = () => {
                     </div>
                   </template>
 
-                  <!-- Computed Config -->
-                  <template v-else-if="item.type === 'Computed'">
-                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <!-- Table Config -->
+                  <template v-else-if="item.type === 'Table'">
+                    <select v-model="item.vectorPath" class="data-input" style="width: 100%; font-size: 0.75rem; height: 26px;">
+                      <option value="">-- Tria Taula / Matriu --</option>
+                      <option v-for="tbl in getAvailableTables()" :key="tbl" :value="tbl">{{ tbl }}</option>
+                    </select>
+                  </template>
+
+                  <!-- Calculation / Formula Config Section (Available for Text, Number, Percentage, Date, Computed) -->
+                  <template v-if="item.type === 'Computed' || item.type === 'Number' || item.type === 'Percentage' || item.type === 'Text' || item.calcFormula || (item.calcFn && item.calcFn !== 'NONE')">
+                    <div style="display: flex; flex-direction: column; gap: 4px; border-top: 1px dashed var(--border-color); padding-top: 4px; margin-top: 4px;">
                       <div style="display: flex; gap: 4px; align-items: center;">
+                        <span style="font-size: 0.7rem; font-weight: 600; color: var(--text-secondary); white-space: nowrap;">Càlcul:</span>
                         <select v-model="item.calcFn" class="data-input" style="width: 100%; height: 26px; font-size: 0.75rem;">
+                          <option value="NONE">-- Sense càlcul (Manual) --</option>
+                          <option value="FORMULA">FÓRMULA PERSONALITZADA</option>
                           <option value="SUM">SUMA (Sub-taula)</option>
                           <option value="AVERAGE">MITJANA (Sub-taula)</option>
                           <option value="COUNT">RECOMPTE (Sub-taula)</option>
                           <option value="MIN">MÍNIM (Sub-taula)</option>
                           <option value="MAX">MÀXIM (Sub-taula)</option>
-                          <option value="FORMULA">FÓRMULA PERSONALITZADA</option>
                         </select>
                       </div>
 
@@ -498,13 +508,13 @@ const saveFormulaModal = () => {
                             v-model="item.calcFormula" 
                             class="data-input" 
                             placeholder="ex: preu * unitats o SI(unitats > 10; preu * 0.9; preu)"
-                            style="flex: 1; font-size: 0.75rem; height: 26px; font-family: var(--font-mono);"
+                            style="flex: 1; min-width: 260px; font-size: 0.75rem; height: 26px; font-family: var(--font-mono);"
                             title="Fórmula personalitzada d'operació"
                           />
                           <button 
                             type="button" 
                             class="btn btn-secondary" 
-                            style="height: 26px; font-size: 0.72rem; padding: 2px 6px; width: auto; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;"
+                            style="height: 26px; font-size: 0.72rem; padding: 2px 8px; width: auto; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;"
                             @click="openFormulaEditor(item)"
                             title="Obre l'editor ampliat de fórmules"
                           >
@@ -517,7 +527,7 @@ const saveFormulaModal = () => {
                         </span>
                       </template>
 
-                      <template v-else>
+                      <template v-else-if="item.calcFn && item.calcFn !== 'NONE'">
                         <select v-model="item.calcVector" class="data-input" style="width: 100%; font-size: 0.75rem; height: 26px;">
                           <option value="">-- Sub-taula --</option>
                           <option v-for="tbl in getAvailableTables()" :key="tbl" :value="tbl">{{ tbl }}</option>
@@ -529,18 +539,6 @@ const saveFormulaModal = () => {
                         </select>
                       </template>
                     </div>
-                  </template>
-
-                  <!-- Table Config -->
-                  <template v-else-if="item.type === 'Table'">
-                    <select v-model="item.vectorPath" class="data-input" style="width: 100%; font-size: 0.75rem; height: 26px;">
-                      <option value="">-- Tria Taula / Matriu --</option>
-                      <option v-for="tbl in getAvailableTables()" :key="tbl" :value="tbl">{{ tbl }}</option>
-                    </select>
-                  </template>
-
-                  <template v-else>
-                    <span style="color: var(--text-muted); font-size: 0.78rem;">Standard</span>
                   </template>
                 </td>
 
