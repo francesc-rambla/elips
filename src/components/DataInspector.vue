@@ -1082,6 +1082,47 @@ const getGlobalFormulaPaths = () => {
 const autocompleteQuery = ref('');
 const autocompleteIndex = ref(0);
 const showAutocomplete = ref(false);
+const autocompletePosition = ref({ left: 10, top: 40 });
+
+const getCaretCoordinates = (element, position) => {
+  const div = document.createElement('div');
+  const style = getComputedStyle(element);
+
+  const properties = [
+    'direction', 'boxSizing', 'width', 'height', 'overflowX', 'overflowY',
+    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+    'fontStyle', 'fontVariant', 'fontWeight', 'fontStretch', 'fontSize',
+    'fontSizeAdjust', 'lineHeight', 'fontFamily', 'textAlign', 'textTransform',
+    'textIndent', 'textDecoration', 'letterSpacing', 'wordSpacing', 'tabSize'
+  ];
+
+  div.style.position = 'absolute';
+  div.style.visibility = 'hidden';
+  div.style.whiteSpace = 'pre-wrap';
+  div.style.wordWrap = 'break-word';
+
+  properties.forEach(prop => {
+    div.style[prop] = style[prop];
+  });
+
+  div.textContent = element.value.substring(0, position);
+
+  const span = document.createElement('span');
+  span.textContent = element.value.substring(position) || '.';
+  div.appendChild(span);
+
+  document.body.appendChild(div);
+
+  const coordinates = {
+    top: span.offsetTop + parseInt(style.borderTopWidth || 0) - element.scrollTop,
+    left: span.offsetLeft + parseInt(style.borderLeftWidth || 0) - element.scrollLeft,
+    height: parseInt(style.lineHeight) || 20
+  };
+
+  document.body.removeChild(div);
+  return coordinates;
+};
 
 const builtinFunctions = [
   { name: 'SI(condició; cert; fals)', insert: 'SI(condició; cert; fals)', label: 'SI / IF (Condicional)', category: 'Funció' },
@@ -1167,6 +1208,16 @@ const onFormulaInputKey = (e) => {
   if (match) {
     autocompleteQuery.value = match[1];
     showAutocomplete.value = true;
+    try {
+      const coords = getCaretCoordinates(el, pos);
+      const maxLeft = Math.max(10, el.clientWidth - 300);
+      autocompletePosition.value = {
+        left: Math.min(Math.max(10, coords.left), maxLeft),
+        top: Math.min(coords.top + coords.height + 4, el.clientHeight + 10)
+      };
+    } catch (err) {
+      autocompletePosition.value = { left: 10, top: 40 };
+    }
   } else {
     showAutocomplete.value = false;
     autocompleteQuery.value = '';
@@ -2635,10 +2686,11 @@ onMounted(() => {
                 placeholder="Escriu la fórmula. Comença a escriure el nom d'un camp o funció per veure l'autocompletat..."
               ></textarea>
 
-              <!-- Floating Autocomplete Dropdown Panel -->
+              <!-- Floating Autocomplete Dropdown Panel at Caret Position -->
               <div 
                 v-if="showAutocomplete && autocompleteCandidates.length > 0"
-                style="position: absolute; left: 10px; bottom: -10px; transform: translateY(100%); z-index: 1300; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: var(--shadow-md); max-height: 220px; overflow-y: auto; min-width: 280px; padding: 4px;"
+                style="position: absolute; z-index: 1300; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: var(--shadow-md); max-height: 220px; overflow-y: auto; min-width: 290px; padding: 4px; transition: top 0.05s, left 0.05s;"
+                :style="{ left: autocompletePosition.left + 'px', top: autocompletePosition.top + 'px' }"
               >
                 <div style="font-size: 0.68rem; font-weight: 700; color: var(--text-muted); padding: 4px 8px; border-bottom: 1px solid var(--border-color); text-transform: uppercase;">
                   Suggereixis d'autocompletat (Prem Enter o Tab)
