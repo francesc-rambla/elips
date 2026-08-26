@@ -2337,6 +2337,64 @@ const isVariableDefinedInSchema = (exprStr, loopStack = []) => {
   return false;
 };
 
+// Static AST extractor for loop stacks at any point in template text (independent of user caret position!)
+const extractVariablesWithStaticContext = (text) => {
+  if (!text) return [];
+  const varsWithContext = [];
+  const tagRegex = /(\{\{[\s\S]*?\}\}|\{%\s*for\s+[\s\S]*?%\}|\{%\s*endfor\s*%\}|\{%\s*(?:if|elif)\s+[\s\S]*?%\})/g;
+
+  let currentLoopStack = [];
+  let match;
+
+  while ((match = tagRegex.exec(text)) !== null) {
+    const fullTag = match[0];
+    const matchIndex = match.index;
+
+    if (/^\{%\s*for\s+/.test(fullTag)) {
+      const forMatch = fullTag.match(/\{%\s*for\s+(\w+)\s+in\s+([a-zA-Z_][a-zA-Z0-9_.]*)/);
+      if (forMatch) {
+        currentLoopStack.push({
+          iterator: forMatch[1],
+          arrayPath: forMatch[2],
+          startIndex: matchIndex
+        });
+      }
+    } else if (/^\{%\s*endfor\s*%\}$/.test(fullTag.replace(/\s+/g, ''))) {
+      if (currentLoopStack.length > 0) {
+        currentLoopStack.pop();
+      }
+    } else if (fullTag.startsWith('{{')) {
+      const inner = fullTag.slice(2, -2).trim();
+      varsWithContext.push({
+        type: 'var',
+        raw: inner,
+        expr: inner.split('|')[0].trim(),
+        index: matchIndex,
+        loopStack: [...currentLoopStack]
+      });
+    } else if (/^\{%\s*(if|elif)\s+/.test(fullTag)) {
+      const blockMatch = fullTag.match(/^\{%\s*(if|elif)\s+(.*?)\s*%\}/);
+      if (blockMatch) {
+        const exprBody = blockMatch[2];
+        const terms = exprBody.split(/==|!=|>=|<=|>|<|\band\b|\bor\b|\bnot\b|\bin\b|\bis\b/).map(s => s.trim().replace(/^['"]|['"]$/g, ''));
+        for (const t of terms) {
+          if (t && /^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(t)) {
+            varsWithContext.push({
+              type: 'block',
+              raw: t,
+              expr: t,
+              index: matchIndex,
+              loopStack: [...currentLoopStack]
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return varsWithContext;
+};
+
 // Helper: Create HTML chip element with visual highlight for undefined variables
 const createJinjaVarChip = (v, loopStack = []) => {
   const vars = v.split('|');
@@ -2346,60 +2404,41 @@ const createJinjaVarChip = (v, loopStack = []) => {
   const isDefined = isVariableDefinedInSchema(expr, loopStack);
   const rawAttr = `${expr}${filter ? '|' + filter : ''}`;
 
-  if (!isDefined) {
+  if (!isDefined && hasCheckedTemplate.value) {
     return `<span class="j-var-chip undefined-var" contenteditable="false" data-raw="${rawAttr}" title="⚠️ Atenció: La variable '${expr}' no està definida a l'esquema de dades!"><span class="warn-icon">⚠️</span>${displayLabel}</span>`;
   }
 
   return `<span class="j-var-chip" contenteditable="false" data-raw="${rawAttr}">${displayLabel}</span>`;
 };
 
-// Computed property listing all undefined variables in the current template
-const undefinedVariablesList = computed(() => {
+// On-demand reactive state for undefined variables (updated ONLY when "Comprova Plantilla" button is clicked)
+const undefinedVariablesList = ref([]);
+const hasCheckedTemplate = ref(false);
+
+const checkTemplateVariables = () => {
   const text = editorText.value || '';
+  const varsWithCtx = extractVariablesWithStaticContext(text);
   const undefinedList = [];
-  const loopStack = activeLoopStack.value || [];
 
-  // 1. Matches {{ variable }}
-  const varMatches = text.matchAll(/\{\{\s*(.*?)\s*\}\}/g);
-  for (const m of varMatches) {
-    const rawVal = m[1].trim();
-    const expr = rawVal.split('|')[0].trim();
-    if (expr && !isVariableDefinedInSchema(expr, loopStack)) {
-      if (!undefinedList.includes(expr)) {
-        undefinedList.push(expr);
+  for (const item of varsWithCtx) {
+    if (item.expr && !isVariableDefinedInSchema(item.expr, item.loopStack)) {
+      if (!undefinedList.includes(item.expr)) {
+        undefinedList.push(item.expr);
       }
     }
   }
 
-  // 2. Matches {% if variable %} or {% for x in array %}
-  const blockMatches = text.matchAll(/\{%\s*(if|elif|for)\s+(.*?)\s*%\}/g);
-  for (const m of blockMatches) {
-    const tagType = m[1];
-    const exprBody = m[2].trim();
-    if (tagType === 'if' || tagType === 'elif') {
-      const terms = exprBody.split(/==|!=|>=|<=|>|<|\band\b|\bor\b|\bnot\b|\bin\b|\bis\b/).map(s => s.trim().replace(/^['"]|['"]$/g, ''));
-      for (const t of terms) {
-        if (t && /^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(t) && !isVariableDefinedInSchema(t, loopStack)) {
-          if (!undefinedList.includes(t)) {
-            undefinedList.push(t);
-          }
-        }
-      }
-    } else if (tagType === 'for') {
-      const forMatch = exprBody.match(/^(\w+)\s+in\s+([a-zA-Z_][a-zA-Z0-9_.]*)/);
-      if (forMatch) {
-        const arrayPath = forMatch[2];
-        if (arrayPath && !isVariableDefinedInSchema(arrayPath, loopStack)) {
-          if (!undefinedList.includes(arrayPath)) {
-            undefinedList.push(arrayPath);
-          }
-        }
-      }
-    }
-  }
+  undefinedVariablesList.value = undefinedList;
+  hasCheckedTemplate.value = true;
 
-  return undefinedList;
-});
+  if (undefinedList.length === 0) {
+    store.addLog("✓ Verificació de plantilla completada: Totes les variables i bucles estan definits a l'esquema!", "success");
+  } else {
+    store.addLog(`⚠️ S'han detectat ${undefinedList.length} variables no definides a la plantilla: ${undefinedList.join(', ')}`, "warning");
+  }
+  
+  syncCodeToVisual();
+};
 
 // Helper: Convert inner cell templates to chips
 const convertJinjaToChips = (text, loopStack = []) => {
@@ -3805,6 +3844,7 @@ onMounted(() => {
     openVarModal: () => openVarModal(),
     openSpecialCharModal: () => openSpecialCharModal(),
     openVersionHistoryModal: () => { window.__openVersionHistoryModal && window.__openVersionHistoryModal(); },
+    checkTemplateVariables: () => checkTemplateVariables(),
     emitGenerate: () => emitGenerate(),
     getActiveTab: () => activeEditorTab.value,
     scrollToLine: (lineIndex) => scrollToLine(lineIndex),
@@ -3981,6 +4021,26 @@ onUnmounted(() => {
       <!-- Variable Clipboard Helper (Sidebar) -->
       <div class="variables-sidebar">
       <div class="variables-title">Esquema de Dades</div>
+
+      <!-- Manual Template Verification Trigger Card -->
+      <div style="background: var(--bg-tertiary); border: 1px solid var(--border-color); padding: 8px 10px; border-radius: var(--radius-sm); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 6px;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <span style="font-size: 0.72rem; font-weight: 700; color: var(--text-primary);">Verificació de Plantilla</span>
+          <span v-if="hasCheckedTemplate" :style="{ color: undefinedVariablesList.length === 0 ? '#10b981' : '#d97706' }" style="font-size: 0.68rem; font-weight: 700;">
+            {{ undefinedVariablesList.length === 0 ? '✓ Sense errors' : `⚠️ ${undefinedVariablesList.length} d'errors` }}
+          </span>
+        </div>
+        <button 
+          type="button" 
+          class="btn btn-secondary btn-sm" 
+          style="font-size: 0.75rem; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 5px 8px; background: var(--bg-card); color: var(--color-primary); border-color: var(--color-primary); cursor: pointer;"
+          @click="checkTemplateVariables"
+          title="Comprova totes les variables i bucles de la plantilla respecte a l'esquema de dades"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span>Comprova Plantilla</span>
+        </button>
+      </div>
       
       <!-- Warning Card for Undefined Variables in Template -->
       <div v-if="undefinedVariablesList.length > 0" style="background-color: var(--color-warning-light, #fffbeb); border: 1px solid var(--color-warning, #f59e0b); padding: 0.5rem; border-radius: var(--radius-sm); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;">

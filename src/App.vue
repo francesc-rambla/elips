@@ -1815,6 +1815,22 @@ const generateDocuments = async () => {
           <div class="ribbon-group-label">ESTRUCTURA</div>
         </div>
 
+        <!-- Group: Verificació de Plantilla -->
+        <div class="ribbon-group-card">
+          <div class="ribbon-group-body" style="display: flex; align-items: center; gap: 6px; height: 60px;">
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 4px 10px; font-size: 0.72rem; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-color: var(--color-primary); color: var(--color-primary); font-weight: 700;"
+              @click="store.editorActions?.checkTemplateVariables && store.editorActions.checkTemplateVariables()"
+              title="🔍 Executa la verificació sota demanda de totes les variables i bucles de la plantilla"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span v-if="store.config.showButtonTexts">Comprova Plantilla</span>
+            </button>
+          </div>
+          <div class="ribbon-group-label">VERIFICACIÓ</div>
+        </div>
+
         <!-- Group: Històric i Versions (Always accessible) -->
         <div class="ribbon-group-card">
           <div class="ribbon-group-body" style="display: flex; align-items: center; gap: 6px; height: 60px;">
