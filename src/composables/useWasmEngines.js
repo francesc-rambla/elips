@@ -210,17 +210,18 @@ def _resolve_formula_ref(form_str, wb_data, wb_formula, current_ws_name, date_fo
             return val_f if val_f is not None else ''
     return ''
 
-def _read_rows(ws_d, ws_f, wb_data, wb_formula, ws_name, date_format='iso'):
+def _read_rows(ws_d, ws_f=None, wb_data=None, wb_formula=None, ws_name='', date_format='iso'):
+    ws_f = ws_f if ws_f is not None else ws_d
     rows = []
     max_c = ws_d.max_column
     for r in range(1, ws_d.max_row + 1):
         row = []
         for c in range(1, max_c + 1):
             val_d = ws_d.cell(r, c).value
-            val_f = ws_f.cell(r, c).value
+            val_f = ws_f.cell(r, c).value if ws_f else val_d
             
             val = _to_jsonable(val_d, date_format)
-            if isinstance(val_f, str) and val_f.startswith('='):
+            if wb_data and wb_formula and isinstance(val_f, str) and val_f.startswith('='):
                 if val in (None, '', 0, 0.0, '0', '0.0'):
                     val_res = _resolve_formula_ref(val_f, wb_data, wb_formula, ws_name, date_format)
                     if val_res not in (None, ''):
@@ -829,7 +830,7 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
         if sheet_data is None:
             continue
             
-        rows = _read_rows(ws, 'iso')
+        rows = _read_rows(ws, ws, wb, wb, sheet_name, 'iso')
         kind = _detect_kind(rows)
         
         if kind in ('kv', 'kv_header'):
