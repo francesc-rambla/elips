@@ -831,7 +831,11 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
             continue
             
         rows = _read_rows(ws, ws, wb, wb, sheet_name, 'iso')
-        kind = _detect_kind(rows)
+        kind_res = _validate_and_detect_kind(rows, sheet_name)
+        if isinstance(kind_res, tuple):
+            kind, header_row_idx = kind_res
+        else:
+            kind = kind_res
         
         if kind in ('kv', 'kv_header'):
             start_row = 1 if kind == 'kv_header' else 0
