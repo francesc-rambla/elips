@@ -879,6 +879,7 @@ onMounted(async () => {
   });
 
   window.__openExcelHierarchyModal = openHierarchyModal;
+  window.__openVersionHistoryModal = () => { isHistoryModalOpen.value = true; };
 
   // Version History Initialization & Automatic Hourly Checkpoint Tracking
   loadHistory();
@@ -1900,6 +1901,18 @@ const generateDocuments = async () => {
           title="Desa el document (Ctrl+S)"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        </button>
+
+        <!-- Version History Navigator Button (Prominent next to Save) -->
+        <button 
+          type="button"
+          class="btn btn-secondary" 
+          style="padding: 2px 8px; font-size: 0.72rem; height: 26px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary);" 
+          @click="isHistoryModalOpen = true" 
+          title="Obre el navegador d'històric de versions i punts de control"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>Històric</span>
         </button>
 
         <span 

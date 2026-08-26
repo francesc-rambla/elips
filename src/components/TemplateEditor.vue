@@ -3892,6 +3892,7 @@ onMounted(() => {
     openMathModal: () => openMathModal(),
     openVarModal: () => openVarModal(),
     openSpecialCharModal: () => openSpecialCharModal(),
+    openVersionHistoryModal: () => { window.__openVersionHistoryModal && window.__openVersionHistoryModal(); },
     emitGenerate: () => emitGenerate(),
     getActiveTab: () => activeEditorTab.value,
     scrollToLine: (lineIndex) => scrollToLine(lineIndex),
@@ -3998,6 +3999,11 @@ onUnmounted(() => {
 
       <button type="button" class="btn btn-secondary btn-tb" style="font-weight: bold; color: var(--color-primary);" @click="openSpecialCharModal()" title="Insereix caràcters especials (guió llarg, espai no separable, etc.)">
         <span>Ω</span>
+      </button>
+
+      <button type="button" class="btn btn-secondary btn-tb" style="display: inline-flex; align-items: center; gap: 3px; font-weight: 600;" @click="store.editorActions?.openVersionHistoryModal && store.editorActions.openVersionHistoryModal()" title="Obre l'històric de versions i punts de control">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>Històric</span>
       </button>
     </div>
 
