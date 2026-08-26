@@ -3005,7 +3005,58 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         return str;
       };
 
-      // 2. Transform CERT(...) and FALS(...) into JS helper calls
+      // 2. Transform OR(...) and AND(...) aggregated functions on vectors/arrays
+      const transformOrAnd = (str) => {
+        let prev = '';
+        while (prev !== str) {
+          prev = str;
+          const regex = /\b(OR|O|AND|I|ANY|SOME|EVERY|ALL)\s*\(/i;
+          const match = regex.exec(str);
+          if (!match) break;
+
+          const startIdx = match.index;
+          const openParenIdx = startIdx + match[0].length - 1;
+          let depth = 1;
+          let endIdx = -1;
+          let inQuotes = false;
+          let quoteChar = '';
+
+          for (let i = openParenIdx + 1; i < str.length; i++) {
+            const ch = str[i];
+            if (inQuotes) {
+              if (ch === quoteChar) inQuotes = false;
+            } else if (ch === '"' || ch === "'") {
+              inQuotes = true;
+              quoteChar = ch;
+            } else if (ch === '(') {
+              depth++;
+            } else if (ch === ')') {
+              depth--;
+              if (depth === 0) {
+                endIdx = i;
+                break;
+              }
+            }
+          }
+
+          if (endIdx === -1) break;
+
+          const fnName = match[1].toUpperCase();
+          const fullMatch = str.substring(startIdx, endIdx + 1);
+          const argStr = str.substring(openParenIdx + 1, endIdx).trim();
+
+          if (['OR', 'O', 'ANY', 'SOME'].includes(fnName)) {
+            str = str.replace(fullMatch, `__or("${argStr.replace(/"/g, '\\"')}")`);
+          } else if (['AND', 'I', 'EVERY', 'ALL'].includes(fnName)) {
+            str = str.replace(fullMatch, `__and("${argStr.replace(/"/g, '\\"')}")`);
+          } else {
+            break;
+          }
+        }
+        return str;
+      };
+
+      // 3. Transform CERT(...) and FALS(...) into JS helper calls
       const transformCertFals = (str) => {
         let exprStr = str;
         exprStr = exprStr.replace(/\b(CERT|is_cert)\s*\(/gi, '__is_cert(');
@@ -3015,15 +3066,16 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
 
       expr = transformIf(expr);
       expr = transformRound(expr);
+      expr = transformOrAnd(expr);
       expr = transformCertFals(expr);
 
-      // 3. Math replacements
+      // 4. Math replacements
       expr = expr.replace(/\bABS\s*\(/gi, 'Math.abs(');
       expr = expr.replace(/(^|[^<>=!])=([^=])/g, '$1==$2');
       expr = expr.replace(/<>/g, '!=');
       expr = expr.replace(/\^/g, '**');
 
-      // 4. Value Resolution Context Helper
+      // 5. Value Resolution Context Helper
       const parseNumOrString = (rawVal) => {
         if (typeof rawVal === 'number') return rawVal;
         if (typeof rawVal === 'boolean') return rawVal;
@@ -3108,10 +3160,10 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         return undefined;
       };
 
-      // 5. Extract and replace all tokens/paths in formula
+      // 6. Extract and replace all tokens/paths in formula
       const tokenRegex = /\b(?:[a-zA-Z_][a-zA-Z0-9_]*|doc\.[a-zA-Z0-9_.]+|dades\.[a-zA-Z0-9_.]+)(?:\[\d+\])?(?:\.[a-zA-Z_][a-zA-Z0-9_.]*(?:\[\d+\])?)*\b/g;
       const reservedKeywords = new Set([
-        'SI', 'IF', 'ARRODONEIX', 'ROUND', 'ABS', 'MIN', 'MAX', 'Math', '__round',
+        'SI', 'IF', 'ARRODONEIX', 'ROUND', 'ABS', 'MIN', 'MAX', 'OR', 'O', 'AND', 'I', 'ANY', 'SOME', 'EVERY', 'ALL', 'Math', '__round', '__or', '__and',
         'CERT', 'FALS', 'cert', 'fals', 'is_cert', 'is_fals', '__is_cert', '__is_fals',
         'true', 'false', 'null', 'undefined', 'doc', 'dades', 'return', 'function'
       ]);
@@ -3150,13 +3202,80 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
       };
       const __is_fals = (val) => !__is_cert(val);
 
-      const safeEval = new Function('__round', '__is_cert', '__is_fals', 'CERT', 'FALS', 'cert', 'fals', `"use strict"; return (${expr});`);
+      const evalOrAndFn = (pathStr, mode) => {
+        if (!pathStr) return false;
+        let cleanPath = pathStr.trim().replace(/^['"]|['"]$/g, '').replace(/^(doc|dades)\./i, '');
+        const parts = cleanPath.split('.').filter(Boolean);
+        if (parts.length === 0) return false;
+
+        const gData = globalData || store.excelJsonData;
+
+        const collectValues = (startObj) => {
+          if (!startObj || typeof startObj !== 'object') return null;
+          let current = startObj;
+          for (let i = 0; i < parts.length; i++) {
+            if (current === undefined || current === null) return null;
+            const part = parts[i];
+            if (Array.isArray(current)) {
+              const remainingProp = parts.slice(i).join('.');
+              return current.map(item => {
+                if (!item || typeof item !== 'object') return item;
+                const propParts = remainingProp.split('.');
+                let sub = item;
+                for (const p of propParts) {
+                  if (sub === undefined || sub === null) return undefined;
+                  sub = sub[p];
+                }
+                return sub;
+              });
+            }
+            current = current[part];
+          }
+          if (Array.isArray(current)) return current;
+          return [current];
+        };
+
+        let list = collectValues(row);
+        if ((!list || list.length === 0) && gData) {
+          list = collectValues(gData);
+          if ((!list || list.length === 0) && parts.length > 0) {
+            const sheetKey = parts[0];
+            if (gData['OUT_' + sheetKey]) {
+              list = collectValues({ ['OUT_' + sheetKey]: gData['OUT_' + sheetKey] });
+            }
+          }
+        }
+
+        if (!list || !Array.isArray(list)) list = [];
+
+        const extractBoolVal = (val) => {
+          if (val === undefined || val === null || val === false || val === 0 || val === '0' || val === '' || val === '0.0') return false;
+          if (typeof val === 'boolean') return val;
+          if (typeof val === 'number') return val !== 0;
+          if (typeof val === 'string') {
+            const s = val.trim().toLowerCase();
+            return ['true', '1', 'si', 'sí', 'cert', 'yes'].includes(s);
+          }
+          return Boolean(val);
+        };
+
+        if (mode === 'OR') {
+          return list.some(extractBoolVal);
+        } else {
+          return list.length > 0 && list.every(extractBoolVal);
+        }
+      };
+
+      const __or = (arg) => evalOrAndFn(String(arg), 'OR');
+      const __and = (arg) => evalOrAndFn(String(arg), 'AND');
+
+      const safeEval = new Function('__round', '__is_cert', '__is_fals', '__or', '__and', 'CERT', 'FALS', 'cert', 'fals', `"use strict"; return (${expr});`);
       const __round = (val, prec = 0) => {
         const p = Math.pow(10, prec);
         return Math.round(parseFloat(val) * p) / p;
       };
 
-      const result = safeEval(__round, __is_cert, __is_fals, __is_cert, __is_fals, __is_cert, __is_fals);
+      const result = safeEval(__round, __is_cert, __is_fals, __or, __and, __is_cert, __is_fals, __is_cert, __is_fals);
 
       if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
         return Math.round(result * 1000000) / 1000000;
@@ -3333,6 +3452,26 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
               return isNaN(v) ? 0 : v;
             };
 
+            const extractBool = (child) => {
+              if (child === null || child === undefined) return false;
+              let val = child;
+              if (typeof child === 'object') {
+                if (col && child[col] !== undefined) {
+                  val = child[col];
+                } else {
+                  const firstBoolKey = Object.keys(child).find(k => !k.startsWith('_'));
+                  if (firstBoolKey) val = child[firstBoolKey];
+                }
+              }
+              if (typeof val === 'boolean') return val;
+              if (typeof val === 'number') return val !== 0;
+              if (typeof val === 'string') {
+                const clean = val.trim().toLowerCase();
+                return ['true', '1', 'si', 'sí', 'cert', 'yes'].includes(clean);
+              }
+              return Boolean(val);
+            };
+
             if (fn === 'COUNT') {
               calculatedVal = childList.length;
             } else if (fn === 'SUM') {
@@ -3348,6 +3487,10 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
             } else if (fn === 'MAX') {
               const numbers = childList.map(extractVal);
               calculatedVal = numbers.length > 0 ? Math.max(...numbers) : 0;
+            } else if (fn === 'OR' || fn === 'O' || fn === 'SOME' || fn === 'ANY') {
+              calculatedVal = childList.some(extractBool);
+            } else if (fn === 'AND' || fn === 'I' || fn === 'EVERY' || fn === 'ALL') {
+              calculatedVal = childList.length > 0 && childList.every(extractBool);
             }
 
             const oldVal = container[meta.element];

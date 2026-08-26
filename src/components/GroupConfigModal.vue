@@ -686,6 +686,8 @@ const saveFormulaModal = () => {
                           <option value="COUNT">RECOMPTE</option>
                           <option value="MIN">MÍNIM</option>
                           <option value="MAX">MÀXIM</option>
+                          <option value="OR">BOOLEÀ OR / ALGUN (Alguna cert)</option>
+                          <option value="AND">BOOLEÀ AND / TOTS (Tots certs)</option>
                           <option value="NONE">-- Sense --</option>
                         </select>
                       </div>
