@@ -2289,7 +2289,8 @@ const parseHtmlToMarkdown = (sourceElement) => {
 const isVariableDefinedInSchema = (exprStr, loopStack = []) => {
   if (!exprStr || typeof exprStr !== 'string') return true;
   
-  const cleanExpr = exprStr.split('|')[0].trim();
+  let cleanExpr = exprStr.split('|')[0].trim();
+  cleanExpr = cleanExpr.replace(/\(.*\)/, '').trim();
   if (!cleanExpr) return true;
 
   const jinjaKeywords = new Set([
@@ -2300,41 +2301,37 @@ const isVariableDefinedInSchema = (exprStr, loopStack = []) => {
   if (jinjaKeywords.has(cleanExpr.toLowerCase())) return true;
 
   const gData = store.excelJsonData;
-  if (gData) {
-    const directVal = resolvePath(gData, cleanExpr);
-    if (directVal !== undefined) return true;
-  }
-
   const metas = store.editorMetadata || [];
-  const lastSeg = cleanExpr.split('.').pop();
-  const metaMatch = metas.some(m => 
-    m && (
-      m.element === cleanExpr || 
-      `${m.group}.${m.element}` === cleanExpr || 
-      m.element === lastSeg
-    )
-  );
-  if (metaMatch) return true;
 
-  // Check active loop iterators (e.g., "item.preu" inside "for item in costs")
+  // Resolve active loop iterator prefixes (e.g., "lot.NomLot" in loop for lot in objecte.lots)
+  let resolvedExpr = cleanExpr;
   const parts = cleanExpr.split('.');
-  if (parts.length > 1) {
+  if (parts.length > 1 && loopStack && loopStack.length > 0) {
     const iter = parts[0];
-    const col = parts[1];
-    const loopMatch = (loopStack || []).find(l => l && l.iterator === iter);
+    const subPath = parts.slice(1).join('.');
+    const loopMatch = loopStack.find(l => l && l.iterator === iter);
     if (loopMatch) {
-      if (gData) {
-        const arr = resolvePath(gData, loopMatch.arrayPath);
-        if (Array.isArray(arr) && arr.length > 0 && arr[0] && arr[0][col] !== undefined) {
-          return true;
-        }
-      }
-      if (metas.some(m => m && m.element === col)) {
-        return true;
-      }
+      resolvedExpr = `${loopMatch.arrayPath}.${subPath}`;
     }
   }
 
+  // 1. Direct evaluation in Excel JSON Data
+  if (gData) {
+    const directVal = resolvePath(gData, resolvedExpr);
+    if (directVal !== null && directVal !== undefined) return true;
+  }
+
+  // 2. Metadata Schema evaluation (exact path or scoped match)
+  const metaMatch = metas.some(m => {
+    if (!m || !m.element) return false;
+    const fullMetaPath = m.group ? `${m.group}.${m.element}` : m.element;
+    if (fullMetaPath === resolvedExpr || m.element === resolvedExpr) return true;
+    if (m.group && resolvedExpr.endsWith(`${m.group}.${m.element}`)) return true;
+    return false;
+  });
+  if (metaMatch) return true;
+
+  // 3. Fallback root key check in gData
   if (gData && gData[cleanExpr] !== undefined) return true;
 
   return false;
@@ -2359,11 +2356,12 @@ const createJinjaVarChip = (v, loopStack = []) => {
 // Computed property listing all undefined variables in the current template
 const undefinedVariablesList = computed(() => {
   const text = editorText.value || '';
-  const matches = text.matchAll(/\{\{\s*(.*?)\s*\}\}/g);
   const undefinedList = [];
   const loopStack = activeLoopStack.value || [];
 
-  for (const m of matches) {
+  // 1. Matches {{ variable }}
+  const varMatches = text.matchAll(/\{\{\s*(.*?)\s*\}\}/g);
+  for (const m of varMatches) {
     const rawVal = m[1].trim();
     const expr = rawVal.split('|')[0].trim();
     if (expr && !isVariableDefinedInSchema(expr, loopStack)) {
@@ -2372,6 +2370,34 @@ const undefinedVariablesList = computed(() => {
       }
     }
   }
+
+  // 2. Matches {% if variable %} or {% for x in array %}
+  const blockMatches = text.matchAll(/\{%\s*(if|elif|for)\s+(.*?)\s*%\}/g);
+  for (const m of blockMatches) {
+    const tagType = m[1];
+    const exprBody = m[2].trim();
+    if (tagType === 'if' || tagType === 'elif') {
+      const terms = exprBody.split(/==|!=|>=|<=|>|<|\band\b|\bor\b|\bnot\b|\bin\b|\bis\b/).map(s => s.trim().replace(/^['"]|['"]$/g, ''));
+      for (const t of terms) {
+        if (t && /^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(t) && !isVariableDefinedInSchema(t, loopStack)) {
+          if (!undefinedList.includes(t)) {
+            undefinedList.push(t);
+          }
+        }
+      }
+    } else if (tagType === 'for') {
+      const forMatch = exprBody.match(/^(\w+)\s+in\s+([a-zA-Z_][a-zA-Z0-9_.]*)/);
+      if (forMatch) {
+        const arrayPath = forMatch[2];
+        if (arrayPath && !isVariableDefinedInSchema(arrayPath, loopStack)) {
+          if (!undefinedList.includes(arrayPath)) {
+            undefinedList.push(arrayPath);
+          }
+        }
+      }
+    }
+  }
+
   return undefinedList;
 });
 
