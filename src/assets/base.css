@@ -623,7 +623,7 @@ input[type="text"], input[type="number"], input[type="date"], input[type="email"
   box-sizing: border-box;
 }
 
-textarea, textarea.data-input, .data-textarea {
+textarea.data-input, .data-textarea {
   min-height: 28px;
   height: 28px;
   max-height: 200px;

@@ -23,9 +23,13 @@ window.dumpStore = () => {
   return store.excelJsonData;
 };
 
-// Ultra-lightweight single-textarea auto-grow helper (zero reflow of other elements)
+// Ultra-lightweight single-textarea auto-grow helper (exclusively for data form fields)
 export const autoAdjustTextareaHeight = (el) => {
-  if (!el || el.tagName?.toLowerCase() !== 'textarea' || el.classList.contains('no-auto-grow')) return;
+  if (!el || el.tagName?.toLowerCase() !== 'textarea') return;
+  // Exclusively target form schema data fields (.data-input or .data-textarea)
+  if (!el.classList.contains('data-input') && !el.classList.contains('data-textarea')) return;
+  if (el.classList.contains('no-auto-grow') || el.classList.contains('editor-textarea') || el.classList.contains('raw-textarea')) return;
+
   if (el.offsetWidth === 0 && el.offsetHeight === 0) return;
 
   const scrollTop = el.scrollTop;
@@ -42,7 +46,7 @@ export const autoAdjustTextareaHeight = (el) => {
   el.scrollTop = scrollTop;
 };
 
-// Event-driven single-element height adjustment on user input or focus (zero continuous polling)
+// Event-driven single-element height adjustment on user input or focus for data fields
 document.addEventListener('input', (e) => {
   if (e.target && e.target.tagName && e.target.tagName.toLowerCase() === 'textarea') {
     autoAdjustTextareaHeight(e.target);
@@ -55,10 +59,10 @@ document.addEventListener('focusin', (e) => {
   }
 });
 
-// Run global auto adjust only on explicit tab switches or initial load
+// Run global auto adjust only on form data textareas
 export const runGlobalAutoAdjust = () => {
   requestAnimationFrame(() => {
-    document.querySelectorAll('textarea:not(.no-auto-grow)').forEach(autoAdjustTextareaHeight);
+    document.querySelectorAll('textarea.data-input, textarea.data-textarea').forEach(autoAdjustTextareaHeight);
   });
 };
 
