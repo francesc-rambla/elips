@@ -251,7 +251,7 @@ def _validate_and_detect_kind(rows, raw_name=""):
 
     if not rows:
         if is_prefixed or is_dotted:
-            raise ValueError(f"El full '{raw_name}' té una estructura tabular però no conté cap fila ni capçalera de dades.")
+            return 'tabular'
         return 'kv'
 
     if _is_kv_header(rows[0]):
