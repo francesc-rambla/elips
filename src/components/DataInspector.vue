@@ -2241,9 +2241,8 @@ onMounted(() => {
                           :data-path="name + '.' + idx + '.' + col"
                           v-model="store.excelJsonData[name][idx][col]"
                           class="data-input"
-                          :rows="viewMode === 'compact' ? 3 : undefined"
-                          style="flex-grow: 1; resize: vertical;"
-                          :style="{ minHeight: viewMode === 'compact' ? '75px' : '50px' }"
+                          rows="1"
+                          style="flex-grow: 1; resize: vertical; min-height: 28px;"
                         ></textarea>
                         <input 
                           v-else
@@ -2464,9 +2463,8 @@ onMounted(() => {
                       :data-path="name + '.' + item.key"
                       v-model="store.excelJsonData[name][item.key]"
                       class="data-input"
-                      :rows="viewMode === 'compact' ? 2 : undefined"
-                      style="flex-grow: 1; resize: vertical; font-size: 0.8rem;"
-                      :style="{ minHeight: viewMode === 'compact' ? '55px' : '40px' }"
+                      rows="1"
+                      style="flex-grow: 1; resize: vertical; font-size: 0.8rem; min-height: 28px;"
                     ></textarea>
                     <input 
                       v-else

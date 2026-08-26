@@ -23,13 +23,15 @@ window.dumpStore = () => {
   return store.excelJsonData;
 };
 
-// Automatic form text field height adjustment helper (caps height at 200px with vertical scrollbar)
+// Automatic form text field height adjustment helper (default 1 single line = 28px, max 200px)
 const autoAdjustTextareaHeight = (el) => {
   if (!el || el.tagName?.toLowerCase() !== 'textarea' || el.classList.contains('no-auto-grow')) return;
-  el.style.height = 'auto';
-  const targetH = Math.min(Math.max(el.scrollHeight + 2, 34), 200);
+  // Reset to 28px (single line height) to accurately calculate needed height
+  el.style.height = '28px';
+  const scrollH = el.scrollHeight;
+  const targetH = Math.min(Math.max(scrollH, 28), 200);
   el.style.height = `${targetH}px`;
-  if (el.scrollHeight > 200) {
+  if (scrollH > 200) {
     el.style.overflowY = 'auto';
   } else {
     el.style.overflowY = 'hidden';
@@ -48,8 +50,21 @@ document.addEventListener('focusin', (e) => {
   }
 });
 
-// Initial & dynamic DOM pass for textareas inside form representations
+// Immediate & continuous DOM pass for textareas inside form representations without user interaction
+const runGlobalAutoAdjust = () => {
+  requestAnimationFrame(() => {
+    document.querySelectorAll('textarea:not(.no-auto-grow)').forEach(autoAdjustTextareaHeight);
+  });
+};
+
 const domObserver = new MutationObserver(() => {
-  document.querySelectorAll('textarea:not(.no-auto-grow)').forEach(autoAdjustTextareaHeight);
+  runGlobalAutoAdjust();
 });
 domObserver.observe(document.body, { childList: true, subtree: true });
+
+// Run initial pass on window load & ready state
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', runGlobalAutoAdjust);
+} else {
+  runGlobalAutoAdjust();
+}

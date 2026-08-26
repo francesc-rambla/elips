@@ -624,11 +624,13 @@ input[type="text"], input[type="number"], input[type="date"], input[type="email"
 }
 
 textarea, textarea.data-input, .data-textarea {
-  min-height: 36px;
+  min-height: 28px;
+  height: 28px;
   max-height: 200px;
   overflow-y: auto;
   resize: vertical;
-  line-height: 1.4;
+  line-height: 1.35;
+  padding: 3px 6px;
   box-sizing: border-box;
 }
 
