@@ -547,16 +547,24 @@ const manualSave = () => {
   store.addLog(`✓ Canvis del document '${activeDocName.value}' desats correctament a la sessió local.`, 'success');
 };
 
-// Autodesat / Persistència en LocalStorage via Pinia Subscription amb desplaçament i temporitzador
+// Autodesat / Persistència en LocalStorage via Pinia Subscription amb temporitzador configurable (per defecte 5 segons)
 store.$subscribe((mutation, state) => {
-  // Mark state as modified as soon as any store state mutates
-  saveStatus.value = 'modified';
-
   if (autoSaveTimer) clearTimeout(autoSaveTimer);
+  const delayMs = Math.max(1, (store.config?.autoSaveDebounceSeconds || 5)) * 1000;
   autoSaveTimer = setTimeout(() => {
+    saveStatus.value = 'modified';
     executeSave();
-  }, 800);
-}, { detached: true, deep: true });
+    autoSaveTimer = null;
+  }, delayMs);
+}, { detached: true });
+
+window.__flushGlobalSave = () => {
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
+  }
+  executeSave();
+};
 
 // Watch main active tab & isMaximized to persist
 watch(() => store.activeTab, (newTab) => {
@@ -585,11 +593,11 @@ const watchRefDocFile = watch(() => store.refDocFile, (newFile) => {
   const pName = currentProjectName.value;
   const dName = activeDocName.value;
   if (!newFile && pName && dName) {
-    localStorage.removeItem(`${name}:doc:${dName}:refDocFileBase64`);
+    localStorage.removeItem(`${pName}:doc:${dName}:refDocFileBase64`);
   }
 });
 
-// Watch Excel JSON data for embedded editor_metadata sheet configs and hierarchy schema
+// Watch Excel JSON data reference changes for embedded editor_metadata sheet configs and hierarchy schema
 watch(() => store.excelJsonData, (newVal) => {
   if (newVal) {
     if (newVal.editor_metadata) {
@@ -604,7 +612,7 @@ watch(() => store.excelJsonData, (newVal) => {
       delete newVal._hierarchy_schema;
     }
   }
-}, { immediate: true, deep: true });
+}, { immediate: true });
 
 watch(() => store.hierarchySchema, (newSchema) => {
   if (newSchema && typeof newSchema === 'object' && Object.keys(newSchema).length > 0) {
@@ -892,16 +900,16 @@ onMounted(async () => {
     recordChangeDiff('Comprovació automàtica horària');
   }, 300000);
 
-  // Watchers for automatic real-time change differential recording
+  // Watchers for automatic change differential recording (debounced by autoSaveDebounceSeconds)
   watch(() => store.templateText, () => {
     triggerDebouncedRecord('Modificació a la plantilla Jinja2');
   });
   watch(() => store.excelJsonData, () => {
     triggerDebouncedRecord('Modificació a les dades del model Excel');
-  }, { deep: true });
+  });
   watch(() => store.editorMetadata, () => {
     triggerDebouncedRecord('Modificació a l\'esquema de metadades');
-  }, { deep: true });
+  });
 
   // Inicialitza automàticament els motors WASM al carregar la pàgina
   try {

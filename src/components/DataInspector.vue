@@ -36,6 +36,9 @@ const onCellBlur = () => {
     evalDebounceTimer = null;
   }
   runCellEvaluationAndSave();
+  if (window.__flushGlobalSave) {
+    window.__flushGlobalSave();
+  }
 };
 
 const runCellEvaluationAndSave = () => {
@@ -82,7 +85,7 @@ watch(() => store.excelJsonData, (newVal) => {
       });
     }
   }
-}, { immediate: true, deep: true });
+}, { immediate: true });
 
 const toggleSheet = (name) => {
   openSheets.value[name] = !openSheets.value[name];
