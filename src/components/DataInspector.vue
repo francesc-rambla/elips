@@ -68,12 +68,14 @@ watch([selectedCompactSheet, viewMode, () => store.excelJsonData], () => {
   });
 }, { deep: true, immediate: true });
 
-// Auto-initialize selectedCompactSheet and open root sheets when data loads
+// Real-time immediate formula evaluation deep watcher + auto-initialize selectedCompactSheet
 watch(() => store.excelJsonData, (newVal) => {
   if (newVal && !isEvaluating) {
     isEvaluating = true;
     try {
-      evaluateComputedFields(newVal);
+      evaluateComputedFields(newVal, store.editorMetadata);
+    } catch (e) {
+      console.warn("Error durant el recàlcul de fórmules:", e);
     } finally {
       nextTick(() => {
         isEvaluating = false;
@@ -91,7 +93,7 @@ watch(() => store.excelJsonData, (newVal) => {
       });
     }
   }
-}, { immediate: true });
+}, { immediate: true, deep: true });
 
 const toggleSheet = (name) => {
   openSheets.value[name] = !openSheets.value[name];
