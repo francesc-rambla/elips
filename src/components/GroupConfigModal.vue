@@ -524,8 +524,8 @@ const saveFormulaModal = () => {
     <div class="modal-overlay" v-if="modelValue" style="display: flex; z-index: 1080;">
       <div class="modal-content" style="max-width: 1400px; width: 95vw; max-height: 90vh; display: flex; flex-direction: column;">
         
-        <!-- Modal Header -->
-        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+        <!-- Modal Header (Fixed) -->
+        <div class="modal-header" style="flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding: 0.75rem 1rem;">
           <h3 style="margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             <span>Configuració del Grup: <strong style="color: var(--color-primary);">{{ groupName }}</strong></span>
@@ -533,44 +533,45 @@ const saveFormulaModal = () => {
           <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="closeModal">&times;</button>
         </div>
 
-        <div class="modal-body" style="flex: 1; overflow-y: auto; padding: 1rem 0;">
-          <!-- Action Buttons Bar (Afegir camp + Editor Visual Grid) -->
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 8px;">
+        <!-- Fixed Action Controls Bar (Afegir camp + Editor Visual Grid - Always Visible) -->
+        <div style="flex-shrink: 0; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-color); background: var(--bg-secondary); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; z-index: 20;">
+          <button 
+            type="button" 
+            class="btn btn-secondary" 
+            style="width: auto; padding: 4px 12px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 4px;" 
+            @click="addNewFieldToConfig"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>Afegir camp/clau al grup</span>
+          </button>
+
+          <div style="display: flex; gap: 8px; align-items: center;">
             <button 
               type="button" 
               class="btn btn-secondary" 
-              style="width: auto; padding: 4px 12px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 4px;" 
-              @click="addNewFieldToConfig"
+              style="width: auto; padding: 4px 12px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;" 
+              @click="isVisualGridModalOpen = true"
+              title="Editor Visual de Grid: Organitza files, assigna camps i mou-los fàcilment de forma visual"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              <span>Afegir camp/clau al grup</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              <span>Editor Visual de Grid</span>
             </button>
-
-            <div style="display: flex; gap: 8px; align-items: center;">
-              <button 
-                type="button" 
-                class="btn btn-secondary" 
-                style="width: auto; padding: 4px 12px; font-size: 0.75rem; height: 30px; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;" 
-                @click="isVisualGridModalOpen = true"
-                title="Editor Visual de Grid: Organitza files, assigna camps i mou-los fàcilment de forma visual"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-                <span>Editor Visual de Grid</span>
-              </button>
-            </div>
           </div>
+        </div>
 
+        <!-- Scrollable Modal Body (Only table rows scroll) -->
+        <div class="modal-body" style="flex: 1; min-height: 0; overflow-y: auto; padding: 0;">
           <!-- Configuration Fields Table -->
           <table class="inspector-table" style="width: 100%; border-collapse: collapse;">
-            <thead>
+            <thead style="position: sticky; top: 0; z-index: 10; background: var(--bg-tertiary); box-shadow: 0 1px 3px rgba(0,0,0,0.12);">
               <tr style="background: var(--bg-tertiary);">
-                <th style="padding: 8px; text-align: left; width: 140px;">Element / Camp</th>
-                <th style="padding: 8px; text-align: left; width: 200px;">Etiqueta formulari</th>
-                <th style="padding: 8px; text-align: left; width: 140px;">Tipus Dada</th>
-                <th style="padding: 8px; text-align: center; width: 90px;" title="Activa per calcular automàticament aquest camp amb una fórmula">Calculat?</th>
-                <th style="padding: 8px; text-align: left; min-width: 360px;">Configuració / Propietats / Càlcul</th>
-                <th style="padding: 8px; text-align: center; width: 140px;">Posició Grid</th>
-                <th style="padding: 8px; text-align: center; width: 40px;"></th>
+                <th style="padding: 8px; text-align: left; width: 140px; background: var(--bg-tertiary);">Element / Camp</th>
+                <th style="padding: 8px; text-align: left; width: 200px; background: var(--bg-tertiary);">Etiqueta formulari</th>
+                <th style="padding: 8px; text-align: left; width: 140px; background: var(--bg-tertiary);">Tipus Dada</th>
+                <th style="padding: 8px; text-align: center; width: 90px; background: var(--bg-tertiary);" title="Activa per calcular automàticament aquest camp amb una fórmula">Calculat?</th>
+                <th style="padding: 8px; text-align: left; min-width: 360px; background: var(--bg-tertiary);">Configuració / Propietats / Càlcul</th>
+                <th style="padding: 8px; text-align: center; width: 140px; background: var(--bg-tertiary);">Posició Grid</th>
+                <th style="padding: 8px; text-align: center; width: 40px; background: var(--bg-tertiary);"></th>
               </tr>
             </thead>
             <tbody>
