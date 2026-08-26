@@ -6,6 +6,8 @@ import NestedDataNode from './NestedDataNode.vue';
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
 
+import { runGlobalAutoAdjust } from '../main';
+
 const store = useWorkspaceStore();
 const { saveExcelData, evaluateComputedFields } = useWasmEngines();
 const showJsonView = ref(false);
@@ -18,6 +20,14 @@ const viewMode = ref('compact'); // 'complete' or 'compact' (default: compact)
 const selectedCompactSheet = ref('');
 
 let isEvaluating = false;
+
+// Trigger instant textarea height adjustments when sheets or data change
+watch([selectedCompactSheet, viewMode, () => store.excelJsonData], () => {
+  nextTick(() => {
+    runGlobalAutoAdjust();
+    setTimeout(runGlobalAutoAdjust, 100);
+  });
+}, { deep: true, immediate: true });
 
 // Auto-initialize selectedCompactSheet and open root sheets when data loads
 watch(() => store.excelJsonData, (newVal) => {
