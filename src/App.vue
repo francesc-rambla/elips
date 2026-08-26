@@ -1814,6 +1814,22 @@ const generateDocuments = async () => {
           </div>
           <div class="ribbon-group-label">ESTRUCTURA</div>
         </div>
+
+        <!-- Group: Històric i Versions (Always accessible) -->
+        <div class="ribbon-group-card">
+          <div class="ribbon-group-body" style="display: flex; align-items: center; gap: 6px; height: 60px;">
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 4px 10px; font-size: 0.72rem; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;"
+              @click="isHistoryModalOpen = true"
+              title="📜 Navegador d'Històric de versions, diferencials i punts de control"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span v-if="store.config.showButtonTexts" style="font-weight: 700;">Històric</span>
+            </button>
+          </div>
+          <div class="ribbon-group-label">HISTÒRIC</div>
+        </div>
       </template>
 
       <!-- TOOLS FOR FITXERS TAB -->
