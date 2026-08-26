@@ -58,9 +58,7 @@ const runCellEvaluationAndSave = () => {
   try {
     evaluateComputedFields(store.excelJsonData, store.editorMetadata);
     if (typeof store.excelJsonData === 'object' && store.excelJsonData !== null) {
-      store.excelJsonData = Array.isArray(store.excelJsonData)
-        ? [...store.excelJsonData]
-        : { ...store.excelJsonData };
+      store.excelJsonData = JSON.parse(JSON.stringify(store.excelJsonData));
     }
   } catch (e) {}
 };

@@ -46,13 +46,13 @@ const runCellEvaluationAndSave = () => {
   isEvaluating = true;
   try {
     evaluateComputedFields(store.excelJsonData, store.editorMetadata);
-    // Trigger Vue reactivity so all formula outputs on screen immediately update!
+    // Deep clone to ensure all array and row references change, forcing Vue 3 to re-render all calculated fields on screen!
     if (typeof store.excelJsonData === 'object' && store.excelJsonData !== null) {
-      store.excelJsonData = Array.isArray(store.excelJsonData)
-        ? [...store.excelJsonData]
-        : { ...store.excelJsonData };
+      store.excelJsonData = JSON.parse(JSON.stringify(store.excelJsonData));
     }
     saveExcelData();
+  } catch (err) {
+    console.error("Error durant el recàlcul o desat:", err);
   } finally {
     nextTick(() => {
       isEvaluating = false;
