@@ -1345,11 +1345,50 @@ def get_referenced_cell(ws, cell):
         return None
     m = REF_REGEX.search(val)
     if m:
-        sheet_name = m.group(1) or m.group(2)
+        target_sheet_name = m.group(1) or m.group(2)
         cell_coord = m.group(3).replace('$', '')
         wb = ws.parent
-        if sheet_name in wb.sheetnames:
-            return wb[sheet_name][cell_coord]
+        
+        matched_sheet = None
+        target_upper = target_sheet_name.upper()
+        
+        # 1. Exact or case-insensitive match
+        for s in wb.sheetnames:
+            if s.upper() == target_upper:
+                matched_sheet = s
+                break
+                
+        # 2. Try with or without valid prefixes (OUT_, JSON_, EXPORT_)
+        if not matched_sheet:
+            prefixes = ('OUT_', 'JSON_', 'EXPORT_')
+            clean_target = target_upper
+            for pfx in prefixes:
+                if clean_target.startswith(pfx):
+                    clean_target = clean_target[len(pfx):]
+                    break
+            
+            for s in wb.sheetnames:
+                s_clean = s.upper()
+                for pfx in prefixes:
+                    if s_clean.startswith(pfx):
+                        s_clean = s_clean[len(pfx):]
+                        break
+                if s_clean == clean_target:
+                    matched_sheet = s
+                    break
+                    
+        # 3. Create target sheet on-the-fly if missing in workbook
+        if not matched_sheet:
+            try:
+                matched_sheet = target_sheet_name
+                wb.create_sheet(title=matched_sheet)
+            except Exception:
+                pass
+
+        if matched_sheet and matched_sheet in wb.sheetnames:
+            target_ws = wb[matched_sheet]
+            return target_ws[cell_coord]
+            
     return None
 
 def write_cell_value(ws, row_idx, col_idx, value):
@@ -1359,8 +1398,9 @@ def write_cell_value(ws, row_idx, col_idx, value):
     target_cell = cell
     visited = set()
 
-    # If the current cell is empty (e.g. row 3, 4, 5...), check if preceding rows in the same column have a link formula pattern!
-    if (cell.value is None or str(cell.value).strip() == '') and row_idx > 2:
+    # 1. Auto-propagate reference formula if current cell lacks formula but preceding row in column has one
+    current_val_str = str(cell.value or '').strip()
+    if (cell.value is None or current_val_str == '' or not current_val_str.startswith('=')) and row_idx > 2:
         for ref_r in range(2, row_idx):
             prev_cell = ws.cell(ref_r, col_idx)
             ref_target = get_referenced_cell(ws, prev_cell)
@@ -1369,8 +1409,10 @@ def write_cell_value(ws, row_idx, col_idx, value):
                 col_letter = get_column_letter(col_idx)
                 propagated_formula = f"='{ref_sheet_name}'!{col_letter}{row_idx}"
                 cell.value = propagated_formula
+                target_cell = cell
                 break
 
+    # 2. Traverse reference chain
     while True:
         ref_cell = get_referenced_cell(target_cell.parent, target_cell)
         if ref_cell is None:
