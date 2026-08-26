@@ -4,6 +4,8 @@ import { useWorkspaceStore } from './stores/workspace';
 import { useWasmEngines } from './composables/useWasmEngines';
 import { saveBinaryFile, getBinaryFile, deleteBinaryFile } from './utils/db';
 
+import { useVersionHistory } from './composables/useVersionHistory';
+
 // Components
 import FileCard from './components/FileCard.vue';
 import DataInspector from './components/DataInspector.vue';
@@ -12,9 +14,20 @@ import DocumentPreview from './components/DocumentPreview.vue';
 import TerminalLog from './components/TerminalLog.vue';
 import SettingsModal from './components/SettingsModal.vue';
 import ExcelImportModal from './components/ExcelImportModal.vue';
+import VersionHistoryModal from './components/VersionHistoryModal.vue';
 
 const store = useWorkspaceStore();
 const { initEngines, parseExcel, renderMarkdown, compileDocx, saveExcelData, saveExcelHierarchy, writeVirtualExcel, isLoading } = useWasmEngines();
+
+const {
+  historyData,
+  isHistoryModalOpen,
+  loadHistory,
+  createSnapshot,
+  recordChangeDiff,
+  triggerDebouncedRecord,
+  restoreVersion
+} = useVersionHistory();
 
 const isSettingsOpen = ref(false);
 const isThemeDark = ref(localStorage.getItem('theme') === 'dark');
@@ -866,6 +879,28 @@ onMounted(async () => {
   });
 
   window.__openExcelHierarchyModal = openHierarchyModal;
+
+  // Version History Initialization & Automatic Hourly Checkpoint Tracking
+  loadHistory();
+  if (historyData.value.length === 0) {
+    createSnapshot('init', 'Punt de control inicial de la sessió');
+  }
+
+  // Periodic hourly check timer (every 5 minutes check if 1 hour has elapsed)
+  setInterval(() => {
+    recordChangeDiff('Comprovació automàtica horària');
+  }, 300000);
+
+  // Watchers for automatic real-time change differential recording
+  watch(() => store.templateText, () => {
+    triggerDebouncedRecord('Modificació a la plantilla Jinja2');
+  });
+  watch(() => store.excelJsonData, () => {
+    triggerDebouncedRecord('Modificació a les dades del model Excel');
+  }, { deep: true });
+  watch(() => store.editorMetadata, () => {
+    triggerDebouncedRecord('Modificació a l\'esquema de metadades');
+  }, { deep: true });
 
   // Inicialitza automàticament els motors WASM al carregar la pàgina
   try {
@@ -2030,6 +2065,18 @@ const generateDocuments = async () => {
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
 
+        <!-- Version History Navigator Button -->
+        <button 
+          type="button"
+          class="btn btn-secondary" 
+          style="padding: 2px 8px; font-size: 0.72rem; height: 26px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;" 
+          @click="isHistoryModalOpen = true" 
+          title="Obre el navegador d'històric de versions i punts de control"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>Històric</span>
+        </button>
+
         <!-- Terminal Drawer Toggle -->
         <button class="btn-icon-only" :class="{ 'btn-active': isTerminalOpen }" @click="isTerminalOpen = !isTerminalOpen" title="Logs i incidències" style="width: 26px; height: 26px;">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-terminal"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
@@ -2591,6 +2638,15 @@ const generateDocuments = async () => {
         </div>
       </div>
     </div>
+
+    <!-- Version History Navigator Modal -->
+    <VersionHistoryModal 
+      :is-open="isHistoryModalOpen"
+      :history-data="historyData"
+      @close="isHistoryModalOpen = false"
+      @restore="restoreVersion($event.entry, $event.mode)"
+      @create-snapshot="createSnapshot('manual', $event)"
+    />
 
     <!-- Ultra-Compact Minimal Footer -->
     <footer style="text-align: left; padding: 2px 0.75rem; font-size: 0.65rem; color: var(--text-muted); border-top: 1px solid var(--border-color); background: var(--bg-secondary); margin-top: auto; display: flex; align-items: center; justify-content: flex-start; flex-shrink: 0; min-height: 20px; height: 20px; box-sizing: border-box;">
