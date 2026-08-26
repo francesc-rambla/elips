@@ -5,6 +5,7 @@ import { useWorkspaceStore } from '../stores/workspace';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import VisualGridEditorModal from './VisualGridEditorModal.vue';
 import GroupConfigModal from './GroupConfigModal.vue';
+import TemplateEditor from './TemplateEditor.vue';
 
 const props = defineProps({
   parentObj: {
@@ -1696,30 +1697,24 @@ const getItemPath = (idx, fieldKey) => {
       :configList="groupConfigList" 
     />
 
-    <!-- Cell Text / Markdown + Jinja2 Editor Modal -->
+    <!-- Cell Text / Markdown + Jinja2 Visual Editor Modal -->
     <div class="modal-overlay" v-if="isCellModalOpen" style="display: flex; z-index: 1100;">
-      <div class="modal-content" style="max-width: 650px; width: 90%;">
+      <div class="modal-content" style="max-width: 1200px; width: 98%; height: 90vh; display: flex; flex-direction: column;">
         <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
           <h3 style="border: none; padding-bottom: 0; margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 6px;">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-            <span>Edició complexa del camp: {{ activeCellInfo?.fieldKey }}</span>
+            <span>Editor Visual de Cel·la (Markdown + Jinja2): <code>{{ activeCellInfo?.fieldKey }}</code></span>
           </h3>
           <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isCellModalOpen = false">&times;</button>
         </div>
         
-        <div class="modal-body" style="padding: 1rem 0;">
-          <textarea 
-            v-model="cellTextValue" 
-            class="data-input" 
-            rows="10" 
-            style="width: 100%; font-family: monospace; font-size: 0.85rem; padding: 8px; resize: vertical;"
-            placeholder="Introdueix text o codi Jinja2..."
-          ></textarea>
+        <div class="modal-body" style="flex-grow: 1; padding: 0.5rem; overflow: hidden; display: flex; flex-direction: column;">
+          <TemplateEditor v-model="cellTextValue" :isCellMode="true" />
         </div>
         
-        <div class="modal-footer" style="margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem; display: flex; justify-content: flex-end; gap: 8px;">
-          <button type="button" class="btn btn-secondary" style="width: auto;" @click="isCellModalOpen = false">Cancel·la</button>
-          <button type="button" class="btn btn-primary" style="width: auto;" @click="saveCellEditor">Desa Canvis</button>
+        <div class="modal-footer" style="margin-top: auto; border-top: 1px solid var(--border-color); padding-top: 0.75rem; display: flex; justify-content: flex-end; gap: 8px;">
+          <button type="button" class="btn btn-secondary" style="width: auto;" @click="isCellModalOpen = false">Cancel·lar</button>
+          <button type="button" class="btn btn-primary" style="width: auto;" @click="saveCellEditor">Aplicar Canvis</button>
         </div>
       </div>
     </div>
