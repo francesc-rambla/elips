@@ -3201,11 +3201,19 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
 
     const isGroupMatch = (metaGroup, hint) => {
       if (!metaGroup) return true;
-      if (!hint) return true;
-      if (metaGroup === hint || metaGroup.replace(/^OUT_/, '') === hint.replace(/^OUT_/, '')) return true;
-      const gShort = metaGroup.split('.').pop().replace(/^OUT_/, '');
-      const hShort = hint.split('.').pop().replace(/^OUT_/, '');
-      return gShort === hShort;
+      if (!hint) return false;
+      const cleanM = metaGroup.replace(/^OUT_/, '').toLowerCase();
+      const cleanH = hint.replace(/^OUT_/, '').toLowerCase();
+      if (cleanM === cleanH) return true;
+
+      const gShort = cleanM.split('.').pop();
+      const hShort = cleanH.split('.').pop();
+      if (gShort === hShort) return true;
+
+      const rootHints = ['doc', 'dades', 'global', 'header', 'general', 'presupost', 'pressupost', 'resum', 'summary', 'root', 'main', ''];
+      if (rootHints.includes(cleanH) && rootHints.includes(cleanM)) return true;
+
+      return false;
     };
 
     const customMetas = computedMetas.filter(m => isCustomFn(m.calcFn, m.calcFormula) && m.calcFormula);
@@ -3234,7 +3242,7 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
 
       // Evaluate CUSTOM formulas for this node
       customMetas.forEach(meta => {
-        if (isGroupMatch(meta.group, groupHint) || (meta.element in container)) {
+        if (isGroupMatch(meta.group, groupHint)) {
           const calculatedVal = evaluateCustomFormula(meta.calcFormula, container, data);
           if (calculatedVal !== undefined && calculatedVal !== null) {
             const oldVal = container[meta.element];
@@ -3274,7 +3282,7 @@ update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
         const fn = (meta.calcFn || 'SUM').toUpperCase();
         const col = meta.calcTargetCol;
 
-        if (isGroupMatch(meta.group, groupHint) || (targetVec && container[targetVec]) || (meta.element in container)) {
+        if (isGroupMatch(meta.group, groupHint) || (targetVec && container[targetVec])) {
           let childList = null;
           if (targetVec && Array.isArray(container[targetVec])) {
             childList = container[targetVec];
