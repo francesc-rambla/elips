@@ -46,6 +46,12 @@ const runCellEvaluationAndSave = () => {
   isEvaluating = true;
   try {
     evaluateComputedFields(store.excelJsonData, store.editorMetadata);
+    // Trigger Vue reactivity so all formula outputs on screen immediately update!
+    if (typeof store.excelJsonData === 'object' && store.excelJsonData !== null) {
+      store.excelJsonData = Array.isArray(store.excelJsonData)
+        ? [...store.excelJsonData]
+        : { ...store.excelJsonData };
+    }
     saveExcelData();
   } finally {
     nextTick(() => {

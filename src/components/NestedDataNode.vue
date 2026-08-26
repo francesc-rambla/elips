@@ -32,6 +32,39 @@ const props = defineProps({
 const store = useWorkspaceStore();
 const { evaluateComputedFields } = useWasmEngines();
 
+let evalDebounceTimer = null;
+
+const onCellInput = () => {
+  if (evalDebounceTimer) clearTimeout(evalDebounceTimer);
+  const delayMs = Math.max(1, (store.config?.autoSaveDebounceSeconds || 5)) * 1000;
+  evalDebounceTimer = setTimeout(() => {
+    runCellEvaluationAndSave();
+  }, delayMs);
+};
+
+const onCellBlur = () => {
+  if (evalDebounceTimer) {
+    clearTimeout(evalDebounceTimer);
+    evalDebounceTimer = null;
+  }
+  runCellEvaluationAndSave();
+  if (window.__flushGlobalSave) {
+    window.__flushGlobalSave();
+  }
+};
+
+const runCellEvaluationAndSave = () => {
+  if (!store.excelJsonData) return;
+  try {
+    evaluateComputedFields(store.excelJsonData, store.editorMetadata);
+    if (typeof store.excelJsonData === 'object' && store.excelJsonData !== null) {
+      store.excelJsonData = Array.isArray(store.excelJsonData)
+        ? [...store.excelJsonData]
+        : { ...store.excelJsonData };
+    }
+  } catch (e) {}
+};
+
 const getAvailableChildVectorsForGroup = () => {
   const result = new Set();
   
