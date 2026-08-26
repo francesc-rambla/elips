@@ -22,3 +22,34 @@ window.dumpStore = () => {
   console.groupEnd();
   return store.excelJsonData;
 };
+
+// Automatic form text field height adjustment helper (caps height at 200px with vertical scrollbar)
+const autoAdjustTextareaHeight = (el) => {
+  if (!el || el.tagName?.toLowerCase() !== 'textarea' || el.classList.contains('no-auto-grow')) return;
+  el.style.height = 'auto';
+  const targetH = Math.min(Math.max(el.scrollHeight + 2, 34), 200);
+  el.style.height = `${targetH}px`;
+  if (el.scrollHeight > 200) {
+    el.style.overflowY = 'auto';
+  } else {
+    el.style.overflowY = 'hidden';
+  }
+};
+
+document.addEventListener('input', (e) => {
+  if (e.target && e.target.tagName && e.target.tagName.toLowerCase() === 'textarea') {
+    autoAdjustTextareaHeight(e.target);
+  }
+});
+
+document.addEventListener('focusin', (e) => {
+  if (e.target && e.target.tagName && e.target.tagName.toLowerCase() === 'textarea') {
+    autoAdjustTextareaHeight(e.target);
+  }
+});
+
+// Initial & dynamic DOM pass for textareas inside form representations
+const domObserver = new MutationObserver(() => {
+  document.querySelectorAll('textarea:not(.no-auto-grow)').forEach(autoAdjustTextareaHeight);
+});
+domObserver.observe(document.body, { childList: true, subtree: true });
