@@ -2225,15 +2225,99 @@ const parseHtmlToMarkdown = (sourceElement) => {
   return pandocYamlHeader ? pandocYamlHeader + cleanBody : cleanBody;
 };
 
+// Helper to check if a Jinja variable expression exists in the schema or active loop context
+const isVariableDefinedInSchema = (exprStr, loopStack = []) => {
+  if (!exprStr || typeof exprStr !== 'string') return true;
+  
+  const cleanExpr = exprStr.split('|')[0].trim();
+  if (!cleanExpr) return true;
+
+  const jinjaKeywords = new Set([
+    'loop', 'loop.index', 'loop.index0', 'loop.first', 'loop.last', 'loop.revindex',
+    'loop.length', 'loop.cycle', 'loop.depth', 'loop.depth0',
+    'true', 'false', 'none', 'null', 'undefined'
+  ]);
+  if (jinjaKeywords.has(cleanExpr.toLowerCase())) return true;
+
+  const gData = store.excelJsonData;
+  if (gData) {
+    const directVal = resolvePath(gData, cleanExpr);
+    if (directVal !== undefined) return true;
+  }
+
+  const metas = store.editorMetadata || [];
+  const lastSeg = cleanExpr.split('.').pop();
+  const metaMatch = metas.some(m => 
+    m && (
+      m.element === cleanExpr || 
+      `${m.group}.${m.element}` === cleanExpr || 
+      m.element === lastSeg
+    )
+  );
+  if (metaMatch) return true;
+
+  // Check active loop iterators (e.g., "item.preu" inside "for item in costs")
+  const parts = cleanExpr.split('.');
+  if (parts.length > 1) {
+    const iter = parts[0];
+    const col = parts[1];
+    const loopMatch = (loopStack || []).find(l => l && l.iterator === iter);
+    if (loopMatch) {
+      if (gData) {
+        const arr = resolvePath(gData, loopMatch.arrayPath);
+        if (Array.isArray(arr) && arr.length > 0 && arr[0] && arr[0][col] !== undefined) {
+          return true;
+        }
+      }
+      if (metas.some(m => m && m.element === col)) {
+        return true;
+      }
+    }
+  }
+
+  if (gData && gData[cleanExpr] !== undefined) return true;
+
+  return false;
+};
+
+// Helper: Create HTML chip element with visual highlight for undefined variables
+const createJinjaVarChip = (v, loopStack = []) => {
+  const vars = v.split('|');
+  const expr = vars[0].trim();
+  const filter = vars.length > 1 ? vars.slice(1).join('|').trim() : '';
+  const displayLabel = resolveFieldLabel(v);
+  const isDefined = isVariableDefinedInSchema(expr, loopStack);
+  const rawAttr = `${expr}${filter ? '|' + filter : ''}`;
+
+  if (!isDefined) {
+    return `<span class="j-var-chip undefined-var" contenteditable="false" data-raw="${rawAttr}" title="⚠️ Atenció: La variable '${expr}' no està definida a l'esquema de dades!"><span class="warn-icon">⚠️</span>${displayLabel}</span>`;
+  }
+
+  return `<span class="j-var-chip" contenteditable="false" data-raw="${rawAttr}">${displayLabel}</span>`;
+};
+
+// Computed property listing all undefined variables in the current template
+const undefinedVariablesList = computed(() => {
+  const text = editorText.value || '';
+  const matches = text.matchAll(/\{\{\s*(.*?)\s*\}\}/g);
+  const undefinedList = [];
+  const loopStack = activeLoopStack.value || [];
+
+  for (const m of matches) {
+    const rawVal = m[1].trim();
+    const expr = rawVal.split('|')[0].trim();
+    if (expr && !isVariableDefinedInSchema(expr, loopStack)) {
+      if (!undefinedList.includes(expr)) {
+        undefinedList.push(expr);
+      }
+    }
+  }
+  return undefinedList;
+});
+
 // Helper: Convert inner cell templates to chips
-const convertJinjaToChips = (text) => {
-  return text.replace(/\{\{\s*(.*?)\s*\}\}/g, (m, v) => {
-    const vars = v.split('|');
-    const expr = vars[0].trim();
-    const filter = vars.length > 1 ? vars.slice(1).join('|').trim() : '';
-    const displayLabel = resolveFieldLabel(v);
-    return `<span class="j-var-chip" contenteditable="false" data-raw="${expr}${filter ? '|' + filter : ''}">${displayLabel}</span>`;
-  });
+const convertJinjaToChips = (text, loopStack = []) => {
+  return text.replace(/\{\{\s*(.*?)\s*\}\}/g, (m, v) => createJinjaVarChip(v, loopStack));
 };
 
 const findBestKeyMatch = (arrayPath, label) => {
@@ -2621,13 +2705,7 @@ const compileMarkdownToHtml = (markdownText) => {
         }
       }
     } else {
-      let blockText = chunk.replace(/\{\{\s*(.*?)\s*\}\}/g, (m, v) => {
-        const vars = v.split('|');
-        const expr = vars[0].trim();
-        const filter = vars.length > 1 ? vars.slice(1).join('|').trim() : '';
-        const displayLabel = resolveFieldLabel(v);
-        return `<span class="j-var-chip" contenteditable="false" data-raw="${expr}${filter ? '|' + filter : ''}">${displayLabel}</span>`;
-      });
+      let blockText = chunk.replace(/\{\{\s*(.*?)\s*\}\}/g, (m, v) => createJinjaVarChip(v, currentLoopStack));
       
       blockText = blockText.replace(/^###### (.*)$/gm, '<h6>$1</h6>')
                            .replace(/^##### (.*)$/gm, '<h5>$1</h5>')
@@ -3780,6 +3858,25 @@ onUnmounted(() => {
       <div class="variables-sidebar">
       <div class="variables-title">Esquema de Dades</div>
       
+      <!-- Warning Card for Undefined Variables in Template -->
+      <div v-if="undefinedVariablesList.length > 0" style="background-color: var(--color-warning-light, #fffbeb); border: 1px solid var(--color-warning, #f59e0b); padding: 0.5rem; border-radius: var(--radius-sm); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;">
+        <div style="font-size: 0.7rem; font-weight: 700; color: var(--color-warning-hover, #d97706); display: flex; align-items: center; justify-content: space-between;">
+          <span style="display: flex; align-items: center; gap: 4px;">
+            ⚠️ {{ undefinedVariablesList.length }} {{ undefinedVariablesList.length === 1 ? 'variable no trobada' : 'variables no trobades' }}
+          </span>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 3px; max-height: 90px; overflow-y: auto;">
+          <span 
+            v-for="uVar in undefinedVariablesList" 
+            :key="uVar" 
+            style="font-size: 0.65rem; font-family: var(--font-mono); background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; padding: 1px 4px; border-radius: 3px; font-weight: 600; cursor: help;"
+            :title="`⚠️ La variable '${uVar}' està inserida a la plantilla però no existeix a l'esquema de dades`"
+          >
+            ⚠️ {{ uVar }}
+          </span>
+        </div>
+      </div>
+      
       <!-- Active Loop Stack Cards (ordered by depth: innermost loop first) -->
       <div v-for="(ctx, idx) in activeLoopStack" :key="ctx.iterator + idx" style="background-color: var(--color-primary-light); padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border-focus); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;">
         <div style="font-size: 0.68rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase; display: flex; align-items: center; justify-content: space-between;">
@@ -4610,6 +4707,24 @@ onUnmounted(() => {
   color: white;
 }
 
+.j-var-chip.undefined-var {
+  background-color: #fffbeb !important;
+  color: #d97706 !important;
+  border: 1.5px solid #f59e0b !important;
+  box-shadow: 0 0 4px rgba(245, 158, 11, 0.3);
+}
+
+.j-var-chip.undefined-var:hover {
+  background-color: #f59e0b !important;
+  color: #ffffff !important;
+}
+
+.j-var-chip .warn-icon {
+  margin-right: 3px;
+  font-size: 0.78rem;
+  vertical-align: middle;
+}
+
 .latex-chip {
   cursor: pointer;
   user-select: none;
@@ -4843,6 +4958,21 @@ body.dark-theme .j-var-chip {
 body.dark-theme .j-var-chip:hover {
   background-color: #38bdf8 !important;
   color: #0b0f19 !important;
+}
+
+[data-theme="dark"] .j-var-chip.undefined-var,
+body.dark-theme .j-var-chip.undefined-var {
+  background-color: rgba(245, 158, 11, 0.25) !important;
+  color: #fbbf24 !important;
+  border: 1.5px solid #f59e0b !important;
+  font-weight: 700 !important;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.4) !important;
+}
+
+[data-theme="dark"] .j-var-chip.undefined-var:hover,
+body.dark-theme .j-var-chip.undefined-var:hover {
+  background-color: #f59e0b !important;
+  color: #0f172a !important;
 }
 
 [data-theme="dark"] .jinja-block,
