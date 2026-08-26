@@ -1337,13 +1337,13 @@ def render_with_recovery(env, template_src, ctx, pass_label, max_fixes=50):
     except Exception:
         return current_src, issues
 
-REF_REGEX = re.compile(r"^=[+]?(?:'([^']+)'|([A-Za-z0-9_]+))!([A-Za-z0-9$]+)$")
+REF_REGEX = re.compile(r"=[+]?(?:'([^']+)'|([A-Za-z0-9_\.]+))!([A-Za-z0-9$]+)", re.IGNORECASE)
 
 def get_referenced_cell(ws, cell):
     val = str(cell.value or '').strip()
     if not val.startswith('='):
         return None
-    m = REF_REGEX.match(val)
+    m = REF_REGEX.search(val)
     if m:
         sheet_name = m.group(1) or m.group(2)
         cell_coord = m.group(3).replace('$', '')
@@ -1353,9 +1353,24 @@ def get_referenced_cell(ws, cell):
     return None
 
 def write_cell_value(ws, row_idx, col_idx, value):
+    from openpyxl.utils import get_column_letter
+
     cell = ws.cell(row_idx, col_idx)
     target_cell = cell
     visited = set()
+
+    # If the current cell is empty (e.g. row 3, 4, 5...), check if preceding rows in the same column have a link formula pattern!
+    if (cell.value is None or str(cell.value).strip() == '') and row_idx > 2:
+        for ref_r in range(2, row_idx):
+            prev_cell = ws.cell(ref_r, col_idx)
+            ref_target = get_referenced_cell(ws, prev_cell)
+            if ref_target is not None:
+                ref_sheet_name = ref_target.parent.title
+                col_letter = get_column_letter(col_idx)
+                propagated_formula = f"='{ref_sheet_name}'!{col_letter}{row_idx}"
+                cell.value = propagated_formula
+                break
+
     while True:
         ref_cell = get_referenced_cell(target_cell.parent, target_cell)
         if ref_cell is None:
