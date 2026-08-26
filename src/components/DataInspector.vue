@@ -45,7 +45,7 @@ const runCellEvaluationAndSave = () => {
   if (!store.excelJsonData || isEvaluating) return;
   isEvaluating = true;
   try {
-    evaluateComputedFields(store.excelJsonData);
+    evaluateComputedFields(store.excelJsonData, store.editorMetadata);
     saveExcelData();
   } finally {
     nextTick(() => {
@@ -2210,6 +2210,7 @@ onMounted(() => {
                             :id="'data-field-' + name + '-' + idx + '-' + col"
                             :data-path="name + '.' + idx + '.' + col"
                             v-model="store.excelJsonData[name][idx][col]"
+                            @change="onCellBlur"
                             class="data-input"
                             style="flex-grow: 1; height: 32px;"
                           >
@@ -2231,6 +2232,9 @@ onMounted(() => {
                           :data-path="name + '.' + idx + '.' + col"
                           type="date"
                           v-model="store.excelJsonData[name][idx][col]"
+                          @input="onCellInput"
+                          @blur="onCellBlur"
+                          @change="onCellBlur"
                           class="data-input"
                           style="flex-grow: 1; height: 32px;"
                         >
@@ -2243,6 +2247,9 @@ onMounted(() => {
                           type="number"
                           step="any"
                           v-model="store.excelJsonData[name][idx][col]"
+                          @input="onCellInput"
+                          @blur="onCellBlur"
+                          @change="onCellBlur"
                           class="data-input"
                           style="flex-grow: 1; height: 32px;"
                         >
@@ -2255,7 +2262,9 @@ onMounted(() => {
                             type="text"
                             inputmode="decimal"
                             :value="formatPercentageDisplay(store.excelJsonData[name][idx][col])"
-                            @input="updatePercentageValue(store.excelJsonData[name][idx], col, $event.target.value)"
+                            @input="updatePercentageValue(store.excelJsonData[name][idx], col, $event.target.value); onCellInput();"
+                            @blur="onCellBlur"
+                            @change="onCellBlur"
                             class="data-input"
                             style="flex-grow: 1; height: 32px; padding-right: 26px;"
                             placeholder="0"
@@ -2269,6 +2278,7 @@ onMounted(() => {
                           :id="'data-field-' + name + '-' + idx + '-' + col"
                           :data-path="name + '.' + idx + '.' + col"
                           v-model="store.excelJsonData[name][idx][col]"
+                          @change="onCellBlur"
                           class="data-input"
                           style="flex-grow: 1; height: 32px;"
                         >
@@ -2446,6 +2456,7 @@ onMounted(() => {
                       :id="'data-field-' + name + '-' + item.key"
                       :data-path="name + '.' + item.key"
                       v-model="store.excelJsonData[name][item.key]"
+                      @change="onCellBlur"
                       class="data-input"
                       style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                     >
@@ -2462,6 +2473,9 @@ onMounted(() => {
                       type="number"
                       step="any"
                       v-model="store.excelJsonData[name][item.key]"
+                      @input="onCellInput"
+                      @blur="onCellBlur"
+                      @change="onCellBlur"
                       class="data-input"
                       style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                     >
@@ -2474,7 +2488,9 @@ onMounted(() => {
                         type="text"
                         inputmode="decimal"
                         :value="formatPercentageDisplay(store.excelJsonData[name][item.key])"
-                        @input="updatePercentageValue(store.excelJsonData[name], item.key, $event.target.value)"
+                        @input="updatePercentageValue(store.excelJsonData[name], item.key, $event.target.value); onCellInput();"
+                        @blur="onCellBlur"
+                        @change="onCellBlur"
                         class="data-input"
                         style="flex-grow: 1; height: 28px; font-size: 0.8rem; padding-right: 24px;"
                         placeholder="0"
