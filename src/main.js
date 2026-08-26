@@ -23,18 +23,15 @@ window.dumpStore = () => {
   return store.excelJsonData;
 };
 
-// Automatic form text field height adjustment helper (default 1 single line = 28px, max 200px)
+// Ultra-lightweight single-textarea auto-grow helper (zero reflow of other elements)
 export const autoAdjustTextareaHeight = (el) => {
   if (!el || el.tagName?.toLowerCase() !== 'textarea' || el.classList.contains('no-auto-grow')) return;
-  
-  // If element is hidden (in inactive tab), wait until visible
   if (el.offsetWidth === 0 && el.offsetHeight === 0) return;
 
   const scrollTop = el.scrollTop;
-  // Reset style height to 1px temporarily to measure true scrollHeight
-  el.style.height = '1px';
+  el.style.height = '28px';
   const scrollH = el.scrollHeight;
-  const targetH = Math.min(Math.max(scrollH + 2, 28), 200);
+  const targetH = Math.min(Math.max(scrollH, 28), 200);
   el.style.height = `${targetH}px`;
   
   if (scrollH > 200) {
@@ -45,21 +42,7 @@ export const autoAdjustTextareaHeight = (el) => {
   el.scrollTop = scrollTop;
 };
 
-// Intercept HTMLTextAreaElement.prototype.value setter so Vue v-model updates trigger height adjustment instantly!
-try {
-  const originalValueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-  if (originalValueSetter) {
-    Object.defineProperty(HTMLTextAreaElement.prototype, 'value', {
-      set(val) {
-        originalValueSetter.call(this, val);
-        autoAdjustTextareaHeight(this);
-      }
-    });
-  }
-} catch (e) {
-  console.warn("No s'ha pogut interceptar el setter de value per a textareas:", e);
-}
-
+// Event-driven single-element height adjustment on user input or focus (zero continuous polling)
 document.addEventListener('input', (e) => {
   if (e.target && e.target.tagName && e.target.tagName.toLowerCase() === 'textarea') {
     autoAdjustTextareaHeight(e.target);
@@ -72,24 +55,15 @@ document.addEventListener('focusin', (e) => {
   }
 });
 
-// Immediate & continuous pass for textareas inside form representations
+// Run global auto adjust only on explicit tab switches or initial load
 export const runGlobalAutoAdjust = () => {
   requestAnimationFrame(() => {
     document.querySelectorAll('textarea:not(.no-auto-grow)').forEach(autoAdjustTextareaHeight);
   });
 };
 
-const domObserver = new MutationObserver(() => {
-  runGlobalAutoAdjust();
-});
-domObserver.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
-
-// Run initial pass on window load & ready state
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', runGlobalAutoAdjust);
 } else {
   runGlobalAutoAdjust();
 }
-
-// Periodically check visible textareas during initial load to catch tab changes
-setInterval(runGlobalAutoAdjust, 500);
