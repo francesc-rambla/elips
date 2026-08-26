@@ -113,7 +113,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       useDefaultRef: true,
       mainThreadPandoc: true,
       showButtonTexts: localStorage.getItem('showButtonTexts') !== 'false',
-      labelPosition: localStorage.getItem('labelPosition') || 'top' // 'top' (default) or 'left'
+      labelPosition: localStorage.getItem('labelPosition') || 'top', // 'top' (default) or 'left'
+      autoSaveDebounceSeconds: parseInt(localStorage.getItem('autoSaveDebounceSeconds') || '5', 10) // 5 seconds default
     }
   }),
   

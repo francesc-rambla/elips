@@ -44,7 +44,8 @@ const saveSettings = () => {
   Object.assign(store.config, localConfig);
   localStorage.setItem('showButtonTexts', store.config.showButtonTexts ? 'true' : 'false');
   localStorage.setItem('labelPosition', store.config.labelPosition || 'top');
-  store.addLog("Configuració de motors i interfície desada reactivament.", "success");
+  localStorage.setItem('autoSaveDebounceSeconds', String(store.config.autoSaveDebounceSeconds || 5));
+  store.addLog("Configuració de motors, rendiment i interfície desada reactivament.", "success");
   emit('close');
 };
 
@@ -58,6 +59,7 @@ const resetSettings = () => {
   localConfig.mainThreadPandoc = true;
   localConfig.showButtonTexts = true;
   localConfig.labelPosition = 'top';
+  localConfig.autoSaveDebounceSeconds = 5;
 };
 </script>
 
@@ -78,7 +80,22 @@ const resetSettings = () => {
       <div class="modal-body">
         <!-- Interface Preferences -->
         <div style="font-size: 0.85rem; font-weight: bold; color: var(--color-primary); margin-bottom: 0.5rem; text-transform: uppercase; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">
-          🖥️ Interfície i Visualització
+          🖥️ Interfície i Rendiment
+        </div>
+
+        <div class="form-row" style="margin-bottom: 0.85rem;">
+          <label for="cfgDebounceSec" style="font-weight: 600;">Temps d'espera per al desat i recàlcul automàtic (segons)</label>
+          <input 
+            type="number" 
+            id="cfgDebounceSec" 
+            v-model.number="localConfig.autoSaveDebounceSeconds" 
+            min="1" 
+            max="60"
+            style="width: 100%; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.85rem;"
+          >
+          <span style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-top: 2px;">
+            Temps en segons després del darrer canvi o en sortir de la cel·la (blur) per executar el desat, recàlcul i històric (Defecte: 5s).
+          </span>
         </div>
 
         <div class="form-row" style="margin-bottom: 0.85rem;">

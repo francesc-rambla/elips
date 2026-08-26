@@ -271,13 +271,23 @@ export function useVersionHistory() {
     }, 300);
   };
 
-  // Auto-record debouncer for edits
+  // Auto-record debouncer for edits (configurable delay, default 5 seconds)
   let debounceTimer = null;
   const triggerDebouncedRecord = (note = 'Canvi de dades') => {
     if (debounceTimer) clearTimeout(debounceTimer);
+    const delayMs = Math.max(1, (store.config?.autoSaveDebounceSeconds || 5)) * 1000;
     debounceTimer = setTimeout(() => {
       recordChangeDiff(note);
-    }, 1500);
+      debounceTimer = null;
+    }, delayMs);
+  };
+
+  const flushPendingRecord = (note = 'Canvi de dades (sortida de cel·la)') => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+      recordChangeDiff(note);
+    }
   };
 
   return {
@@ -287,6 +297,7 @@ export function useVersionHistory() {
     createSnapshot,
     recordChangeDiff,
     triggerDebouncedRecord,
+    flushPendingRecord,
     restoreVersion
   };
 }

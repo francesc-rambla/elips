@@ -20,6 +20,36 @@ const viewMode = ref('compact'); // 'complete' or 'compact' (default: compact)
 const selectedCompactSheet = ref('');
 
 let isEvaluating = false;
+let evalDebounceTimer = null;
+
+const onCellInput = () => {
+  if (evalDebounceTimer) clearTimeout(evalDebounceTimer);
+  const delayMs = Math.max(1, (store.config?.autoSaveDebounceSeconds || 5)) * 1000;
+  evalDebounceTimer = setTimeout(() => {
+    runCellEvaluationAndSave();
+  }, delayMs);
+};
+
+const onCellBlur = () => {
+  if (evalDebounceTimer) {
+    clearTimeout(evalDebounceTimer);
+    evalDebounceTimer = null;
+  }
+  runCellEvaluationAndSave();
+};
+
+const runCellEvaluationAndSave = () => {
+  if (!store.excelJsonData || isEvaluating) return;
+  isEvaluating = true;
+  try {
+    evaluateComputedFields(store.excelJsonData);
+    saveExcelData();
+  } finally {
+    nextTick(() => {
+      isEvaluating = false;
+    });
+  }
+};
 
 // Trigger instant textarea height adjustments when sheets or data change
 watch([selectedCompactSheet, viewMode, () => store.excelJsonData], () => {
@@ -2250,6 +2280,8 @@ onMounted(() => {
                           :id="'data-field-' + name + '-' + idx + '-' + col"
                           :data-path="name + '.' + idx + '.' + col"
                           v-model="store.excelJsonData[name][idx][col]"
+                          @input="onCellInput"
+                          @blur="onCellBlur"
                           class="data-input"
                           rows="1"
                           style="flex-grow: 1; resize: vertical; min-height: 28px;"
@@ -2260,6 +2292,8 @@ onMounted(() => {
                           :data-path="name + '.' + idx + '.' + col"
                           type="text"
                           v-model="store.excelJsonData[name][idx][col]"
+                          @input="onCellInput"
+                          @blur="onCellBlur"
                           class="data-input"
                           style="flex-grow: 1;"
                         >
@@ -2472,6 +2506,8 @@ onMounted(() => {
                       :id="'data-field-' + name + '-' + item.key"
                       :data-path="name + '.' + item.key"
                       v-model="store.excelJsonData[name][item.key]"
+                      @input="onCellInput"
+                      @blur="onCellBlur"
                       class="data-input"
                       rows="1"
                       style="flex-grow: 1; resize: vertical; font-size: 0.8rem; min-height: 28px;"
@@ -2482,6 +2518,8 @@ onMounted(() => {
                       :data-path="name + '.' + item.key"
                       type="text"
                       v-model="store.excelJsonData[name][item.key]"
+                      @input="onCellInput"
+                      @blur="onCellBlur"
                       class="data-input"
                       style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                     >
