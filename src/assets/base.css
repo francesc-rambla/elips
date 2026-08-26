@@ -609,7 +609,7 @@ label {
   margin-bottom: 0.35rem;
 }
 
-input[type="text"], select, textarea {
+input[type="text"], input[type="number"], input[type="date"], input[type="email"], input[type="password"], input[type="search"], select, textarea, .data-input {
   width: 100%;
   padding: 0.4rem 0.6rem;
   background-color: var(--bg-primary);
@@ -623,15 +623,23 @@ input[type="text"], select, textarea {
   box-sizing: border-box;
 }
 
+input[type="number"] {
+  font-family: var(--font-mono), monospace;
+}
+
 select {
   padding: 3px 8px !important;
   font-size: 0.85rem;
   box-sizing: border-box;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
 }
 
-input[type="text"]:focus, select:focus, textarea:focus {
+input[type="text"]:focus, input[type="number"]:focus, input[type="date"]:focus, input[type="email"]:focus, input[type="password"]:focus, input[type="search"]:focus, select:focus, textarea:focus, .data-input:focus {
   border-color: var(--border-focus);
   box-shadow: 0 0 0 3px var(--color-primary-light);
+  background-color: var(--bg-card);
+  color: var(--text-primary);
 }
 
 /* File Upload Cards */

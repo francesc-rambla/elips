@@ -2827,23 +2827,32 @@ onMounted(() => {
   border-radius: var(--radius-xs);
   font-family: inherit;
   font-size: 0.85rem;
-  background: var(--bg-primary);
+  background-color: var(--bg-primary);
   color: var(--text-primary);
   box-sizing: border-box;
   resize: vertical;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+input[type="number"].data-input {
+  font-family: var(--font-mono), monospace;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
 select.data-input, select {
   padding: 3px 8px;
   box-sizing: border-box;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 .data-input:focus {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px var(--color-primary-light);
-  background: var(--bg-card);
+  background-color: var(--bg-card);
+  color: var(--text-primary);
 }
 
 .inspector-table td {
