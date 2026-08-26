@@ -46,8 +46,31 @@ if (props.isCellMode) {
     if (store.templateText !== newVal) {
       store.templateText = newVal;
     }
+    if (newVal && newVal.trim().length > 0) {
+      const pName = localStorage.getItem('currentProjectName') || 'Default';
+      localStorage.setItem(`${pName}:templateText_backup`, newVal);
+      localStorage.setItem('templateText_backup', newVal);
+    }
   });
 }
+
+const hasBackupTemplate = computed(() => {
+  const pName = localStorage.getItem('currentProjectName') || 'Default';
+  return !!(localStorage.getItem(`${pName}:templateText_backup`) || localStorage.getItem('templateText_backup'));
+});
+
+const restoreBackupTemplate = () => {
+  const pName = localStorage.getItem('currentProjectName') || 'Default';
+  const backup = localStorage.getItem(`${pName}:templateText_backup`) || localStorage.getItem('templateText_backup');
+  if (backup) {
+    editorText.value = backup;
+    store.templateText = backup;
+    store.addLog("S'ha restaurat la plantilla des de la còpia de seguretat automàtica.", "success");
+    nextTick(() => {
+      syncCodeToVisual();
+    });
+  }
+};
 
 // DOM refs
 const canvasRef = ref(null);
@@ -2705,7 +2728,7 @@ const compileMarkdownToHtml = (markdownText) => {
         }
       }
     } else {
-      let blockText = chunk.replace(/\{\{\s*(.*?)\s*\}\}/g, (m, v) => createJinjaVarChip(v, currentLoopStack));
+      let blockText = chunk.replace(/\{\{\s*(.*?)\s*\}\}/g, (m, v) => createJinjaVarChip(v, activeLoopStack.value || []));
       
       blockText = blockText.replace(/^###### (.*)$/gm, '<h6>$1</h6>')
                            .replace(/^##### (.*)$/gm, '<h5>$1</h5>')
@@ -2749,13 +2772,24 @@ const compileMarkdownToHtml = (markdownText) => {
 // Sync loops
 const syncVisualToCode = () => {
   if (canvasRef.value && activeEditorTab.value === 'visual') {
-    editorText.value = parseHtmlToMarkdown(canvasRef.value);
+    const parsed = parseHtmlToMarkdown(canvasRef.value);
+    // Safety guard: do not overwrite editorText with empty text if canvas was blanked due to error
+    if (parsed || !editorText.value) {
+      editorText.value = parsed;
+    }
   }
 };
 
 const syncCodeToVisual = () => {
   if (canvasRef.value) {
-    canvasRef.value.innerHTML = compileMarkdownToHtml(editorText.value);
+    try {
+      const html = compileMarkdownToHtml(editorText.value);
+      if (html !== undefined && html !== null) {
+        canvasRef.value.innerHTML = html;
+      }
+    } catch (err) {
+      console.error("Error al compilar la plantilla visual:", err);
+    }
     
     canvasRef.value.querySelectorAll('.pandoc-metadata-chip').forEach(c => {
       c.onclick = (e) => { e.stopPropagation(); openMetadataModal(); };
@@ -3820,6 +3854,26 @@ onUnmounted(() => {
     <div class="template-grid">
       <!-- Editor Canvas Wrapper -->
       <div class="editor-container">
+
+        <!-- Recovery Banner if template was cleared or empty -->
+        <div v-if="(!editorText || !editorText.trim()) && hasBackupTemplate" style="background-color: var(--color-warning-light, #fffbeb); border: 2px dashed var(--color-warning, #f59e0b); padding: 12px 16px; border-radius: var(--radius-md); margin-bottom: 0.75rem; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 1.2rem;">⚠️</span>
+            <div>
+              <strong style="color: var(--color-warning-hover, #d97706); display: block; font-size: 0.85rem;">La plantilla està buida, però hi ha una còpia de seguretat disponible.</strong>
+              <span style="font-size: 0.75rem; color: var(--text-secondary);">Pots recuperar el contingut anterior fent un sol clic.</span>
+            </div>
+          </div>
+          <button 
+            type="button" 
+            class="btn btn-warning" 
+            style="font-weight: 700; font-size: 0.8rem; padding: 6px 14px; background: #f59e0b; color: white; border: none; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;"
+            @click="restoreBackupTemplate"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            <span>Restaura la Plantilla</span>
+          </button>
+        </div>
 
         <!-- Visual WYSIWYG Editor Canvas -->
         <div 
