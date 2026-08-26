@@ -71,6 +71,157 @@ const restoreBackupTemplate = () => {
     });
   }
 };
+const loadDefaultTemplate = () => {
+  const defaultTpl = `---
+title: Informe justificatiu de la celebració d’un contracte
+expedient: {{ meta.expedient }}
+unitat_promotora: {{ meta.unitat_promotora }}
+tipus_contracte: {{ meta.tipus_contracte }}
+procediment: {{ meta.procediment }}
+modalitat: {{ meta.modalitat }}
+data: {{ meta.data_redaccio }}
+---
+
+<!--
+Plantilla semàntica amb comentaris no imprimibles.
+No numerar manualment els apartats.
+-->
+
+# Objecte del contracte
+
+<!-- Definiu l’objecte del contracte de manera clara i inequívoca. -->
+{{ objecte.descripcio }}
+
+Codi CPV: {{ objecte.cpv }}
+
+{% if objecte.te_lots == "Sí" %}
+## Divisió en lots
+
+<!-- Justificació i criteris de divisió en lots (art. 99.3 LCSP). -->
+
+### Relació de lots
+{% for lot in objecte.lots %}
+- Lot {{ lot.IdLot }} – {{ lot.NomLot }}
+{% endfor %}
+
+{% for lot in objecte.lots %}
+## Lot {{ lot.IdLot }} – {{ lot.NomLot }}
+
+<!-- Descripció específica del lot. -->
+{{ lot.DescripcioLot }}
+{% endfor %}
+
+{% else %}
+## No divisió en lots
+
+<!-- Justifiqueu la no divisió en lots segons l’art. 99.3 LCSP. -->
+{{ objecte.justificacio_no_lots }}
+{% endif %}
+
+# Necessitat i idoneïtat del contracte
+
+<!-- Justificació de la necessitat i idoneïtat. -->
+{{ necessitat.text }}
+
+{% if necessitat.marc_competencial %}
+## Marc competencial
+{{ necessitat.marc_competencial }}
+{% endif %}
+
+# Dades econòmiques
+
+## Pressupost base de licitació
+- Pressupost sense IVA: {{ economia.pbl_sense_iva }} €
+- IVA ({{ economia.iva_percent }} %): {{ economia.iva_import }} €
+- Pressupost amb IVA: {{ economia.pbl_amb_iva }} €
+
+## Valor estimat del contracte
+{{ economia.vec }} €
+
+{% if economia.distribucio_costos %}
+## Distribució de costos
+| Concepte | Percentatge | Import (€) |
+|---------|-------------|------------|
+{% for c in economia.distribucio_costos %}
+| {{ c.Concepte }} | {{ c.Percentatge }} % | {{ c.Import }} |
+{% endfor %}
+{% endif %}
+
+## Partida pressupostària
+{{ economia.partida_pressupostaria }}
+
+{% if economia.es_pluriennal == "Sí" %}
+Aquest expedient té caràcter pluriennal.
+{% endif %}
+
+## Revisió de preus
+{{ economia.revisio_preus }}
+
+# Durada del contracte
+Data d’inici: {{ durada.data_inici }}  
+Data de finalització: {{ durada.data_fi }}
+
+{% if durada.hi_ha_prorroga == "Sí" %}
+## Pròrroga
+{{ durada.detall_prorroga }}
+{% endif %}
+
+# Procediment de contractació
+
+## Tipus de procediment
+{{ procediment.procediment }}
+
+## Tramitació
+{{ procediment.tramitacio }}
+
+# Garanties
+Garantia provisional: {{ garanties.garantia_provisional }}  
+Garantia definitiva: {{ garanties.garantia_definitiva_percent }} %  
+Termini de garantia: {{ garanties.termini_garantia }}
+
+# Criteris d’adjudicació
+{% for c in criteris.items %}
+## {{ c.Titol }}
+{{ c.Descripcio }}
+{% for sc in criteris.subcriteris if sc.Id == c.Id %}
+### {{ sc.Titol }}
+{{ sc.Descripcio }}
+{% if criteris.taules_puntuacio %}
+| Valor | Puntuació |
+|------|-----------|
+{% for t in criteris.taules_puntuacio if t.Id == c.Id and t.IdSub == sc.IdSub %}
+| {{ t.Valor }} | {{ t.Puntuacio }} |
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endfor %}
+
+# Mesa de contractació
+| Rol | Titular | Substitut | Unitat |
+|-----|--------|-----------|--------|
+{% for m in mesa %}
+| {{ m.Rol }} | {{ m.Titular }} | {{ m.Substitut }} | {{ m.Unitat }} |
+{% endfor %}
+
+# Seguiment i responsable del contracte
+
+## Unitat encarregada del seguiment
+{{ seguiment.unitat_seguiment }}
+
+## Mecanisme de seguiment
+{{ seguiment.mecanisme }}
+
+## Responsable del contracte
+{{ responsable.nom }}  
+{{ responsable.carrec }} – {{ responsable.unitat }}`;
+
+  editorText.value = defaultTpl;
+  store.templateText = defaultTpl;
+  store.addLog("S'ha carregat la plantilla estàndard de Memòria Justificativa.", "success");
+  nextTick(() => {
+    syncCodeToVisual();
+  });
+};
 
 // DOM refs
 const canvasRef = ref(null);
@@ -3855,24 +4006,38 @@ onUnmounted(() => {
       <!-- Editor Canvas Wrapper -->
       <div class="editor-container">
 
-        <!-- Recovery Banner if template was cleared or empty -->
-        <div v-if="(!editorText || !editorText.trim()) && hasBackupTemplate" style="background-color: var(--color-warning-light, #fffbeb); border: 2px dashed var(--color-warning, #f59e0b); padding: 12px 16px; border-radius: var(--radius-md); margin-bottom: 0.75rem; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="font-size: 1.2rem;">⚠️</span>
-            <div>
-              <strong style="color: var(--color-warning-hover, #d97706); display: block; font-size: 0.85rem;">La plantilla està buida, però hi ha una còpia de seguretat disponible.</strong>
-              <span style="font-size: 0.75rem; color: var(--text-secondary);">Pots recuperar el contingut anterior fent un sol clic.</span>
+        <!-- Recovery Banner if template is empty -->
+        <div v-if="!editorText || !editorText.trim()" style="background-color: var(--color-warning-light, #fffbeb); border: 2px dashed var(--color-warning, #f59e0b); padding: 14px 18px; border-radius: var(--radius-md); margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 10px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 1.4rem;">📄</span>
+              <div>
+                <strong style="color: var(--color-warning-hover, #d97706); display: block; font-size: 0.9rem;">La plantilla de document es troba buida.</strong>
+                <span style="font-size: 0.78rem; color: var(--text-secondary);">Pots carregar la plantilla estàndard oficial de Memòria Justificativa o restaurar des de la còpia de seguretat.</span>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <button 
+                v-if="hasBackupTemplate"
+                type="button" 
+                class="btn btn-warning" 
+                style="font-weight: 700; font-size: 0.8rem; padding: 7px 14px; background: #f59e0b; color: white; border: none; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;"
+                @click="restoreBackupTemplate"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                <span>Restaura Còpia de Seguretat</span>
+              </button>
+              <button 
+                type="button" 
+                class="btn btn-primary" 
+                style="font-weight: 700; font-size: 0.8rem; padding: 7px 14px; background: var(--color-primary); color: white; border: none; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;"
+                @click="loadDefaultTemplate"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                <span>Carrega Plantilla Estàndard</span>
+              </button>
             </div>
           </div>
-          <button 
-            type="button" 
-            class="btn btn-warning" 
-            style="font-weight: 700; font-size: 0.8rem; padding: 6px 14px; background: #f59e0b; color: white; border: none; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;"
-            @click="restoreBackupTemplate"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-            <span>Restaura la Plantilla</span>
-          </button>
         </div>
 
         <!-- Visual WYSIWYG Editor Canvas -->
