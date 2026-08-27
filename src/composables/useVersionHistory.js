@@ -106,37 +106,52 @@ export function useVersionHistory() {
     }
   };
 
-  // Save history to localStorage
+  let saveHistoryTimer = null;
   const saveHistoryToStorage = () => {
-    try {
-      const key = getStorageKey();
-      // Cap history at 50 snapshots to maintain fast performance & stay within storage bounds
-      if (historyData.value.length > 50) {
-        historyData.value = historyData.value.slice(-50);
+    if (saveHistoryTimer) clearTimeout(saveHistoryTimer);
+    saveHistoryTimer = setTimeout(() => {
+      saveHistoryTimer = null;
+      try {
+        const key = getStorageKey();
+        // Cap history at 15 snapshots and 15 diffs per snapshot to keep storage lightweight & instant
+        if (historyData.value.length > 15) {
+          historyData.value = historyData.value.slice(-15);
+        }
+        historyData.value.forEach(snap => {
+          if (snap.diffs && snap.diffs.length > 15) {
+            snap.diffs = snap.diffs.slice(-15);
+          }
+        });
+        localStorage.setItem(key, JSON.stringify(historyData.value));
+      } catch (err) {
+        console.warn("Error desant històric de versions:", err);
       }
-      localStorage.setItem(key, JSON.stringify(historyData.value));
-    } catch (err) {
-      console.warn("Error desant històric de versions:", err);
-    }
+    }, 1500);
   };
 
-  // Get latest snapshot or diff entry
+  // In-memory cache of latest state to avoid continuous expensive JSON cloning
+  let latestStateCache = null;
+
   const getLatestState = () => {
+    if (latestStateCache) return latestStateCache;
     if (historyData.value.length === 0) return null;
+    
     const lastSnap = historyData.value[historyData.value.length - 1];
+    let tpl = lastSnap.templateText || '';
+    let data = lastSnap.excelJsonData || null;
+    let meta = lastSnap.editorMetadata || [];
+
     if (lastSnap.diffs && lastSnap.diffs.length > 0) {
       const lastDiff = lastSnap.diffs[lastSnap.diffs.length - 1];
-      return {
-        templateText: lastDiff.snapshotState?.templateText ?? lastSnap.templateText,
-        excelJsonData: lastDiff.snapshotState?.excelJsonData ?? lastSnap.excelJsonData,
-        editorMetadata: lastDiff.snapshotState?.editorMetadata ?? lastSnap.editorMetadata
-      };
+      if (lastDiff.snapshotState) {
+        tpl = lastDiff.snapshotState.templateText ?? tpl;
+        data = lastDiff.snapshotState.excelJsonData ?? data;
+        meta = lastDiff.snapshotState.editorMetadata ?? meta;
+      }
     }
-    return {
-      templateText: lastSnap.templateText,
-      excelJsonData: lastSnap.excelJsonData,
-      editorMetadata: lastSnap.editorMetadata
-    };
+
+    latestStateCache = { templateText: tpl, excelJsonData: data, editorMetadata: meta };
+    return latestStateCache;
   };
 
   // Create a full baseline hourly snapshot
@@ -150,11 +165,17 @@ export function useVersionHistory() {
       timestamp: now.toISOString(),
       displayTime,
       type: reason, // 'hourly' | 'manual' | 'init'
-      note: customNote || (reason === 'hourly' ? 'Còpia automàtica d horària' : 'Punt de control manual'),
+      note: customNote || (reason === 'hourly' ? 'Còpia automàtica horària' : 'Punt de control manual'),
       templateText: store.templateText || '',
-      excelJsonData: JSON.parse(JSON.stringify(store.excelJsonData || null)),
-      editorMetadata: JSON.parse(JSON.stringify(store.editorMetadata || [])),
+      excelJsonData: store.excelJsonData ? JSON.parse(JSON.stringify(store.excelJsonData)) : null,
+      editorMetadata: store.editorMetadata ? JSON.parse(JSON.stringify(store.editorMetadata)) : [],
       diffs: []
+    };
+
+    latestStateCache = {
+      templateText: newSnap.templateText,
+      excelJsonData: newSnap.excelJsonData,
+      editorMetadata: newSnap.editorMetadata
     };
 
     historyData.value.push(newSnap);
@@ -167,7 +188,6 @@ export function useVersionHistory() {
   const recordChangeDiff = (note = 'Canvi detectat') => {
     if (!isAutoRecording.value) return;
 
-    loadHistory();
     const now = new Date();
     const nowTs = now.getTime();
 
@@ -182,7 +202,7 @@ export function useVersionHistory() {
 
     // 2. Hourly check: If > 60 minutes have passed since last hourly snapshot, seal a new baseline
     if (nowTs - lastSnapTs > 3600000) {
-      createSnapshot('hourly', 'Còpia d horària automàtica');
+      createSnapshot('hourly', 'Còpia horària automàtica');
       return;
     }
 
@@ -192,12 +212,19 @@ export function useVersionHistory() {
     const currentData = store.excelJsonData || null;
     const currentMeta = store.editorMetadata || [];
 
-    const textDiff = computeTextDiff(latestState.templateText, currentTpl);
-    const dataDiff = computeJsonDiff(latestState.excelJsonData, currentData);
-    const metaDiff = computeJsonDiff(latestState.editorMetadata, currentMeta);
+    const textDiff = computeTextDiff(latestState?.templateText, currentTpl);
+    const dataDiff = computeJsonDiff(latestState?.excelJsonData, currentData);
+    const metaDiff = computeJsonDiff(latestState?.editorMetadata, currentMeta);
 
     // Only record if something actually changed
     if (!textDiff && !dataDiff && !metaDiff) return;
+
+    // Update in-memory latest state cache
+    latestStateCache = {
+      templateText: currentTpl,
+      excelJsonData: currentData ? JSON.parse(JSON.stringify(currentData)) : null,
+      editorMetadata: currentMeta ? JSON.parse(JSON.stringify(currentMeta)) : []
+    };
 
     const diffEntry = {
       id: `diff-${nowTs}`,
@@ -209,8 +236,8 @@ export function useVersionHistory() {
       metaDiff,
       snapshotState: {
         templateText: currentTpl,
-        excelJsonData: JSON.parse(JSON.stringify(currentData)),
-        editorMetadata: JSON.parse(JSON.stringify(currentMeta))
+        excelJsonData: latestStateCache.excelJsonData,
+        editorMetadata: latestStateCache.editorMetadata
       }
     };
 

@@ -370,19 +370,36 @@ const deleteProject = (name) => {
   store.addLog(`Projecte '${name}' eliminat.`, 'info');
 };
 
+const lastSavedStateCache = new Map();
+
+const setItemIfChanged = (key, value) => {
+  const strVal = value !== null && value !== undefined ? String(value) : '';
+  if (lastSavedStateCache.get(key) !== strVal) {
+    localStorage.setItem(key, strVal);
+    lastSavedStateCache.set(key, strVal);
+  }
+};
+
+const removeItemIfExist = (key) => {
+  if (localStorage.getItem(key) !== null || lastSavedStateCache.has(key)) {
+    localStorage.removeItem(key);
+    lastSavedStateCache.delete(key);
+  }
+};
+
 const saveCurrentProject = () => {
   const name = currentProjectName.value;
   if (!name) return;
   
   if (store.excelJsonData) {
-    localStorage.setItem(`${name}:excelJsonData`, JSON.stringify(store.excelJsonData));
+    setItemIfChanged(`${name}:excelJsonData`, JSON.stringify(store.excelJsonData));
   } else {
-    localStorage.removeItem(`${name}:excelJsonData`);
+    removeItemIfExist(`${name}:excelJsonData`);
   }
-  localStorage.setItem(`${name}:excelFileName`, store.excelFileName || '');
-  localStorage.setItem(`${name}:excelFileSize`, store.excelFileSize || '0');
-  localStorage.setItem(`${name}:editorMetadata`, JSON.stringify(store.editorMetadata || []));
-  localStorage.setItem(`${name}:sheetInfo`, JSON.stringify(store.sheetInfo || []));
+  setItemIfChanged(`${name}:excelFileName`, store.excelFileName || '');
+  setItemIfChanged(`${name}:excelFileSize`, store.excelFileSize || '0');
+  setItemIfChanged(`${name}:editorMetadata`, JSON.stringify(store.editorMetadata || []));
+  setItemIfChanged(`${name}:sheetInfo`, JSON.stringify(store.sheetInfo || []));
 };
 
 const loadDocumentConfig = (pName, dName) => {
@@ -451,24 +468,23 @@ const switchActiveDocument = (newDocName) => {
 const saveCurrentDocumentState = (pName, dName) => {
   if (!pName || !dName) return;
   
-  localStorage.setItem(`${pName}:doc:${dName}:templateText`, store.templateText || '');
-  localStorage.setItem(`${pName}:doc:${dName}:templateFileName`, store.templateFileName || '');
-  localStorage.setItem(`${pName}:doc:${dName}:templateFileSize`, store.templateFileSize || '0');
+  setItemIfChanged(`${pName}:doc:${dName}:templateText`, store.templateText || '');
+  setItemIfChanged(`${pName}:doc:${dName}:templateFileName`, store.templateFileName || '');
+  setItemIfChanged(`${pName}:doc:${dName}:templateFileSize`, store.templateFileSize || '0');
   
-  localStorage.setItem(`${pName}:doc:${dName}:refDocFileName`, store.refDocFileName || '');
-  localStorage.setItem(`${pName}:doc:${dName}:refDocFileSize`, store.refDocFileSize || '0');
+  setItemIfChanged(`${pName}:doc:${dName}:refDocFileName`, store.refDocFileName || '');
+  setItemIfChanged(`${pName}:doc:${dName}:refDocFileSize`, store.refDocFileSize || '0');
   
-  localStorage.setItem(`${pName}:doc:${dName}:outNameDocx`, store.outNameDocx || '');
-  localStorage.setItem(`${pName}:doc:${dName}:outNameMd`, store.outNameMd || '');
+  setItemIfChanged(`${pName}:doc:${dName}:outNameDocx`, store.outNameDocx || '');
+  setItemIfChanged(`${pName}:doc:${dName}:outNameMd`, store.outNameMd || '');
   
   if (store.refDocFile) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      localStorage.setItem(`${pName}:doc:${dName}:refDocFileBase64`, reader.result);
-    };
-    reader.readAsDataURL(store.refDocFile);
+    store.refDocFile.arrayBuffer().then((buf) => {
+      saveBinaryFile(`${pName}:doc:${dName}:refDocBuffer`, buf);
+    }).catch(() => {});
   } else {
-    localStorage.removeItem(`${pName}:doc:${dName}:refDocFileBase64`);
+    deleteBinaryFile(`${pName}:doc:${dName}:refDocBuffer`);
+    removeItemIfExist(`${pName}:doc:${dName}:refDocFileBase64`);
   }
 };
 
