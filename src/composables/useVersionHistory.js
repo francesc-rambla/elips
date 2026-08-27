@@ -290,14 +290,33 @@ export function useVersionHistory() {
     }
   };
 
+  const pauseAutoRecording = () => {
+    isAutoRecording.value = false;
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+  };
+
+  const resumeAutoRecording = () => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    isAutoRecording.value = true;
+  };
+
   return {
     historyData,
     isHistoryModalOpen,
+    isAutoRecording,
     loadHistory,
     createSnapshot,
     recordChangeDiff,
     triggerDebouncedRecord,
     flushPendingRecord,
+    pauseAutoRecording,
+    resumeAutoRecording,
     restoreVersion
   };
 }

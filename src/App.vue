@@ -26,6 +26,8 @@ const {
   createSnapshot,
   recordChangeDiff,
   triggerDebouncedRecord,
+  pauseAutoRecording,
+  resumeAutoRecording,
   restoreVersion
 } = useVersionHistory();
 
@@ -192,6 +194,7 @@ const scrollToHeading = (item) => {
 };
 
 const openProjectsModal = () => {
+  savedProjectsList.value = JSON.parse(localStorage.getItem('savedProjectsList') || '["Default"]');
   isProjectsModalOpen.value = true;
 };
 
@@ -205,6 +208,9 @@ const createNewProject = () => {
     alert("Ja existeix un projecte amb aquest nom.");
     return;
   }
+
+  pauseAutoRecording();
+  if (window.__flushGlobalSave) window.__flushGlobalSave();
   
   // Save current project and active doc state before switching
   saveCurrentProject();
@@ -239,11 +245,25 @@ const createNewProject = () => {
   saveCurrentProject();
   saveCurrentDocumentState(cleanName, 'Document Principal');
   
+  // Initialize version history baseline for new project
+  loadHistory();
+  if (historyData.value.length === 0) {
+    createSnapshot('init', 'Punt de control inicial del projecte');
+  }
+
+  resumeAutoRecording();
+  isProjectsModalOpen.value = false;
   store.addLog(`Projecte '${cleanName}' creat i seleccionat correctament.`, 'success');
 };
 
 const loadProject = async (name) => {
-  if (name === currentProjectName.value) return;
+  if (name === currentProjectName.value) {
+    isProjectsModalOpen.value = false;
+    return;
+  }
+
+  pauseAutoRecording();
+  if (window.__flushGlobalSave) window.__flushGlobalSave();
   
   // Save current project and active doc state before switching
   saveCurrentProject();
@@ -293,7 +313,14 @@ const loadProject = async (name) => {
   
   // Now load the active document configuration
   loadDocumentConfig(name, aDoc);
-  
+
+  // Load version history timeline for target project
+  loadHistory();
+  if (historyData.value.length === 0) {
+    createSnapshot('init', 'Punt de control inicial de la sessió');
+  }
+
+  resumeAutoRecording();
   store.issues = [];
   store.addLog(`Projecte '${name}' carregat correctament amb ${documentsList.value.length} documents.`, 'success');
   isProjectsModalOpen.value = false;
@@ -328,6 +355,7 @@ const deleteProject = (name) => {
   localStorage.removeItem(`${name}:excelFileSize`);
   localStorage.removeItem(`${name}:excelFileBase64`);
   localStorage.removeItem(`${name}:editorMetadata`);
+  localStorage.removeItem(`${name}:version_history_v1`);
   
   // Remove from list
   const newList = savedProjectsList.value.filter(x => x !== name);
