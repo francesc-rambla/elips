@@ -796,11 +796,12 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
 def update_excel_from_json(excel_path, json_str, out_excel_path):
     wb = load_workbook(excel_path)
     data = json.loads(json_str)
+    orphan_records = []
     
     valid_prefixes = ('OUT_', 'JSON_', 'EXPORT_')
     has_prefixed_sheets = any(sheet.upper().startswith(valid_prefixes) for sheet in wb.sheetnames if not sheet.startswith('_') and sheet != 'editor_metadata')
     
-    internal_sheets = ('editor_metadata', 'editormetadata', '_sheet_info', '_hierarchy_schema', '_hierarchy_metadata', 'headers')
+    internal_sheets = ('editor_metadata', 'editormetadata', '_sheet_info', '_hierarchy_schema', '_hierarchy_metadata', 'headers', 'orfes')
 
     # Remove internal system phantom sheets only (never delete _sheet_info metadata sheet)
     for s_name in list(wb.sheetnames):
@@ -812,7 +813,7 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
         sheet_name_upper = sheet_name.upper()
         sheet_id = sanitize_id(sheet_name)
 
-        if sheet_id in ('editor_metadata', 'editormetadata'):
+        if sheet_id in ('editor_metadata', 'editormetadata', 'orfes'):
             continue  # Handled explicitly at the end
 
         if has_prefixed_sheets and not sheet_name_upper.startswith(valid_prefixes):
@@ -849,7 +850,7 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                             existing_keys.add(s_key)
                             val = sheet_data[s_key]
                             if not isinstance(val, (list, dict)):
-                                write_cell_value(ws, r, 2, val)
+                                write_cell_value(ws, r, 2, val, orphan_records)
                         else:
                             ws.delete_rows(r)
                             
@@ -860,7 +861,7 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                     if s_key not in existing_keys:
                         next_row = ws.max_row + 1
                         ws.cell(next_row, 1).value = k_val
-                        write_cell_value(ws, next_row, 2, val)
+                        write_cell_value(ws, next_row, 2, val, orphan_records)
                         
         elif kind == 'tabular' and isinstance(sheet_data, list):
             excel_headers = []
@@ -903,7 +904,7 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                     if matched_key is not None:
                         val = row_obj[matched_key]
                         if not isinstance(val, (list, dict)):
-                            write_cell_value(ws, excel_row, c_idx + 1, val)
+                            write_cell_value(ws, excel_row, c_idx + 1, val, orphan_records)
 
     # EXPLICITLY write editor_metadata sheet with all 14 config columns regardless of prefixes!
     meta_data = data.get('editor_metadata') or data.get('editorMetadata') or []
@@ -951,7 +952,30 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                     write_cell_value(ws_info, excel_row, c_idx + 1, val)
         ws_info.sheet_state = 'hidden'
 
+    # EXPLICITLY write 'orfes' sheet if any complex formula destination cells were encountered!
+    if orphan_records:
+        if 'orfes' in wb.sheetnames:
+            ws_orfes = wb['orfes']
+            ws_orfes.delete_rows(1, max(ws_orfes.max_row, 1))
+        else:
+            ws_orfes = wb.create_sheet(title='orfes')
+
+        orfes_headers = ['Full', 'Coordenada', 'Fórmula Original', 'Valor No Escrit']
+        for c_idx, h in enumerate(orfes_headers):
+            ws_orfes.cell(1, c_idx + 1).value = h
+
+        for r_idx, o_rec in enumerate(orphan_records):
+            r_num = r_idx + 2
+            ws_orfes.cell(r_num, 1).value = str(o_rec.get('Full', ''))
+            ws_orfes.cell(r_num, 2).value = str(o_rec.get('Coordenada', ''))
+            ws_orfes.cell(r_num, 3).value = str(o_rec.get('Fórmula Original', ''))
+            val_no_escrit = o_rec.get('Valor No Escrit', '')
+            if isinstance(val_no_escrit, (list, dict)):
+                val_no_escrit = json.dumps(val_no_escrit, ensure_ascii=False)
+            ws_orfes.cell(r_num, 4).value = val_no_escrit
+
     wb.save(out_excel_path)
+    return len(orphan_records)
 
 def update_excel_hierarchy(excel_path, hierarchy_config_json, out_excel_path):
     wb = load_workbook(excel_path)
@@ -1337,7 +1361,16 @@ def render_with_recovery(env, template_src, ctx, pass_label, max_fixes=50):
     except Exception:
         return current_src, issues
 
+SIMPLE_LINK_REGEX = re.compile(r"^=[+]?(?:(?:'([^']+)'|([A-Za-z0-9_\.]+))!)?\$?([A-Za-z]+)\$?([0-9]+)$", re.IGNORECASE)
 REF_REGEX = re.compile(r"=[+]?(?:'([^']+)'|([A-Za-z0-9_\.]+))!([A-Za-z0-9$]+)", re.IGNORECASE)
+
+def is_simple_link_formula(val_str):
+    if not isinstance(val_str, str):
+        return False
+    s = val_str.strip()
+    if not s.startswith('='):
+        return False
+    return bool(SIMPLE_LINK_REGEX.match(s))
 
 def get_referenced_cell(ws, cell):
     val = str(cell.value or '').strip()
@@ -1391,29 +1424,56 @@ def get_referenced_cell(ws, cell):
             
     return None
 
-def write_cell_value(ws, row_idx, col_idx, value):
+def write_cell_value(ws, row_idx, col_idx, value, orphan_records=None):
     from openpyxl.utils import get_column_letter
 
     cell = ws.cell(row_idx, col_idx)
     target_cell = cell
     visited = set()
 
-    # 1. Auto-propagate reference formula if current cell lacks formula but preceding row in column has one
     current_val_str = str(cell.value or '').strip()
+
+    # 1. Auto-propagate reference formula if current cell lacks formula but preceding row in column has a simple link formula
     if (cell.value is None or current_val_str == '' or not current_val_str.startswith('=')) and row_idx > 2:
         for ref_r in range(2, row_idx):
             prev_cell = ws.cell(ref_r, col_idx)
-            ref_target = get_referenced_cell(ws, prev_cell)
-            if ref_target is not None:
-                ref_sheet_name = ref_target.parent.title
-                col_letter = get_column_letter(col_idx)
-                propagated_formula = f"='{ref_sheet_name}'!{col_letter}{row_idx}"
-                cell.value = propagated_formula
-                target_cell = cell
-                break
+            if is_simple_link_formula(str(prev_cell.value or '')):
+                ref_target = get_referenced_cell(ws, prev_cell)
+                if ref_target is not None:
+                    ref_sheet_name = ref_target.parent.title
+                    col_letter = get_column_letter(col_idx)
+                    propagated_formula = f"='{ref_sheet_name}'!{col_letter}{row_idx}"
+                    cell.value = propagated_formula
+                    target_cell = cell
+                    current_val_str = propagated_formula
+                    break
 
-    # 2. Traverse reference chain
+    # 2. Check if destination cell itself is a Complex Formula (starts with '=' but is NOT a simple 1-to-1 link)
+    if current_val_str.startswith('='):
+        if not is_simple_link_formula(current_val_str):
+            if orphan_records is not None:
+                orphan_records.append({
+                    'Full': ws.title,
+                    'Coordenada': cell.coordinate,
+                    'Fórmula Original': current_val_str,
+                    'Valor No Escrit': value
+                })
+            return
+
+    # 3. Traverse simple link reference chain
     while True:
+        target_val_str = str(target_cell.value or '').strip()
+        if target_val_str.startswith('='):
+            if not is_simple_link_formula(target_val_str):
+                if orphan_records is not None:
+                    orphan_records.append({
+                        'Full': target_cell.parent.title,
+                        'Coordenada': target_cell.coordinate,
+                        'Fórmula Original': target_val_str,
+                        'Valor No Escrit': value
+                    })
+                return
+
         ref_cell = get_referenced_cell(target_cell.parent, target_cell)
         if ref_cell is None:
             break
@@ -1422,7 +1482,7 @@ def write_cell_value(ws, row_idx, col_idx, value):
             break
         visited.add(ref_key)
         target_cell = ref_cell
-    
+
     if isinstance(value, (list, dict)):
         value = json.dumps(value, ensure_ascii=False, default=_custom_json_default)
 
@@ -2676,17 +2736,25 @@ import json
 with open('/work/in.json', 'r', encoding='utf-8') as f:
     js_str = f.read()
 create_default_workbook_from_json(js_str, '/work/in.xlsx')
-update_excel_from_json('/work/in.xlsx', js_str, '/work/in.xlsx')
+orphan_count = update_excel_from_json('/work/in.xlsx', js_str, '/work/in.xlsx')
+orphan_count
       `;
-      await _pyodide.runPythonAsync(pyCreateScript);
+      const orphanCountCreate = await _pyodide.runPythonAsync(pyCreateScript);
+      if (typeof orphanCountCreate === 'number' && orphanCountCreate > 0) {
+        store.addLog("L'exportació a Excel ha trobat cel·les de destinació que contenien fórmules complexes. Per preservar la funcionalitat del full, els nous valors d'aquestes cel·les s'han desat al full 'orfes'.", "warning");
+      }
     } else if (store.excelJsonData) {
       const pyUpdateScript = `
 import json
 with open('/work/in.json', 'r', encoding='utf-8') as f:
     js_str = f.read()
-update_excel_from_json('/work/in.xlsx', js_str, '/work/in.xlsx')
+orphan_count = update_excel_from_json('/work/in.xlsx', js_str, '/work/in.xlsx')
+orphan_count
       `;
-      await _pyodide.runPythonAsync(pyUpdateScript);
+      const orphanCountUpdate = await _pyodide.runPythonAsync(pyUpdateScript);
+      if (typeof orphanCountUpdate === 'number' && orphanCountUpdate > 0) {
+        store.addLog("L'exportació a Excel ha trobat cel·les de destinació que contenien fórmules complexes. Per preservar la funcionalitat del full, els nous valors d'aquestes cel·les s'han desat al full 'orfes'.", "warning");
+      }
     }
     
     const fn = _pyodide.globals.get('render_md_two_pass_with_report');
@@ -2784,9 +2852,13 @@ create_default_workbook_from_json(js_str, '/work/in.xlsx')
 import json
 with open('/work/in.json', 'r', encoding='utf-8') as f:
     js_str = f.read()
-update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
+orphan_count = update_excel_from_json('/work/in.xlsx', js_str, '/work/out.xlsx')
+orphan_count
     `;
-    await _pyodide.runPythonAsync(pyScript);
+    const orphanCount = await _pyodide.runPythonAsync(pyScript);
+    if (typeof orphanCount === 'number' && orphanCount > 0) {
+      store.addLog("L'exportació a Excel ha trobat cel·les de destinació que contenien fórmules complexes. Per preservar la funcionalitat del full, els nous valors d'aquestes cel·les s'han desat al full 'orfes'.", "warning");
+    }
     
     // Read the updated Excel file from Pyodide virtual FS
     const excelBytes = _pyodide.FS.readFile('/work/out.xlsx');
