@@ -27,7 +27,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     templateText: localStorage.getItem('templateText') || '',
     editorMetadata: (() => {
       try {
-        return JSON.parse(localStorage.getItem('editorMetadata') || '[]');
+        const pName = localStorage.getItem('currentProjectName') || 'Default';
+        return JSON.parse(localStorage.getItem(`${pName}:editorMetadata`) || localStorage.getItem('editorMetadata') || '[]');
       } catch (e) {
         return [];
       }

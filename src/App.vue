@@ -228,6 +228,8 @@ const createNewProject = () => {
   store.excelFileSize = 0;
   store.excelFile = null;
   store.editorMetadata = [];
+  store.sheetInfo = [];
+  store.hierarchySchema = {};
   store.issues = [];
   
   // Set as current project
@@ -280,17 +282,21 @@ const loadProject = async (name) => {
   activeDocName.value = aDoc;
   localStorage.setItem(`${name}:activeDocName`, aDoc);
   
-  // Recover Excel fields from localStorage for this project
+  // Recover Excel fields & schemas from localStorage for this project
   const excelJsonData = localStorage.getItem(`${name}:excelJsonData`);
   const excelFileName = localStorage.getItem(`${name}:excelFileName`) || '';
   const excelFileSize = parseInt(localStorage.getItem(`${name}:excelFileSize`) || '0', 10);
   const editorMetadata = localStorage.getItem(`${name}:editorMetadata`);
+  const sheetInfo = localStorage.getItem(`${name}:sheetInfo`);
+  const hierarchySchema = localStorage.getItem(`${name}:hierarchySchema`);
   
   // Set Pinia store values
   store.excelJsonData = excelJsonData ? JSON.parse(excelJsonData) : null;
   store.excelFileName = excelFileName;
   store.excelFileSize = excelFileSize;
   store.editorMetadata = editorMetadata ? JSON.parse(editorMetadata) : [];
+  store.sheetInfo = sheetInfo ? JSON.parse(sheetInfo) : [];
+  store.hierarchySchema = hierarchySchema ? JSON.parse(hierarchySchema) : {};
 
   // Restore raw Excel File object from IndexedDB
   try {
@@ -305,6 +311,16 @@ const loadProject = async (name) => {
       }
     } else {
       store.excelFile = null;
+      if (store.enginesReady && _pyodide) {
+        try {
+          if (_pyodide.FS.analyzePath('/work/in.xlsx').exists) {
+            _pyodide.FS.unlink('/work/in.xlsx');
+          }
+          if (_pyodide.FS.analyzePath('/work/in.json').exists) {
+            _pyodide.FS.unlink('/work/in.json');
+          }
+        } catch (_) {}
+      }
     }
   } catch (e) {
     console.warn("Error restaurant Excel des d'IndexedDB:", e);
@@ -355,6 +371,8 @@ const deleteProject = (name) => {
   localStorage.removeItem(`${name}:excelFileSize`);
   localStorage.removeItem(`${name}:excelFileBase64`);
   localStorage.removeItem(`${name}:editorMetadata`);
+  localStorage.removeItem(`${name}:sheetInfo`);
+  localStorage.removeItem(`${name}:hierarchySchema`);
   localStorage.removeItem(`${name}:version_history_v1`);
   
   // Remove from list
@@ -400,6 +418,7 @@ const saveCurrentProject = () => {
   setItemIfChanged(`${name}:excelFileSize`, store.excelFileSize || '0');
   setItemIfChanged(`${name}:editorMetadata`, JSON.stringify(store.editorMetadata || []));
   setItemIfChanged(`${name}:sheetInfo`, JSON.stringify(store.sheetInfo || []));
+  setItemIfChanged(`${name}:hierarchySchema`, JSON.stringify(store.hierarchySchema || {}));
 };
 
 const loadDocumentConfig = (pName, dName) => {

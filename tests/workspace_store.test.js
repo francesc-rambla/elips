@@ -77,4 +77,38 @@ describe('useWorkspaceStore - Pinia State & Actions', () => {
     expect(store.formatBytes(1024)).toBe('1 KB');
     expect(store.formatBytes(1048576)).toBe('1 MB');
   });
+
+  it('aïlla correctament les metadades i esquemes entre projectes diferents', () => {
+    const store = useWorkspaceStore();
+    
+    // Configurar metadades i esquemes del Projecte A (versió 2)
+    localStorage.setItem('ProjecteA:editorMetadata', JSON.stringify([{ element: 'col_v2', group: 'pres' }]));
+    localStorage.setItem('ProjecteA:sheetInfo', JSON.stringify([{ clean_name: 'pres', version: 2 }]));
+    localStorage.setItem('ProjecteA:hierarchySchema', JSON.stringify({ pres: { v: 2 } }));
+
+    // Configurar metadades i esquemes del Projecte B (versió 1)
+    localStorage.setItem('ProjecteB:editorMetadata', JSON.stringify([{ element: 'col_v1', group: 'pres' }]));
+    localStorage.setItem('ProjecteB:sheetInfo', JSON.stringify([{ clean_name: 'pres', version: 1 }]));
+    localStorage.setItem('ProjecteB:hierarchySchema', JSON.stringify({ pres: { v: 1 } }));
+
+    // Simular lectura de dades per al Projecte A
+    localStorage.setItem('currentProjectName', 'ProjecteA');
+    const storeA_meta = JSON.parse(localStorage.getItem('ProjecteA:editorMetadata'));
+    const storeA_info = JSON.parse(localStorage.getItem('ProjecteA:sheetInfo'));
+    const storeA_schema = JSON.parse(localStorage.getItem('ProjecteA:hierarchySchema'));
+
+    expect(storeA_meta[0].element).toBe('col_v2');
+    expect(storeA_info[0].version).toBe(2);
+    expect(storeA_schema.pres.v).toBe(2);
+
+    // Simular lectura de dades per al Projecte B
+    localStorage.setItem('currentProjectName', 'ProjecteB');
+    const storeB_meta = JSON.parse(localStorage.getItem('ProjecteB:editorMetadata'));
+    const storeB_info = JSON.parse(localStorage.getItem('ProjecteB:sheetInfo'));
+    const storeB_schema = JSON.parse(localStorage.getItem('ProjecteB:hierarchySchema'));
+
+    expect(storeB_meta[0].element).toBe('col_v1');
+    expect(storeB_info[0].version).toBe(1);
+    expect(storeB_schema.pres.v).toBe(1);
+  });
 });
