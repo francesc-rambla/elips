@@ -869,7 +869,13 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
             if isinstance(sheet_data, dict):
                 existing_keys = set()
                 for r in range(ws.max_row, start_row, -1):
-                    k_val = ws.cell(r, 1).value
+                    k_cell = ws.cell(r, 1)
+                    k_val = k_cell.value
+                    k_str = str(k_val or '').strip()
+                    if k_str.startswith('=') and is_simple_link_formula(k_str):
+                        t_cell = get_referenced_cell(ws, k_cell)
+                        if t_cell is not None:
+                            k_val = t_cell.value
                     if k_val not in (None, ''):
                         s_key = sanitize_id(k_val)
                         if s_key in sheet_data:
@@ -892,7 +898,13 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
         elif kind == 'tabular' and isinstance(sheet_data, list):
             excel_headers = []
             for c in range(1, ws.max_column + 1):
-                val = ws.cell(1, c).value
+                cell_c = ws.cell(1, c)
+                val = cell_c.value
+                val_str = str(val or '').strip()
+                if val_str.startswith('=') and is_simple_link_formula(val_str):
+                    t_cell = get_referenced_cell(ws, cell_c)
+                    if t_cell is not None:
+                        val = t_cell.value
                 excel_headers.append(sanitize_id(val) if val not in (None, '') else '')
             
             active_cols = []
@@ -906,7 +918,13 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
             
             excel_headers = []
             for c in range(1, ws.max_column + 1):
-                val = ws.cell(1, c).value
+                cell_c = ws.cell(1, c)
+                val = cell_c.value
+                val_str = str(val or '').strip()
+                if val_str.startswith('=') and is_simple_link_formula(val_str):
+                    t_cell = get_referenced_cell(ws, cell_c)
+                    if t_cell is not None:
+                        val = t_cell.value
                 excel_headers.append(sanitize_id(val) if val not in (None, '') else '')
             
             for h in active_cols:
@@ -1035,7 +1053,10 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
             r_num = r_idx + 2
             ws_orfes.cell(r_num, 1).value = str(o_rec.get('Full', ''))
             ws_orfes.cell(r_num, 2).value = str(o_rec.get('Coordenada', ''))
-            ws_orfes.cell(r_num, 3).value = str(o_rec.get('Fórmula Original', ''))
+            orig_formula = str(o_rec.get('Fórmula Original', ''))
+            if orig_formula.startswith('='):
+                orig_formula = "'" + orig_formula
+            ws_orfes.cell(r_num, 3).value = orig_formula
             val_no_escrit = o_rec.get('Valor No Escrit', '')
             if isinstance(val_no_escrit, (list, dict)):
                 val_no_escrit = json.dumps(val_no_escrit, ensure_ascii=False)
