@@ -834,14 +834,16 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
         if s_lower in ('_sheet_info.headers', 'headers') or s_lower.startswith('_sheet_info.'):
             del wb[s_name]
 
-    for sheet_name in list(wb.sheetnames):
+    unprefixed_sheets = [s for s in wb.sheetnames if not any(s.upper().startswith(pfx) for pfx in valid_prefixes) and s not in internal_sheets]
+    prefixed_sheets = [s for s in wb.sheetnames if any(s.upper().startswith(pfx) for pfx in valid_prefixes) and s not in internal_sheets]
+
+    sheets_to_process = unprefixed_sheets if unprefixed_sheets else prefixed_sheets
+    for sheet_name in sheets_to_process:
         sheet_name_upper = sheet_name.upper()
         sheet_id = sanitize_id(sheet_name)
 
         if sheet_id in ('editor_metadata', 'editormetadata', 'orfes'):
-            continue  # Handled explicitly at the end
-
-        # Process all data sheets so underlying complex formulas are protected
+            continue
             
         stripped_name = sheet_name
         if has_prefixed_sheets:
@@ -975,6 +977,47 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                         val = ', '.join(str(x) for x in val)
                     write_cell_value(ws_info, excel_row, c_idx + 1, val)
         ws_info.sheet_state = 'hidden'
+
+    # Mirror link formulas onto OUT_ prefixed sheets
+    if has_prefixed_sheets and prefixed_sheets:
+        for p_sheet in prefixed_sheets:
+            stripped = p_sheet
+            for pfx in valid_prefixes:
+                if p_sheet.upper().startswith(pfx):
+                    stripped = p_sheet[len(pfx):]
+                    break
+            
+            target_sheet_name = None
+            for s in unprefixed_sheets:
+                if sanitize_id(s) == sanitize_id(stripped):
+                    target_sheet_name = s
+                    break
+                if s.replace('.', '_') == stripped.replace('.', '_'):
+                    target_sheet_name = s
+                    break
+                if sanitize_id(s).rstrip('s') == sanitize_id(stripped).rstrip('s'):
+                    target_sheet_name = s
+                    break
+            
+            if target_sheet_name and target_sheet_name in wb.sheetnames:
+                ws_target = wb[target_sheet_name]
+                ws_out = wb[p_sheet]
+                
+                t_max_r = ws_target.max_row
+                t_max_c = ws_target.max_column
+
+                # Match dimensions of ws_out to ws_target
+                for r in range(ws_out.max_row, t_max_r, -1):
+                    ws_out.delete_rows(r)
+                for c in range(ws_out.max_column, t_max_c, -1):
+                    ws_out.delete_cols(c)
+                
+                sheet_ref_str = f"'{target_sheet_name}'" if '.' in target_sheet_name or ' ' in target_sheet_name else target_sheet_name
+                
+                for r in range(1, t_max_r + 1):
+                    for c in range(1, t_max_c + 1):
+                        c_let = _col_letter(c)
+                        ws_out.cell(r, c).value = f"={sheet_ref_str}!{c_let}{r}"
 
     # EXPLICITLY write 'orfes' sheet if any complex formula destination cells were encountered!
     if orphan_records:
