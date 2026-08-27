@@ -1381,7 +1381,7 @@ def render_with_recovery(env, template_src, ctx, pass_label, max_fixes=50):
     except Exception:
         return current_src, issues
 
-SIMPLE_LINK_REGEX = re.compile(r"^=[+]?(?:(?:'([^']+)'|([A-Za-z0-9_\.]+))!)?\$?([A-Za-z]+)\$?([0-9]+)$", re.IGNORECASE)
+SIMPLE_LINK_REGEX = re.compile(r"^=[+]?(?:(?:'([^']+)'|([A-Za-z0-9_\.]+))!)?[$]?[A-Za-z]+[$]?[0-9]+$", re.IGNORECASE)
 REF_REGEX = re.compile(r"=[+]?(?:'([^']+)'|([A-Za-z0-9_\.]+))!([A-Za-z0-9$]+)", re.IGNORECASE)
 
 def is_simple_link_formula(val_str):
