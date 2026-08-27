@@ -1,5 +1,5 @@
 import { ref, computed, watch } from 'vue';
-import { useWorkspaceStore } from '../stores/workspace';
+import { useWorkspaceStore } from '../stores/workspace.js';
 
 // Fast & lightweight line-based text diff helper
 export const computeTextDiff = (oldText = '', newText = '') => {

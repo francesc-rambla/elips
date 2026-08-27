@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "test:python": "python3 tests/test_excel_python_engine.py",
-    "test": "npm run test:python",
-    "build": "npm run test:python && vite build",
+    "test:js": "vitest run",
+    "test": "npm run test:python && npm run test:js",
+    "build": "npm run test && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.4",
     "vite": "^5.1.4",
-    "vite-plugin-singlefile": "^2.0.1"
+    "vite-plugin-singlefile": "^2.0.1",
+    "vitest": "^1.6.0"
   }
 }
