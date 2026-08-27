@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "test:python": "python3 tests/test_excel_python_engine.py",
+    "test": "npm run test:python",
+    "build": "npm run test:python && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
