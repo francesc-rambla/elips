@@ -483,13 +483,18 @@ def _extract_flat_rows_for_sheet(data, raw_sheet_name, has_prefixed_sheets, vali
             continue
         p_ref_key = next(iter(p_item.keys())) if p_item else None
         p_ref_val = p_item.get(p_ref_key) if p_ref_key else None
+        is_id_key = any(term in str(p_ref_key or '').lower() for term in ['id', 'codi', 'code', 'ref', 'key', 'num'])
         
-        children = p_item.get(sub_key, [])
+        alt_sub_key = sub_key + 's' if not sub_key.endswith('s') else sub_key[:-1]
+        children = p_item.get(sub_key)
+        if children is None:
+            children = p_item.get(alt_sub_key, [])
+
         if isinstance(children, list):
             for child in children:
                 if isinstance(child, dict):
                     row = {}
-                    if p_ref_key and p_ref_val is not None:
+                    if p_ref_key and p_ref_val is not None and is_id_key:
                         row[p_ref_key] = p_ref_val
                     for k, v in child.items():
                         if not isinstance(v, (list, dict)):
@@ -836,8 +841,7 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
         if sheet_id in ('editor_metadata', 'editormetadata', 'orfes'):
             continue  # Handled explicitly at the end
 
-        if has_prefixed_sheets and not sheet_name_upper.startswith(valid_prefixes):
-            continue
+        # Process all data sheets so underlying complex formulas are protected
             
         stripped_name = sheet_name
         if has_prefixed_sheets:
