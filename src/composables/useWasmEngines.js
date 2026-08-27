@@ -260,7 +260,8 @@ def _validate_and_detect_kind(rows, raw_name=""):
     first = rows[0]
     headers_non_empty = [v for v in first if v not in (None, '')]
 
-    is_tabular = is_prefixed or is_dotted or (len(headers_non_empty) >= 3)
+    # Single-level sheets (without dots in name) with fewer than 3 columns default to KV
+    is_tabular = is_dotted or (len(headers_non_empty) >= 3)
 
     if not is_tabular:
         return 'kv'
@@ -718,6 +719,25 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                     if isinstance(data_to_set, list):
                         if not parent or not data_to_set:
                             parent[sub_key] = data_to_set if data_to_set is not None else []
+                            continue
+
+                        # Determine if parent sheet is a KV (Key-Value) sheet or single root entity
+                        parent_path_str = '.'.join(parent_parts)
+                        parent_kind = None
+                        for r_name, p_tuple in parsed.items():
+                            r_stripped = r_name
+                            if has_prefixed_sheets:
+                                for pfx in valid_prefixes:
+                                    if r_name.upper().startswith(pfx):
+                                        r_stripped = r_name[len(pfx):]
+                                        break
+                            if '.'.join([sanitize_id(p) for p in r_stripped.split('.')]) == parent_path_str:
+                                parent_kind = p_tuple[0]
+                                break
+
+                        # If parent is a KV entity or single root entity (not an item in a parent list), ALL rows belong to parent[sub_key]
+                        if parent_kind in ('kv', 'kv_header') or len(parent_parts) == 1:
+                            parent[sub_key] = data_to_set
                             continue
                         
                         sample_child = data_to_set[0]
