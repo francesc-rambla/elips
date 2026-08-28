@@ -494,11 +494,17 @@ def _extract_flat_rows_for_sheet(data, raw_sheet_name, has_prefixed_sheets, vali
             for child in children:
                 if isinstance(child, dict):
                     row = {}
+                    child_lower = {str(k).strip().lower(): k for k in child.keys()}
                     if p_ref_key and p_ref_val is not None and is_id_key:
-                        row[p_ref_key] = p_ref_val
+                        p_lower = str(p_ref_key).strip().lower()
+                        if p_lower in child_lower:
+                            row[child_lower[p_lower]] = p_ref_val
+                        else:
+                            row[p_ref_key] = p_ref_val
                     for k, v in child.items():
                         if not isinstance(v, (list, dict)):
-                            row[k] = v
+                            if k not in row:
+                                row[k] = v
                     flat_rows.append(row)
     return flat_rows
 
@@ -705,12 +711,21 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
             
             parents = _get_nested_containers(root, parent_parts)
             if not parents:
+                # Only initialize path if parent keys don't exist at all in root
                 curr_n = root
+                can_create = True
                 for p in parent_parts:
-                    if p not in curr_n or not isinstance(curr_n[p], dict):
+                    if p not in curr_n:
                         curr_n[p] = {}
+                    elif isinstance(curr_n[p], list):
+                        can_create = False
+                        break
+                    elif not isinstance(curr_n[p], dict):
+                        can_create = False
+                        break
                     curr_n = curr_n[p]
-                parents = _get_nested_containers(root, parent_parts)
+                if can_create:
+                    parents = _get_nested_containers(root, parent_parts)
             if not parents:
                 continue
                 
@@ -905,6 +920,9 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                         write_cell_value(ws, next_row, 2, val, orphan_records)
                         
         elif kind == 'tabular' and isinstance(sheet_data, list):
+            if not sheet_data:
+                continue
+
             excel_headers = []
             for c in range(1, ws.max_column + 1):
                 cell_c = ws.cell(1, c)
@@ -916,14 +934,13 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                         val = t_cell.value
                 excel_headers.append(sanitize_id(val) if val not in (None, '') else '')
             
-            active_cols = []
-            if sheet_data:
-                active_cols = [sanitize_id(k) for k in sheet_data[0].keys() if k and k not in internal_sheets and not str(k).startswith('_')]
+            active_cols = [sanitize_id(k) for k in sheet_data[0].keys() if k and k not in internal_sheets and not str(k).startswith('_')]
             
-            for c_idx in range(len(excel_headers) - 1, -1, -1):
-                h = excel_headers[c_idx]
-                if h and h not in active_cols:
-                    ws.delete_cols(c_idx + 1)
+            if active_cols:
+                for c_idx in range(len(excel_headers) - 1, -1, -1):
+                    h = excel_headers[c_idx]
+                    if h and h not in active_cols:
+                        ws.delete_cols(c_idx + 1)
             
             excel_headers = []
             for c in range(1, ws.max_column + 1):
@@ -942,9 +959,11 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                     ws.cell(1, new_col_idx).value = h
                     excel_headers.append(h)
             
-            excess = ws.max_row - (len(sheet_data) + 1)
-            if excess > 0:
-                ws.delete_rows(len(sheet_data) + 2, excess)
+            # Only delete excess rows if they do not contain template formula links
+            for r in range(ws.max_row, len(sheet_data) + 1, -1):
+                has_formula = any(str(ws.cell(r, c).value or '').strip().startswith('=') for c in range(1, ws.max_column + 1))
+                if not has_formula:
+                    ws.delete_rows(r)
                 
             for r_idx, row_obj in enumerate(sheet_data):
                 excel_row = r_idx + 2
@@ -1004,47 +1023,6 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
                         val = ', '.join(str(x) for x in val)
                     write_cell_value(ws_info, excel_row, c_idx + 1, val)
         ws_info.sheet_state = 'hidden'
-
-    # Mirror link formulas onto OUT_ prefixed sheets
-    if has_prefixed_sheets and prefixed_sheets:
-        for p_sheet in prefixed_sheets:
-            stripped = p_sheet
-            for pfx in valid_prefixes:
-                if p_sheet.upper().startswith(pfx):
-                    stripped = p_sheet[len(pfx):]
-                    break
-            
-            target_sheet_name = None
-            for s in unprefixed_sheets:
-                if sanitize_id(s) == sanitize_id(stripped):
-                    target_sheet_name = s
-                    break
-                if s.replace('.', '_') == stripped.replace('.', '_'):
-                    target_sheet_name = s
-                    break
-                if sanitize_id(s).rstrip('s') == sanitize_id(stripped).rstrip('s'):
-                    target_sheet_name = s
-                    break
-            
-            if target_sheet_name and target_sheet_name in wb.sheetnames:
-                ws_target = wb[target_sheet_name]
-                ws_out = wb[p_sheet]
-                
-                t_max_r = ws_target.max_row
-                t_max_c = ws_target.max_column
-
-                # Match dimensions of ws_out to ws_target
-                for r in range(ws_out.max_row, t_max_r, -1):
-                    ws_out.delete_rows(r)
-                for c in range(ws_out.max_column, t_max_c, -1):
-                    ws_out.delete_cols(c)
-                
-                sheet_ref_str = f"'{target_sheet_name}'" if '.' in target_sheet_name or ' ' in target_sheet_name else target_sheet_name
-                
-                for r in range(1, t_max_r + 1):
-                    for c in range(1, t_max_c + 1):
-                        c_let = _col_letter(c)
-                        ws_out.cell(r, c).value = f"={sheet_ref_str}!{c_let}{r}"
 
     # EXPLICITLY write 'orfes' sheet if any complex formula destination cells were encountered!
     if orphan_records:
