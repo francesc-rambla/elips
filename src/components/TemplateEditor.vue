@@ -1381,13 +1381,17 @@ const openTableModal = (table = null) => {
         tableColumns.value = cells.map((cell, idx) => {
           const varChip = cell.querySelector('.j-var-chip');
           const rawPath = varChip ? varChip.getAttribute('data-raw') : '';
-          const key = rawPath.split('.').pop() || '';
+          const parts = rawPath.split('|');
+          const expr = parts[0].trim();
+          const filter = parts.slice(1).join('|').trim();
+          const key = expr.split('.').pop() || '';
           const th = headers[idx];
           return {
             key,
             header: th ? th.innerText.trim() : key,
             align: cell.style.textAlign || 'left',
-            selected: true
+            selected: true,
+            filter
           };
         });
       }
@@ -1402,7 +1406,8 @@ const openTableModal = (table = null) => {
         const thLoop = table.querySelector('th[data-jinja-col-loop]');
         const thChip = thLoop ? thLoop.querySelector('.j-var-chip') : null;
         if (thChip) {
-          selectedColHeaderKey.value = thChip.getAttribute('data-raw').split('.').pop();
+          const headRaw = thChip.getAttribute('data-raw') || '';
+          selectedColHeaderKey.value = headRaw.split('|')[0].trim().split('.').pop();
         }
         
         const rows = Array.from(table.querySelectorAll('tbody tr'));
@@ -1410,12 +1415,17 @@ const openTableModal = (table = null) => {
           const td1 = r.querySelector('td:first-child');
           const td2 = r.querySelector('td[data-jinja-col-loop]');
           const chip = td2 ? td2.querySelector('.j-var-chip') : null;
-          const key = chip ? chip.getAttribute('data-raw').split('.').pop() : '';
+          const raw = chip ? chip.getAttribute('data-raw') || '' : '';
+          const parts = raw.split('|');
+          const expr = parts[0].trim();
+          const filter = parts.slice(1).join('|').trim();
+          const key = expr.split('.').pop() || '';
           return {
             key,
             header: td1 ? td1.innerText.trim() : key,
             align: td2 ? td2.style.textAlign || 'left' : 'left',
-            selected: true
+            selected: true,
+            filter
           };
         });
       }
@@ -1442,11 +1452,19 @@ const onArraySelected = () => {
     const fields = Object.keys(arr[0]).filter(k => k !== selectedArray.value.split('.').pop());
     tableColumns.value = fields.map(f => {
       const isNum = isNumericColumn(selectedArray.value, f);
+      let defaultFilter = '';
+      const fLower = f.toLowerCase();
+      if (fLower.includes('preu') || fLower.includes('import') || fLower.includes('cost') || fLower.includes('sou') || fLower.includes('pressupost') || fLower.includes('iva') || fLower.includes('base') || fLower.includes('total') || fLower.includes('valor')) {
+        defaultFilter = 'coin';
+      } else if (isNum) {
+        defaultFilter = 'number';
+      }
       return {
         key: f,
         header: f.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()),
-        align: isNum ? 'right' : 'left',
-        selected: true
+        align: (defaultFilter || isNum) ? 'right' : 'left',
+        selected: true,
+        filter: defaultFilter
       };
     });
     
@@ -1481,7 +1499,8 @@ const applyTableModal = () => {
     
     html += `<tr class="j-row-loop" data-jinja-for="${loopExpr}">`;
     activeCols.forEach(c => {
-      const chipRaw = `${iteratorVar.value.trim()}.${c.key}`;
+      const filterPart = c.filter ? ` | ${c.filter.trim().replace(/^\|\s*/, '')}` : '';
+      const chipRaw = `${iteratorVar.value.trim()}.${c.key}${filterPart}`;
       html += `<td style="text-align: ${c.align};"><span class="j-var-chip" contenteditable="false" data-raw="${chipRaw}">${resolveFieldLabel(chipRaw)}</span></td>`;
     });
     html += '</tr></tbody></table><p><br></p>';
@@ -1507,7 +1526,8 @@ const applyTableModal = () => {
     activeCols.forEach(c => {
       html += '<tr>';
       html += `<td>${c.header}</td>`;
-      const cellChipRaw = `${iteratorVar.value.trim()}.${c.key}`;
+      const filterPart = c.filter ? ` | ${c.filter.trim().replace(/^\|\s*/, '')}` : '';
+      const cellChipRaw = `${iteratorVar.value.trim()}.${c.key}${filterPart}`;
       html += `<td style="text-align: ${c.align};" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${cellChipRaw}">${resolveFieldLabel(cellChipRaw)}</span></td>`;
       html += '</tr>';
     });
@@ -2173,7 +2193,7 @@ const parseHtmlToMarkdown = (sourceElement) => {
             rowStr += `${cellText} | `;
           }
         });
-        rowStr += "\n\n";
+        rowStr += "\n";
         mdTable += rowStr;
         
         if (rIdx === 0 || row.querySelector('th')) {
@@ -2188,7 +2208,7 @@ const parseHtmlToMarkdown = (sourceElement) => {
               divStr += `${alignStr} | `;
             }
           });
-          divStr += "\n\n";
+          divStr += "\n";
           mdTable += divStr;
         }
       });
@@ -2527,7 +2547,8 @@ const parseCommentTablesToHtml = (md) => {
     
     let html = '<table><thead><tr>';
     html += '<th data-align="left">Dada</th>';
-    const headChipRaw = `${loopVar}.${colHeader}`;
+    const headJinjaMatch = lines[0].match(/\{\{\s*([^\}]+)\s*\}\}/);
+    const headChipRaw = headJinjaMatch ? headJinjaMatch[1].trim() : `${loopVar}.${colHeader}`;
     html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">${resolveFieldLabel(headChipRaw)}</span></th>`;
     html += '</tr></thead><tbody>';
     
@@ -2541,7 +2562,8 @@ const parseCommentTablesToHtml = (md) => {
       }
       
       const key = parsedRowKeys[idx] || '';
-      const cellChipRaw = `${loopVar}.${key}`;
+      const jinjaMatch = bl.match(/\{\{\s*([^\}]+)\s*\}\}/);
+      const cellChipRaw = jinjaMatch ? jinjaMatch[1].trim() : (key.includes('.') ? key : `${loopVar}.${key}`);
       const align = aligns[1] || 'left';
       
       html += '<tr>';
@@ -4494,7 +4516,7 @@ onUnmounted(() => {
 
     <!-- 4. Table Configuration Modal -->
     <div class="modal-overlay" :style="{ display: isTableModalOpen ? 'flex' : 'none' }">
-      <div class="modal-content" style="max-width: 650px; width: 95%;">
+      <div class="modal-content" style="max-width: 720px; width: 95%;">
         <div class="modal-header">
           <h3 style="border: none; padding-bottom: 0; margin: 0;">{{ activeEditTableNode ? 'Configurar / Modificar Taula' : 'Inserir Nova Taula' }}</h3>
           <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem;" @click="isTableModalOpen = false">&times;</button>
@@ -4517,7 +4539,7 @@ onUnmounted(() => {
               :class="{ 'btn-primary': tableMode === 'transposed' }"
               @click="tableMode = 'transposed'"
             >
-              🔄 Transposada (Columna iterable)
+              🔄 Transposada (Columnes iterables)
             </button>
             <button 
               class="btn-secondary" 
@@ -4556,31 +4578,41 @@ onUnmounted(() => {
             <!-- Column Fields List -->
             <div v-if="selectedArray" style="border: 1px solid var(--border-color); border-radius: 4px; padding: 0.75rem; background-color: var(--bg-tertiary);">
               <span style="font-size: 0.8rem; font-weight: bold; color: var(--text-secondary); display: block; margin-bottom: 0.5rem;">
-                {{ tableMode === 'dynamic' ? 'Selecciona les columnes i alineació' : 'Selecciona les files dades' }}
+                {{ tableMode === 'dynamic' ? 'Selecciona les columnes, alineació i filtres' : 'Selecciona les files dades, alineació i filtres' }}
               </span>
               
-              <div style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 200px; overflow-y: auto; padding-right: 4px;">
+              <div style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 220px; overflow-y: auto; padding-right: 4px;">
                 <!-- Header grid layout -->
-                <div style="display: grid; grid-template-columns: 30px 140px 180px 120px; gap: 8px; font-size: 0.7rem; font-weight:bold; text-transform:uppercase; color: var(--text-muted); border-bottom: 1px solid var(--border-color); padding-bottom: 4px; margin-bottom: 4px;">
+                <div style="display: grid; grid-template-columns: 30px 125px 150px 95px 125px; gap: 8px; font-size: 0.7rem; font-weight:bold; text-transform:uppercase; color: var(--text-muted); border-bottom: 1px solid var(--border-color); padding-bottom: 4px; margin-bottom: 4px;">
                   <span>Usa</span>
-                  <span>Clau Original</span>
-                  <span>Títol Capçalera</span>
+                  <span>Clau</span>
+                  <span>Títol</span>
                   <span>Alineació</span>
+                  <span>Filtre Jinja2</span>
                 </div>
                 
                 <div 
                   v-for="c in tableColumns" 
                   :key="c.key"
                   v-show="tableMode === 'dynamic' || c.key !== selectedColHeaderKey"
-                  style="display: grid; grid-template-columns: 30px 140px 180px 120px; gap: 8px; align-items: center;"
+                  style="display: grid; grid-template-columns: 30px 125px 150px 95px 125px; gap: 8px; align-items: center;"
                 >
                   <input type="checkbox" v-model="c.selected">
-                  <span style="font-family: monospace; font-size: 0.8rem; font-weight: 600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">{{ c.key }}</span>
+                  <span style="font-family: monospace; font-size: 0.8rem; font-weight: 600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" :title="c.key">{{ c.key }}</span>
                   <input type="text" v-model="c.header" placeholder="Capçalera" style="padding: 4px; font-size: 0.75rem;">
                   <select v-model="c.align" style="padding: 4px; font-size: 0.75rem;">
-                    <option value="left">Esquerra (abc)</option>
-                    <option value="center">Centre (1-1)</option>
-                    <option value="right">Dreta (123)</option>
+                    <option value="left">Esquerra</option>
+                    <option value="center">Centre</option>
+                    <option value="right">Dreta</option>
+                  </select>
+                  <select v-model="c.filter" style="padding: 4px; font-size: 0.75rem;">
+                    <option value="">Sense filtre</option>
+                    <option value="coin">Moneda (€ | coin)</option>
+                    <option value="number">Número (| number)</option>
+                    <option value="round(2)">Arrodonit (| round(2))</option>
+                    <option value="percent">Percentatge (| percent)</option>
+                    <option value="upper">Majúscules (| upper)</option>
+                    <option value="lower">Minúscules (| lower)</option>
                   </select>
                 </div>
               </div>

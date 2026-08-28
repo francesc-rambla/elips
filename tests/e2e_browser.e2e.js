@@ -142,8 +142,9 @@ async function runE2ETests() {
 
     // 3. Test persistence across page reload
     console.log("➡️ 4. Recarregant pàgina per comprovar persistència de les dades...");
-    await page.reload({ waitUntil: 'networkidle2' });
-    await new Promise(r => setTimeout(r, 2000));
+    await page.goto('http://localhost:8000/index.html', { waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => typeof window.localStorage !== 'undefined');
+    await new Promise(r => setTimeout(r, 1000));
 
     const reloadedState = await page.evaluate(() => {
       const pName = localStorage.getItem('currentProjectName') || 'Default';
