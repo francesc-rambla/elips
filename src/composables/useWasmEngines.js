@@ -2428,13 +2428,18 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
     import traceback
     try:
         raw_doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
-        doc = _filter_empty_rows(raw_doc)
+        if isinstance(raw_doc, dict) and 'data' in raw_doc and isinstance(raw_doc['data'], dict):
+            raw_data = raw_doc['data']
+        else:
+            raw_data = raw_doc
+        doc = _filter_empty_rows(raw_data)
 
         # Remove internal metadata keys from main data model so Jinja2 context never sees them as data nodes
         doc.pop('_sheet_info', None)
         doc.pop('editor_metadata', None)
         doc.pop('_hierarchy_schema', None)
         doc.pop('editormetadata', None)
+        doc.pop('hierarchy_schema', None)
 
         # Merge latest JSON from /work/in.json if present
         try:
@@ -2442,7 +2447,11 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
                 with open('/work/in.json', 'r', encoding='utf-8') as f:
                     json_data = json.load(f)
                     if isinstance(json_data, dict):
+                        if 'data' in json_data and isinstance(json_data['data'], dict):
+                            json_data = json_data['data']
                         for k, v in json_data.items():
+                            if k.startswith('_') or k in ('editor_metadata', 'editormetadata', '_hierarchy_schema', 'hierarchy_schema'):
+                                continue
                             if k not in doc or not doc[k]:
                                 doc[k] = v
                             elif isinstance(v, dict) and isinstance(doc[k], dict):
