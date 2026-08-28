@@ -201,5 +201,39 @@ class TestExcelPythonEngine(unittest.TestCase):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
+    def test_07_clean_ghost_rows_and_clean_kv_fields(self):
+        """Verifica que les files fantasma (zeros de fórmules) no s'afegeixen al model JSON i que els camps buits de KV queden com a cadena buida."""
+        licitacio_path = os.path.join(os.path.dirname(self.repo_root), "_plantilla_licitacio_elips.xlsx")
+        if not os.path.exists(licitacio_path):
+            self.skipTest("Fitxer _plantilla_licitacio_elips.xlsx no trobat.")
+
+        parsed = self.excel_to_json(licitacio_path)
+        data = parsed["data"]
+
+        # 1. Taula Criteris només ha de contenir els 3 criteris reals (F1, V1, F2), no 200
+        criteris = data.get("Criteris", [])
+        self.assertEqual(len(criteris), 3, f"S'esperaven 3 criteris reals, s'han obtingut {len(criteris)}")
+        self.assertEqual(criteris[0]["id"], "F1")
+        self.assertEqual(len(criteris[0].get("Subcriteris", [])), 2)
+
+        # 2. Taula pres.parts ha d'estar buida (0 files), no 200 files de zeros
+        pres = data.get("pres", {})
+        self.assertEqual(len(pres.get("parts", [])), 0, f"S'esperaven 0 partides buides, s'han obtingut {len(pres.get('parts', []))}")
+
+        # 3. Taula Lots ha d'estar buida (0 files)
+        lots = data.get("Lots", [])
+        self.assertEqual(len(lots), 0, f"S'esperaven 0 lots buits, s'han obtingut {len(lots)}")
+
+        # 4. Taula Mesa ha de contenir exactament els 4 membres reals
+        mesa = data.get("Mesa", [])
+        self.assertEqual(len(mesa), 4, f"S'esperaven 4 membres a la Mesa, s'han obtingut {len(mesa)}")
+
+        # 5. Camps KV buits (num_expedient, titol_informe, data_redaccio) han de ser cadenes buides '', no 0 ni '00:00:00'
+        general = data.get("General", {})
+        self.assertEqual(general.get("num_expedient"), "")
+        self.assertEqual(general.get("titol_informe"), "")
+        self.assertEqual(general.get("data_redaccio"), "")
+        self.assertEqual(general.get("modalitat"), "Contracte Públic")
+
 if __name__ == "__main__":
     unittest.main()

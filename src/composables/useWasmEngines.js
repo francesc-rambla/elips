@@ -222,10 +222,11 @@ def _read_rows(ws_d, ws_f=None, wb_data=None, wb_formula=None, ws_name='', date_
             
             val = _to_jsonable(val_d, date_format)
             if wb_data and wb_formula and isinstance(val_f, str) and val_f.startswith('='):
-                if val in (None, '', 0, 0.0, '0', '0.0'):
-                    val_res = _resolve_formula_ref(val_f, wb_data, wb_formula, ws_name, date_format)
-                    if val_res not in (None, ''):
-                        val = _to_jsonable(val_res, date_format)
+                val_res = _resolve_formula_ref(val_f, wb_data, wb_formula, ws_name, date_format)
+                if val_res not in (None, ''):
+                    val = _to_jsonable(val_res, date_format)
+                else:
+                    val = ''
             elif val is None:
                 val = _to_jsonable(val_f, date_format) if val_f is not None else ''
 
@@ -375,14 +376,14 @@ def _parse_table(rows, header_row_idx=0):
 
     out = []
     for rr in rows[header_row_idx + 1:]:
-        if all(v in (None, '') for v in rr):
+        if all(v in (None, '', 0, 0.0, '0', '0.0', '00:00:00', False) for v in rr):
             continue
         obj = {}
         has_any_data = False
         for col_idx, h_name in headers:
             val = rr[col_idx] if col_idx < len(rr) else None
             obj[h_name] = val
-            if val not in (None, ''):
+            if val not in (None, '', 0, 0.0, '0', '0.0', '00:00:00', False):
                 has_any_data = True
         if has_any_data:
             out.append(obj)
