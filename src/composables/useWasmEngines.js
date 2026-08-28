@@ -4,18 +4,22 @@ import * as pandocModule from '../vendor/pandoc/pandoc.js';
 import { saveBinaryFile, getBinaryFile } from '../utils/db';
 
 // Save WebAssembly engine instances outside vue reactiveness scope for speed
-let _pyodide = null;
-let _pandoc = null;
+var _pyodide = null;
+var _pandoc = null;
+var _initPromise = null;
 
 export function useWasmEngines() {
   const store = useWorkspaceStore();
   const isLoading = ref(false);
 
   const initEngines = async () => {
-    if (store.enginesReady) return;
-    isLoading.value = true;
-    store.clearLogs();
-    store.addLog("S'està iniciant el procés de càrrega dels motors WASM...", 'info');
+    if (store.enginesReady && _pyodide) return;
+    if (_initPromise) return _initPromise;
+
+    const promise = (async () => {
+      isLoading.value = true;
+      store.clearLogs();
+      store.addLog("S'està iniciant el procés de càrrega dels motors WASM...", 'info');
 
     try {
       // 1. Pyodide Initialization
@@ -2706,11 +2710,17 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
       store.addLog("Tots els motors WASM s'han carregat correctament.", 'success');
 
     } catch (e) {
+      store.enginesReady = false;
       store.addLog(`Error de càrrega WASM: ${e.message}`, 'error');
       throw e;
     } finally {
       isLoading.value = false;
+      _initPromise = null;
     }
+  })();
+
+  _initPromise = promise;
+  return promise;
   };
 
   const ensureWorkDir = () => {
@@ -2728,6 +2738,9 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
   };
 
   const parseExcel = async (fileBuffer) => {
+    if (!store.enginesReady || !_pyodide) {
+      await initEngines();
+    }
     if (!_pyodide) throw new Error("Pyodide no s'ha inicialitzat.");
     
     ensureWorkDir();

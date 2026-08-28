@@ -158,7 +158,7 @@ async function runE2ETests() {
     console.log("  ✓ Persistència després de recarregar confirmada:", reloadedState.metadades_expedient);
 
     // 4. Test uploading _plantilla_licitacio_elips.xlsx
-    const licitacioFile = path.resolve(__dirname, '../../../_plantilla_licitacio_elips.xlsx');
+    const licitacioFile = path.resolve(__dirname, '../../_plantilla_licitacio_elips.xlsx');
     if (fs.existsSync(licitacioFile)) {
       console.log("➡️ 5. Provant càrrega de _plantilla_licitacio_elips.xlsx a l'aplicació...");
       
@@ -174,6 +174,16 @@ async function runE2ETests() {
       if (fileInput) {
         await fileInput.uploadFile(licitacioFile);
         console.log("  • Fitxer enviat a l'input file...");
+        await new Promise(r => setTimeout(r, 1000));
+
+        // If warning modal appeared, confirm overwrite (Option B)
+        await page.evaluate(() => {
+          const btns = Array.from(document.querySelectorAll('.modal-overlay button'));
+          const overwriteBtn = btns.find(b => b.innerText.includes('Opció B') || b.innerText.includes('sobreescriure'));
+          if (overwriteBtn) {
+            overwriteBtn.click();
+          }
+        });
         await new Promise(r => setTimeout(r, 4500));
 
         // Switch to Data tab to inspect

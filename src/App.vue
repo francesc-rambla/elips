@@ -306,9 +306,13 @@ const loadProject = async (name) => {
       store.excelFileName = fName;
       store.excelFileSize = excelBuf.byteLength;
       store.excelFile = new File([excelBuf], fName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      if (store.enginesReady) {
+      
+      try {
+        if (!store.enginesReady) {
+          await initEngines();
+        }
         writeVirtualExcel(excelBuf);
-        try {
+        if (!store.excelJsonData || Object.keys(store.excelJsonData).length === 0) {
           const parsedData = await parseExcel(excelBuf);
           if (parsedData._sheet_info) {
             store.sheetInfo = parsedData._sheet_info;
@@ -323,9 +327,9 @@ const loadProject = async (name) => {
           }
           store.excelJsonData = parsedData;
           saveCurrentProject();
-        } catch (err) {
-          console.warn("Error re-processant Excel al carregar projecte:", err);
         }
+      } catch (err) {
+        console.warn("Error sincronitzant Excel al carregar projecte:", err);
       }
     } else {
       store.excelFile = null;
@@ -426,6 +430,7 @@ const removeItemIfExist = (key) => {
 const saveCurrentProject = () => {
   const name = currentProjectName.value || localStorage.getItem('currentProjectName') || 'Default';
   if (!name) return;
+  localStorage.setItem('currentProjectName', name);
   
   if (store.excelJsonData) {
     localStorage.setItem(`${name}:excelJsonData`, JSON.stringify(store.excelJsonData));
@@ -1005,23 +1010,25 @@ onMounted(async () => {
     const excelBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
     if (excelBuf) {
       writeVirtualExcel(excelBuf);
-      try {
-        const parsedData = await parseExcel(excelBuf);
-        if (parsedData._sheet_info) {
-          store.sheetInfo = parsedData._sheet_info;
-          delete parsedData._sheet_info;
+      if (!store.excelJsonData || Object.keys(store.excelJsonData).length === 0) {
+        try {
+          const parsedData = await parseExcel(excelBuf);
+          if (parsedData._sheet_info) {
+            store.sheetInfo = parsedData._sheet_info;
+            delete parsedData._sheet_info;
+          }
+          if (parsedData.editor_metadata) {
+            store.editorMetadata = parsedData.editor_metadata;
+            delete parsedData.editor_metadata;
+          }
+          if (parsedData._hierarchy_schema) {
+            delete parsedData._hierarchy_schema;
+          }
+          store.excelJsonData = parsedData;
+          saveCurrentProject();
+        } catch (err) {
+          console.warn("Error re-processant Excel inicial:", err);
         }
-        if (parsedData.editor_metadata) {
-          store.editorMetadata = parsedData.editor_metadata;
-          delete parsedData.editor_metadata;
-        }
-        if (parsedData._hierarchy_schema) {
-          delete parsedData._hierarchy_schema;
-        }
-        store.excelJsonData = parsedData;
-        saveCurrentProject();
-      } catch (err) {
-        console.warn("Error re-processant Excel inicial:", err);
       }
     }
   } catch (err) {
@@ -1127,13 +1134,14 @@ const bindExcelAsTemplateOnly = async (file) => {
   await saveBinaryFile(`${pName}:excelFileBuffer`, buffer);
   saveCurrentProject();
   
-  if (store.enginesReady) {
-    try {
-      writeVirtualExcel(buffer);
-      store.addLog(`Fitxer Excel plantilla '${file.name}' vinculat satisfactòriament. S'han conservat intactes totes les dades del projecte.`, "success");
-    } catch (e) {
-      console.warn("Error escrivint virtual FS in.xlsx:", e);
+  try {
+    if (!store.enginesReady) {
+      await initEngines();
     }
+    writeVirtualExcel(buffer);
+    store.addLog(`Fitxer Excel plantilla '${file.name}' vinculat satisfactòriament. S'han conservat intactes totes les dades del projecte.`, "success");
+  } catch (e) {
+    console.warn("Error escrivint virtual FS in.xlsx:", e);
   }
   showWarningModal.value = false;
   pendingFile.value = null;
@@ -1296,29 +1304,29 @@ const processExcelFile = async (file) => {
   await saveBinaryFile(`${pName}:excelFileBuffer`, buffer);
   saveCurrentProject();
 
-  if (store.enginesReady) {
-    try {
-      const parsedData = await parseExcel(buffer);
-      if (parsedData._sheet_info) {
-        store.sheetInfo = parsedData._sheet_info;
-        delete parsedData._sheet_info;
-      }
-      if (parsedData.editor_metadata) {
-        store.editorMetadata = parsedData.editor_metadata;
-        delete parsedData.editor_metadata;
-      }
-      if (parsedData._hierarchy_schema) {
-        delete parsedData._hierarchy_schema;
-      }
-
-      store.excelJsonData = parsedData;
-      saveCurrentProject();
-      store.addLog("Dades de l'Excel interpretades correctament. Podeu consultar l'esquema.", "success");
-    } catch (e) {
-      store.addLog(`Error parsejant Excel: ${e.message}`, "error");
+  try {
+    if (!store.enginesReady) {
+      store.addLog("Inicialitzant motors WASM per processar l'Excel...", "info");
+      await initEngines();
     }
-  } else {
-    store.addLog("Avís: Inicialitza els motors WASM per poder processar l'Excel.", "warning");
+    const parsedData = await parseExcel(buffer);
+    if (parsedData._sheet_info) {
+      store.sheetInfo = parsedData._sheet_info;
+      delete parsedData._sheet_info;
+    }
+    if (parsedData.editor_metadata) {
+      store.editorMetadata = parsedData.editor_metadata;
+      delete parsedData.editor_metadata;
+    }
+    if (parsedData._hierarchy_schema) {
+      delete parsedData._hierarchy_schema;
+    }
+
+    store.excelJsonData = parsedData;
+    saveCurrentProject();
+    store.addLog("Dades de l'Excel interpretades correctament. Podeu consultar l'esquema.", "success");
+  } catch (e) {
+    store.addLog(`Error parsejant Excel: ${e.message}`, "error");
   }
 };
 
