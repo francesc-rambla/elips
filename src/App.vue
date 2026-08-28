@@ -424,19 +424,19 @@ const removeItemIfExist = (key) => {
 };
 
 const saveCurrentProject = () => {
-  const name = currentProjectName.value;
+  const name = currentProjectName.value || localStorage.getItem('currentProjectName') || 'Default';
   if (!name) return;
   
   if (store.excelJsonData) {
-    setItemIfChanged(`${name}:excelJsonData`, JSON.stringify(store.excelJsonData));
+    localStorage.setItem(`${name}:excelJsonData`, JSON.stringify(store.excelJsonData));
   } else {
-    removeItemIfExist(`${name}:excelJsonData`);
+    localStorage.removeItem(`${name}:excelJsonData`);
   }
-  setItemIfChanged(`${name}:excelFileName`, store.excelFileName || '');
-  setItemIfChanged(`${name}:excelFileSize`, store.excelFileSize || '0');
-  setItemIfChanged(`${name}:editorMetadata`, JSON.stringify(store.editorMetadata || []));
-  setItemIfChanged(`${name}:sheetInfo`, JSON.stringify(store.sheetInfo || []));
-  setItemIfChanged(`${name}:hierarchySchema`, JSON.stringify(store.hierarchySchema || {}));
+  localStorage.setItem(`${name}:excelFileName`, store.excelFileName || '');
+  localStorage.setItem(`${name}:excelFileSize`, String(store.excelFileSize || '0'));
+  localStorage.setItem(`${name}:editorMetadata`, JSON.stringify(store.editorMetadata || []));
+  localStorage.setItem(`${name}:sheetInfo`, JSON.stringify(store.sheetInfo || []));
+  localStorage.setItem(`${name}:hierarchySchema`, JSON.stringify(store.hierarchySchema || {}));
 };
 
 const loadDocumentConfig = (pName, dName) => {
@@ -981,16 +981,22 @@ onMounted(async () => {
     recordChangeDiff('Comprovació automàtica horària');
   }, 300000);
 
-  // Watchers for automatic change differential recording (debounced by autoSaveDebounceSeconds)
+  // Watchers for automatic change differential recording (debounced by autoSaveDebounceSeconds) and instant localStorage sync
   watch(() => store.templateText, () => {
+    saveCurrentProject();
     triggerDebouncedRecord('Modificació a la plantilla Jinja2');
   });
   watch(() => store.excelJsonData, () => {
+    saveCurrentProject();
     triggerDebouncedRecord('Modificació a les dades del model Excel');
-  });
+  }, { deep: true });
   watch(() => store.editorMetadata, () => {
+    saveCurrentProject();
     triggerDebouncedRecord('Modificació a l\'esquema de metadades');
-  });
+  }, { deep: true });
+  watch(() => store.sheetInfo, () => {
+    saveCurrentProject();
+  }, { deep: true });
 
   // Inicialitza automàticament els motors WASM al carregar la pàgina
   try {

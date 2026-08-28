@@ -42,21 +42,12 @@ const onCellBlur = () => {
 };
 
 const runCellEvaluationAndSave = () => {
-  if (!store.excelJsonData || isEvaluating) return;
-  isEvaluating = true;
+  if (!store.excelJsonData) return;
   try {
     evaluateComputedFields(store.excelJsonData, store.editorMetadata);
-    // Deep clone to ensure all array and row references change, forcing Vue 3 to re-render all calculated fields on screen!
-    if (typeof store.excelJsonData === 'object' && store.excelJsonData !== null) {
-      store.excelJsonData = JSON.parse(JSON.stringify(store.excelJsonData));
-    }
     saveExcelData();
   } catch (err) {
     console.error("Error durant el recàlcul o desat:", err);
-  } finally {
-    nextTick(() => {
-      isEvaluating = false;
-    });
   }
 };
 
@@ -463,17 +454,24 @@ const addKvKey = (sheetName) => {
   const key = prompt("Introdueix el nom de la nova clau (es sanititzarà automàticament):");
   if (!key) return;
   const cleanKey = key.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  if (!store.excelJsonData[sheetName]) {
+    store.excelJsonData[sheetName] = {};
+  }
   if (cleanKey in store.excelJsonData[sheetName]) {
     alert("Aquesta clau ja existeix.");
     return;
   }
   store.excelJsonData[sheetName][cleanKey] = '';
+  store.excelJsonData = JSON.parse(JSON.stringify(store.excelJsonData));
+  saveExcelData();
   store.addLog(`Clau '${cleanKey}' afegida al full '${sheetName}'.`, 'info');
 };
 
 const deleteKvKey = (sheetName, key) => {
   if (confirm(`Segur que vols eliminar la clau '${key}'?`)) {
     delete store.excelJsonData[sheetName][key];
+    store.excelJsonData = JSON.parse(JSON.stringify(store.excelJsonData));
+    saveExcelData();
     store.addLog(`Clau '${key}' eliminada del full '${sheetName}'.`, 'info');
   }
 };
@@ -515,6 +513,8 @@ const addTabularRow = (sheetName, sheetData) => {
   const currentVisible = visibleRowsCount.value[sheetName] || 0;
   if (currentVisible < sheetData.length) {
     visibleRowsCount.value[sheetName] = currentVisible + 1;
+    store.excelJsonData = JSON.parse(JSON.stringify(store.excelJsonData));
+    saveExcelData();
     store.addLog(`S'ha reutilitzat una fila buida pre-existent de l'Excel al full '${sheetName}'.`, 'info');
   } else {
     const cols = getTabularColumns(sheetName, sheetData);
@@ -532,6 +532,8 @@ const addTabularRow = (sheetName, sheetData) => {
     }
     store.excelJsonData[sheetName].push(newRow);
     visibleRowsCount.value[sheetName] = currentVisible + 1;
+    store.excelJsonData = JSON.parse(JSON.stringify(store.excelJsonData));
+    saveExcelData();
     store.addLog(`S'ha afegit una nova fila al final del full '${sheetName}'.`, 'info');
   }
 };
@@ -542,6 +544,8 @@ const deleteTabularRow = (sheetName, idx) => {
     if (visibleRowsCount.value[sheetName] > 0) {
       visibleRowsCount.value[sheetName]--;
     }
+    store.excelJsonData = JSON.parse(JSON.stringify(store.excelJsonData));
+    saveExcelData();
     store.addLog(`Fila eliminada del full '${sheetName}'.`, 'info');
   }
 };
@@ -1464,11 +1468,23 @@ const handleSaveGroupConfig = (data) => {
     store.editorMetadata.push(meta);
   });
 
+  if (store.excelJsonData && store.excelJsonData[groupName]) {
+    const sheetData = store.excelJsonData[groupName];
+    if (typeof sheetData === 'object' && !Array.isArray(sheetData)) {
+      data.configList.forEach(item => {
+        if (!(item.element in sheetData)) {
+          sheetData[item.element] = '';
+        }
+      });
+    }
+  }
+
   isConfigModalOpen.value = false;
   store.addLog(`Configuració desada per al grup '${groupName}'.`, 'success');
 
   if (store.excelJsonData) {
-    store.excelJsonData.editor_metadata = store.editorMetadata;
+    store.excelJsonData = JSON.parse(JSON.stringify(store.excelJsonData));
+    saveExcelData();
     evaluateComputedFields(store.excelJsonData);
   }
 };
@@ -1683,6 +1699,9 @@ const createNewSheet = () => {
       label: fullPath.charAt(0).toUpperCase() + fullPath.slice(1).replace(/\./g, ' ➔ ')
     });
   }
+  
+  store.excelJsonData = JSON.parse(JSON.stringify(store.excelJsonData));
+  saveExcelData();
   
   isNewSheetModalOpen.value = false;
   selectedCompactSheet.value = fullPath;
@@ -2564,6 +2583,18 @@ onMounted(() => {
               </div>
             </div>
             
+            <div style="margin-top: 10px; margin-bottom: 6px; display: flex; gap: 8px;">
+              <button 
+                class="btn btn-secondary" 
+                style="padding: 4px 10px; font-size: 0.76rem; display: inline-flex; align-items: center; gap: 5px;"
+                @click="addKvKey(name)"
+                title="Afegeix una nova clau a aquest full clau/valor"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                + Afegeix Nova Clau
+              </button>
+            </div>
+            
             <!-- Integrated Hierarchical Nested Sub-Tables -->
             <template v-for="(subSchema, subKey) in getTopLevelChildSchemas(name, sheetData)" :key="subKey">
               <NestedDataNode 
@@ -2805,7 +2836,7 @@ onMounted(() => {
     />
 
     <!-- Modal for Creating New Sheet / Group -->
-    <div class="modal-overlay" v-if="isNewSheetModalOpen" style="display: flex; z-index: 1100;">
+    <div id="newSheetModalOverlay" class="modal-overlay new-sheet-modal" v-if="isNewSheetModalOpen" style="display: flex; z-index: 1100;">
       <div class="modal-content" style="max-width: 540px; width: 95%;">
         <div class="modal-header">
           <h3 style="border: none; padding-bottom: 0; margin: 0; display: flex; align-items: center; gap: 8px;">
@@ -2819,6 +2850,7 @@ onMounted(() => {
           <div class="form-row" style="display: flex; flex-direction: column; gap: 4px;">
             <label style="font-weight: 600; font-size: 0.85rem;">Nom del Full / Entitat (clau interna):</label>
             <input 
+              id="newSheetNameInput"
               type="text" 
               v-model="newSheetNameInput" 
               class="data-input" 
@@ -2830,7 +2862,7 @@ onMounted(() => {
 
           <div class="form-row" style="display: flex; flex-direction: column; gap: 4px;">
             <label style="font-weight: 600; font-size: 0.85rem;">Tipus d'Estructura de Full:</label>
-            <select v-model="newSheetKindInput" class="data-input">
+            <select id="newSheetKindSelect" v-model="newSheetKindInput" class="data-input">
               <option value="kv">Clau-Valor (KV - formulari d'un sol registre)</option>
               <option value="tabular">Tabular (Llista / taula de rengleres independents)</option>
               <option value="sub_table">Sub-taula Aniuada (taula fill vinculada a un altre full)</option>
@@ -2839,7 +2871,7 @@ onMounted(() => {
 
           <div v-if="newSheetKindInput === 'sub_table'" class="form-row" style="display: flex; flex-direction: column; gap: 4px;">
             <label style="font-weight: 600; font-size: 0.85rem;">Full Pare (al qual pertany aquesta sub-taula):</label>
-            <select v-model="newSheetParentInput" class="data-input">
+            <select id="newSheetParentSelect" v-model="newSheetParentInput" class="data-input">
               <option value="">[Selecciona Full Pare (ex: pres o pres.parts)]</option>
               <option v-for="p in availableParentSheets" :key="p" :value="p">{{ p }}</option>
             </select>
@@ -2851,7 +2883,7 @@ onMounted(() => {
 
         <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
           <button class="btn btn-secondary" style="width: auto;" @click="isNewSheetModalOpen = false">Cancel·la</button>
-          <button class="btn btn-primary" style="width: auto;" @click="createNewSheet" :disabled="!newSheetNameInput.trim()">
+          <button id="newSheetConfirmBtn" class="btn btn-primary" style="width: auto;" @click="createNewSheet" :disabled="!newSheetNameInput.trim()">
             ✓ Crear Full / Grup
           </button>
         </div>

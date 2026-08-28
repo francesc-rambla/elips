@@ -23,22 +23,26 @@ export function useWasmEngines() {
       store.addLog(`Carregant Pyodide Core des de ${pyIndexUrl}...`, 'info');
       
       if (!window.loadPyodide) {
-        throw new Error("El script de Pyodide no està carregat a l'index.html.");
+        for (let i = 0; i < 30; i++) {
+          if (window.loadPyodide) break;
+          await new Promise(r => setTimeout(r, 300));
+        }
+        if (!window.loadPyodide) {
+          throw new Error("El script de Pyodide no s'ha pogut carregar des del CDN o l'index.html.");
+        }
       }
       
       _pyodide = await window.loadPyodide({ indexURL: pyIndexUrl });
       store.addLog("Pyodide Core carregat correctament.", 'success');
       
-      store.addLog("Instal·lant llibreria micropip per gestionar dependències...", 'info');
-      await _pyodide.loadPackage("micropip");
-      
-      store.addLog("Instal·lant dependències en segon pla (jinja2 + openpyxl)...", 'info');
+      store.addLog("Carregant paquets Python (jinja2 + micropip)...", 'info');
+      await _pyodide.loadPackage(["jinja2", "micropip"]);
+      store.addLog("Instal·lant openpyxl via micropip...", 'info');
       await _pyodide.runPythonAsync(`
 import micropip
-await micropip.install(['jinja2', 'openpyxl'])
-print('Instal·lació de dependències completada')
+await micropip.install('openpyxl')
       `);
-      store.addLog("Llibreries jinja2 i openpyxl disponibles en entorn Python.", 'success');
+      store.addLog("Llibreries jinja2 i openpyxl carregades correctament en entorn Python.", 'success');
 
       // Injecting PyEngine logic
       store.addLog("S'està injectant la lògica de processament en Python...", 'info');
@@ -2973,8 +2977,18 @@ orphan_count
       store.excelFileName = fileName;
       store.excelFile = new File([excelBytes], fileName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       await saveBinaryFile(`${pName}:excelFileBuffer`, excelBytes.buffer);
+
+      if (store.excelJsonData) {
+        localStorage.setItem(`${pName}:excelJsonData`, JSON.stringify(store.excelJsonData));
+      }
+      if (store.editorMetadata) {
+        localStorage.setItem(`${pName}:editorMetadata`, JSON.stringify(store.editorMetadata));
+      }
+      if (store.sheetInfo) {
+        localStorage.setItem(`${pName}:sheetInfo`, JSON.stringify(store.sheetInfo));
+      }
     } catch (e) {
-      console.warn("Error desant el fitxer Excel a IndexedDB:", e);
+      console.warn("Error desant el fitxer Excel a IndexedDB/localStorage:", e);
     }
 
     return new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });

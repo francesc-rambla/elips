@@ -19,7 +19,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     // Core data outputs (restored from localStorage)
     excelJsonData: (() => {
       try {
-        return JSON.parse(localStorage.getItem('excelJsonData') || 'null');
+        const pName = localStorage.getItem('currentProjectName') || 'Default';
+        return JSON.parse(localStorage.getItem(`${pName}:excelJsonData`) || localStorage.getItem('excelJsonData') || 'null');
       } catch (e) {
         return null;
       }
