@@ -139,5 +139,27 @@ class TestExcelPythonEngine(unittest.TestCase):
         sub_count = len(criteris[0].get("Subcriteris", []))
         self.assertLessEqual(sub_count, 10, f"Nombre de subcriteris anòmals per a la fila 0: {sub_count}")
 
+    def test_05_update_excel_licitacio_merged_cells(self):
+        """Verifica l'exportació d'Excel per a plantilles amb cel·les fusionades (MergedCell) com General i Pressupost."""
+        licitacio_path = os.path.join(os.path.dirname(self.repo_root), "_plantilla_licitacio_elips.xlsx")
+        if not os.path.exists(licitacio_path):
+            self.skipTest("Fitxer _plantilla_licitacio_elips.xlsx no trobat.")
+
+        parsed = self.excel_to_json(licitacio_path)
+        json_str = json.dumps(parsed["data"], ensure_ascii=False)
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            # L'exportació no ha de llençar cap error d'AttributeError MergedCell
+            orphan_count = self.update_excel_from_json(licitacio_path, json_str, tmp_path)
+            self.assertIsInstance(orphan_count, int)
+            self.assertTrue(os.path.exists(tmp_path))
+            self.assertGreater(os.path.getsize(tmp_path), 0)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
 if __name__ == "__main__":
     unittest.main()

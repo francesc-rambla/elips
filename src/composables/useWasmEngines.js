@@ -846,7 +846,7 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
     unprefixed_sheets = [s for s in wb.sheetnames if not any(s.upper().startswith(pfx) for pfx in valid_prefixes) and s not in internal_sheets]
     prefixed_sheets = [s for s in wb.sheetnames if any(s.upper().startswith(pfx) for pfx in valid_prefixes) and s not in internal_sheets]
 
-    sheets_to_process = unprefixed_sheets if unprefixed_sheets else prefixed_sheets
+    sheets_to_process = prefixed_sheets if prefixed_sheets else unprefixed_sheets
     for sheet_name in sheets_to_process:
         sheet_name_upper = sheet_name.upper()
         sheet_id = sanitize_id(sheet_name)
@@ -1516,15 +1516,29 @@ def get_referenced_cell(ws, cell):
                 pass
 
         if matched_sheet and matched_sheet in wb.sheetnames:
+            from openpyxl.cell.cell import MergedCell
             target_ws = wb[matched_sheet]
-            return target_ws[cell_coord]
+            ref_c = target_ws[cell_coord]
+            if isinstance(ref_c, MergedCell) or type(ref_c).__name__ == 'MergedCell':
+                for rng in target_ws.merged_cells.ranges:
+                    if ref_c.coordinate in rng:
+                        ref_c = target_ws.cell(rng.min_row, rng.min_col)
+                        break
+            return ref_c
             
     return None
 
 def write_cell_value(ws, row_idx, col_idx, value, orphan_records=None):
     from openpyxl.utils import get_column_letter
+    from openpyxl.cell.cell import MergedCell
 
     cell = ws.cell(row_idx, col_idx)
+    if isinstance(cell, MergedCell) or type(cell).__name__ == 'MergedCell':
+        for rng in ws.merged_cells.ranges:
+            if cell.coordinate in rng:
+                cell = ws.cell(rng.min_row, rng.min_col)
+                break
+
     target_cell = cell
     visited = set()
 
@@ -1597,7 +1611,14 @@ def write_cell_value(ws, row_idx, col_idx, value, orphan_records=None):
             except ValueError:
                 pass
                 
-    target_cell.value = value
+    if isinstance(target_cell, MergedCell) or type(target_cell).__name__ == 'MergedCell':
+        for rng in target_cell.parent.merged_cells.ranges:
+            if target_cell.coordinate in rng:
+                target_cell = target_cell.parent.cell(rng.min_row, rng.min_col)
+                break
+
+    if not (isinstance(target_cell, MergedCell) or type(target_cell).__name__ == 'MergedCell'):
+        target_cell.value = value
 
 def create_default_workbook_from_json(json_str, out_path):
     import json
