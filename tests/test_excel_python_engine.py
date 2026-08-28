@@ -121,5 +121,23 @@ class TestExcelPythonEngine(unittest.TestCase):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
+    def test_04_licitacio_plantilla_no_cartesian_explosion(self):
+        """Verifica que fitxers complexos com _plantilla_licitacio_elips.xlsx no generen duplicacions cartesianes."""
+        licitacio_path = os.path.join(os.path.dirname(self.repo_root), "_plantilla_licitacio_elips.xlsx")
+        if not os.path.exists(licitacio_path):
+            self.skipTest("Fitxer _plantilla_licitacio_elips.xlsx no trobat.")
+
+        parsed = self.excel_to_json(licitacio_path)
+        json_str = json.dumps(parsed["data"], ensure_ascii=False)
+        
+        # El JSON de dades per a la plantilla complexa ha d'ocupar menys d'1 MB (evitant l'explosió d'11 MB)
+        self.assertLess(len(json_str), 1024 * 1024, f"JSON de dades massa gran: {len(json_str)} bytes")
+
+        # Comprovar que els subcriteris de la primera fila no s'han duplicat 400 vegades a cada fila
+        criteris = parsed["data"].get("Criteris", [])
+        self.assertGreater(len(criteris), 0)
+        sub_count = len(criteris[0].get("Subcriteris", []))
+        self.assertLessEqual(sub_count, 10, f"Nombre de subcriteris anòmals per a la fila 0: {sub_count}")
+
 if __name__ == "__main__":
     unittest.main()

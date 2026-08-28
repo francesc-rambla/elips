@@ -740,8 +740,9 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                                 parent_kind = p_tuple[0]
                                 break
 
-                        # If parent is a KV entity or single root entity (not an item in a parent list), ALL rows belong to parent[sub_key]
-                        if parent_kind in ('kv', 'kv_header') or len(parent_parts) == 1:
+                        # If parent is a KV entity or single root dictionary (not an item in a tabular parent list), ALL rows belong to parent[sub_key]
+                        is_parent_root_dict = (len(parent_parts) == 1 and isinstance(root.get(parent_parts[0]), dict))
+                        if parent_kind in ('kv', 'kv_header') or is_parent_root_dict:
                             parent[sub_key] = data_to_set
                             continue
                         
@@ -761,14 +762,22 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                                     parent[sub_key] = matched_children
                                     continue
 
-                            common_keys = [k for k in sample_child.keys() if k in parent and parent[k] is not None and not _is_dummy_key(parent[k])]
-                            id_keys = [k for k in common_keys if any(term in k.lower() for term in ['id', 'codi', 'code', 'ref', 'key', 'num'])]
-                            matching_keys = id_keys if id_keys else common_keys
+                            # Case-insensitive key matching between parent and child row keys
+                            parent_keys_lower = {str(k).strip().lower(): k for k in parent.keys() if k and not _is_dummy_key(parent[k])}
+                            common_pairs = []
+                            for ck in sample_child.keys():
+                                ck_lower = str(ck).strip().lower()
+                                if ck_lower in parent_keys_lower:
+                                    pk = parent_keys_lower[ck_lower]
+                                    common_pairs.append((pk, ck))
+
+                            id_pairs = [(pk, ck) for pk, ck in common_pairs if any(term in ck.lower() for term in ['id', 'codi', 'code', 'ref', 'key', 'num'])]
+                            matching_pairs = id_pairs if id_pairs else common_pairs
                             
-                            if matching_keys:
+                            if matching_pairs:
                                 matched_children = [
                                     c for c in data_to_set
-                                    if isinstance(c, dict) and all(str(c.get(k, '')).strip() == str(parent[k]).strip() for k in matching_keys)
+                                    if isinstance(c, dict) and all(str(c.get(ck, '')).strip() == str(parent.get(pk, '')).strip() for pk, ck in matching_pairs)
                                 ]
                                 parent[sub_key] = matched_children
                             else:
