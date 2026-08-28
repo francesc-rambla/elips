@@ -81,9 +81,9 @@ watch(() => store.excelJsonData, (newVal) => {
         isEvaluating = false;
       });
     }
-    const keys = Object.keys(newVal).filter(k => k !== 'editor_metadata' && k !== '_hierarchy_schema');
+    const keys = Object.keys(newVal).filter(k => k !== 'editor_metadata' && k !== '_hierarchy_schema' && isRootSheet(k));
     if (keys.length > 0) {
-      if (!selectedCompactSheet.value) {
+      if (!selectedCompactSheet.value || !keys.includes(selectedCompactSheet.value)) {
         selectedCompactSheet.value = keys[0];
       }
       keys.forEach(k => {

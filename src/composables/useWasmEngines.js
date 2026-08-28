@@ -168,47 +168,51 @@ def _to_jsonable(v, date_format='iso'):
         return v.decode('utf-8', errors='ignore')
     return str(v)
 
-def _resolve_formula_ref(form_str, wb_data, wb_formula, current_ws_name, date_format='iso', visited=None):
+def _resolve_simple_cell_ref(form_str, wb_data, wb_formula, current_ws_name='', visited=None):
     if visited is None:
         visited = set()
     if not isinstance(form_str, str) or not form_str.startswith('='):
-        return form_str
+        return False, None
+    clean = form_str.strip()
+    if clean in visited:
+        return True, ''
+    visited.add(clean)
     
-    clean_form = form_str.strip()
-    if clean_form in visited:
-        return ''
-    visited.add(clean_form)
-
-    m = re.match(r"^='?([^'!]+)'?!([A-Z]+)(\d+)$", clean_form, re.IGNORECASE)
+    m = re.match(r"^='?([^'!]+)'?!([A-Za-z]+)(\d+)$", clean)
     if m:
         target_sheet = m.group(1)
         col_str = m.group(2).upper()
         row_num = int(m.group(3))
-
+        
         resolved_sheet = target_sheet
         if resolved_sheet not in wb_data.sheetnames:
             if f"OUT_{resolved_sheet}" in wb_data.sheetnames:
                 resolved_sheet = f"OUT_{resolved_sheet}"
             elif resolved_sheet.startswith("OUT_") and resolved_sheet[4:] in wb_data.sheetnames:
                 resolved_sheet = resolved_sheet[4:]
-
+        
         if resolved_sheet in wb_data.sheetnames:
             col_num = 0
             for char in col_str:
                 col_num = col_num * 26 + (ord(char) - ord('A') + 1)
-
-            ws_t_d = wb_data[resolved_sheet]
-            ws_t_f = wb_formula[resolved_sheet]
-
-            val_d = ws_t_d.cell(row_num, col_num).value
-            if val_d not in (None, ''):
-                return val_d
-
-            val_f = ws_t_f.cell(row_num, col_num).value
+            
+            ws_d = wb_data[resolved_sheet]
+            ws_f = wb_formula[resolved_sheet]
+            
+            val_d = ws_d.cell(row_num, col_num).value
+            val_f = ws_f.cell(row_num, col_num).value
+            
             if isinstance(val_f, str) and val_f.startswith('='):
-                return _resolve_formula_ref(val_f, wb_data, wb_formula, resolved_sheet, date_format, visited)
-            return val_f if val_f is not None else ''
-    return ''
+                is_sub, sub_val = _resolve_simple_cell_ref(val_f, wb_data, wb_formula, resolved_sheet, visited)
+                if is_sub:
+                    return True, sub_val
+            
+            if val_d is not None and str(val_d).strip() != '':
+                return True, val_d
+            if val_f is not None and not str(val_f).startswith('='):
+                return True, val_f
+            return True, ''
+    return False, None
 
 def _read_rows(ws_d, ws_f=None, wb_data=None, wb_formula=None, ws_name='', date_format='iso'):
     ws_f = ws_f if ws_f is not None else ws_d
@@ -222,11 +226,15 @@ def _read_rows(ws_d, ws_f=None, wb_data=None, wb_formula=None, ws_name='', date_
             
             val = _to_jsonable(val_d, date_format)
             if wb_data and wb_formula and isinstance(val_f, str) and val_f.startswith('='):
-                val_res = _resolve_formula_ref(val_f, wb_data, wb_formula, ws_name, date_format)
-                if val_res not in (None, ''):
-                    val = _to_jsonable(val_res, date_format)
+                is_link, target_val = _resolve_simple_cell_ref(val_f, wb_data, wb_formula, ws_name)
+                if is_link:
+                    if target_val not in (None, ''):
+                        val = _to_jsonable(target_val, date_format)
+                    else:
+                        val = ''
                 else:
-                    val = ''
+                    if val is None:
+                        val = ''
             elif val is None:
                 val = _to_jsonable(val_f, date_format) if val_f is not None else ''
 
@@ -379,14 +387,10 @@ def _parse_table(rows, header_row_idx=0):
         if all(v in (None, '', 0, 0.0, '0', '0.0', '00:00:00', False) for v in rr):
             continue
         obj = {}
-        has_any_data = False
         for col_idx, h_name in headers:
             val = rr[col_idx] if col_idx < len(rr) else None
-            obj[h_name] = val
-            if val not in (None, '', 0, 0.0, '0', '0.0', '00:00:00', False):
-                has_any_data = True
-        if has_any_data:
-            out.append(obj)
+            obj[h_name] = val if val is not None else ''
+        out.append(obj)
     return out
 
 def _parse_sheet(ws_d, ws_f, wb_data, wb_formula, date_format='iso'):
