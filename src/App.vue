@@ -308,6 +308,24 @@ const loadProject = async (name) => {
       store.excelFile = new File([excelBuf], fName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       if (store.enginesReady) {
         writeVirtualExcel(excelBuf);
+        try {
+          const parsedData = await parseExcel(excelBuf);
+          if (parsedData._sheet_info) {
+            store.sheetInfo = parsedData._sheet_info;
+            delete parsedData._sheet_info;
+          }
+          if (parsedData.editor_metadata) {
+            store.editorMetadata = parsedData.editor_metadata;
+            delete parsedData.editor_metadata;
+          }
+          if (parsedData._hierarchy_schema) {
+            delete parsedData._hierarchy_schema;
+          }
+          store.excelJsonData = parsedData;
+          saveCurrentProject();
+        } catch (err) {
+          console.warn("Error re-processant Excel al carregar projecte:", err);
+        }
       }
     } else {
       store.excelFile = null;
@@ -977,10 +995,67 @@ onMounted(async () => {
   // Inicialitza automàticament els motors WASM al carregar la pàgina
   try {
     await initEngines();
+    const pName = currentProjectName.value || localStorage.getItem('currentProjectName') || 'Default';
+    const excelBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
+    if (excelBuf) {
+      writeVirtualExcel(excelBuf);
+      try {
+        const parsedData = await parseExcel(excelBuf);
+        if (parsedData._sheet_info) {
+          store.sheetInfo = parsedData._sheet_info;
+          delete parsedData._sheet_info;
+        }
+        if (parsedData.editor_metadata) {
+          store.editorMetadata = parsedData.editor_metadata;
+          delete parsedData.editor_metadata;
+        }
+        if (parsedData._hierarchy_schema) {
+          delete parsedData._hierarchy_schema;
+        }
+        store.excelJsonData = parsedData;
+        saveCurrentProject();
+      } catch (err) {
+        console.warn("Error re-processant Excel inicial:", err);
+      }
+    }
   } catch (err) {
     isTerminalOpen.value = true;
   }
 });
+
+const reprocessExcelFile = async () => {
+  const pName = currentProjectName.value || localStorage.getItem('currentProjectName') || 'Default';
+  const excelBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
+  if (!excelBuf) {
+    store.addLog("No hi ha cap fitxer Excel desat al projecte per re-processar.", "warning");
+    return;
+  }
+  if (!store.enginesReady) {
+    store.addLog("Els motors WASM encara s'estan inicialitzant.", "warning");
+    return;
+  }
+  try {
+    store.addLog("Re-processant el fitxer Excel amb el motor Python WASM...", "info");
+    writeVirtualExcel(excelBuf);
+    const parsedData = await parseExcel(excelBuf);
+    if (parsedData._sheet_info) {
+      store.sheetInfo = parsedData._sheet_info;
+      delete parsedData._sheet_info;
+    }
+    if (parsedData.editor_metadata) {
+      store.editorMetadata = parsedData.editor_metadata;
+      delete parsedData.editor_metadata;
+    }
+    if (parsedData._hierarchy_schema) {
+      delete parsedData._hierarchy_schema;
+    }
+    store.excelJsonData = parsedData;
+    saveCurrentProject();
+    store.addLog("Excel re-processat i model de dades sincronitzat correctament.", "success");
+  } catch (err) {
+    store.addLog(`Error al re-processar l'Excel: ${err.message}`, "error");
+  }
+};
 
 const showWarningModal = ref(false);
 const pendingFile = ref(null);
@@ -2404,6 +2479,17 @@ const generateDocuments = async () => {
                   @file-loaded="onExcelLoaded"
                   @file-removed="store.resetExcel()"
                 />
+                <div v-if="store.excelFile || store.excelFileName" style="margin-top: 6px; display: flex; gap: 8px;">
+                  <button 
+                    class="btn btn-secondary" 
+                    style="padding: 4px 10px; font-size: 0.76rem; display: inline-flex; align-items: center; gap: 5px;"
+                    @click="reprocessExcelFile"
+                    title="Força la re-interpretació de l'Excel des de zero amb el motor Python WASM per sincronitzar totes les dades"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+                    Re-processa i Sincronitza Excel
+                  </button>
+                </div>
               </div>
 
               <div>
