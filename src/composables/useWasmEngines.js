@@ -35,13 +35,20 @@ export function useWasmEngines() {
       _pyodide = await window.loadPyodide({ indexURL: pyIndexUrl });
       store.addLog("Pyodide Core carregat correctament.", 'success');
       
-      store.addLog("Carregant paquets Python (jinja2 + micropip)...", 'info');
-      await _pyodide.loadPackage(["jinja2", "micropip"]);
-      store.addLog("Instal·lant openpyxl via micropip...", 'info');
-      await _pyodide.runPythonAsync(`
+      store.addLog("Carregant paquets Python (jinja2 + openpyxl)...", 'info');
+      try {
+        await _pyodide.loadPackage(["jinja2", "openpyxl"]);
+      } catch (errPkg) {
+        store.addLog("Carregant via micropip fallback...", 'info');
+        await _pyodide.loadPackage(["jinja2", "micropip"]);
+        await _pyodide.runPythonAsync(`
 import micropip
-await micropip.install('openpyxl')
-      `);
+try:
+    await micropip.install('openpyxl')
+except Exception:
+    pass
+        `);
+      }
       store.addLog("Llibreries jinja2 i openpyxl carregades correctament en entorn Python.", 'success');
 
       // Injecting PyEngine logic

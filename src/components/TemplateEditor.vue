@@ -1490,12 +1490,9 @@ const applyTableModal = () => {
       alert("Si us plau, selecciona un array de dades i un iterador vàlids.");
       return;
     }
-    if (!selectedColHeaderKey.value) {
-      alert("Si us plau, selecciona una capçalera de columna.");
-      return;
-    }
-    const loopExpr = `${iteratorVar.value.trim()} in ${selectedArray.value.trim()}`;
-    const activeCols = tableColumns.value.filter(c => c.selected && c.key && c.key !== selectedColHeaderKey.value);
+    const colHeaderKey = selectedColHeaderKey.value.trim();
+    const loopExpr = `${iteratorVar.value.trim()} in ${selectedArray.value.trim()}${colHeaderKey ? ` if ${iteratorVar.value.trim()}.${colHeaderKey}` : ''}`;
+    const activeCols = tableColumns.value.filter(c => c.selected && c.key && c.key !== colHeaderKey);
     if (activeCols.length === 0) {
       alert("Has de seleccionar almenys una fila de dades.");
       return;
@@ -1503,7 +1500,7 @@ const applyTableModal = () => {
     
     html += '<table><thead><tr>';
     html += '<th data-align="left">Dada</th>';
-    const headChipRaw = `${iteratorVar.value.trim()}.${selectedColHeaderKey.value}`;
+    const headChipRaw = `${iteratorVar.value.trim()}.${colHeaderKey}`;
     html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">${resolveFieldLabel(headChipRaw)}</span></th>`;
     html += '</tr></thead><tbody>';
     
@@ -2511,7 +2508,8 @@ const parseCommentTablesToHtml = (md) => {
     const headerValues = headers.slice(1);
     
     const loopVar = loopExpr.split(' ')[0];
-    const arrayPath = loopExpr.split(' in ')[1] || '';
+    const afterIn = loopExpr.split(' in ')[1] || '';
+    const arrayPath = afterIn.split(' if ')[0].trim();
     
     // Auto-healing fallback for column header key
     if (!colHeader) {
