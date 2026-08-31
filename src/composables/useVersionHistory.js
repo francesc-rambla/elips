@@ -1,5 +1,6 @@
 import { ref, computed, watch } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace.js';
+import { saveDbItem, getDbItem } from '../utils/db.js';
 
 // Fast & lightweight line-based text diff helper
 export const computeTextDiff = (oldText = '', newText = '') => {
@@ -90,16 +91,38 @@ export function useVersionHistory() {
     return `${getProjectName()}:version_history_v1`;
   };
 
-  // Load history from localStorage
-  const loadHistory = () => {
+  // Load history from IndexedDB + localStorage fallback
+  const loadHistory = async () => {
     try {
       const key = getStorageKey();
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        historyData.value = JSON.parse(raw);
+      let loadedData = null;
+
+      // 1. Try loading full history from IndexedDB
+      try {
+        const idbData = await getDbItem(key);
+        if (idbData && Array.isArray(idbData) && idbData.length > 0) {
+          loadedData = idbData;
+        }
+      } catch (_) {}
+
+      // 2. Fallback to localStorage if not found in IndexedDB
+      if (!loadedData) {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          try {
+            loadedData = JSON.parse(raw);
+          } catch (_) {}
+        }
+      }
+
+      if (loadedData && Array.isArray(loadedData)) {
+        historyData.value = loadedData;
       } else {
         historyData.value = [];
       }
+
+      // Check if baseline/hourly snapshot is needed on load
+      checkAndTriggerHourlySnapshot();
     } catch (err) {
       console.warn("Error carregant històric de versions:", err);
       historyData.value = [];
@@ -109,24 +132,33 @@ export function useVersionHistory() {
   let saveHistoryTimer = null;
   const saveHistoryToStorage = () => {
     if (saveHistoryTimer) clearTimeout(saveHistoryTimer);
-    saveHistoryTimer = setTimeout(() => {
+    saveHistoryTimer = setTimeout(async () => {
       saveHistoryTimer = null;
       try {
         const key = getStorageKey();
-        // Cap history at 15 snapshots and 15 diffs per snapshot to keep storage lightweight & instant
-        if (historyData.value.length > 15) {
-          historyData.value = historyData.value.slice(-15);
+        // Cap history at 25 snapshots to balance depth & performance
+        if (historyData.value.length > 25) {
+          historyData.value = historyData.value.slice(-25);
         }
         historyData.value.forEach(snap => {
-          if (snap.diffs && snap.diffs.length > 15) {
-            snap.diffs = snap.diffs.slice(-15);
+          if (snap.diffs && snap.diffs.length > 20) {
+            snap.diffs = snap.diffs.slice(-20);
           }
         });
-        localStorage.setItem(key, JSON.stringify(historyData.value));
+
+        // 1. Save full data to IndexedDB
+        await saveDbItem(key, JSON.parse(JSON.stringify(historyData.value)));
+
+        // 2. Save mirror to localStorage (with try/catch for quota protection)
+        try {
+          localStorage.setItem(key, JSON.stringify(historyData.value));
+        } catch (lsErr) {
+          console.warn("localStorage quota exceeded for history, saved to IndexedDB successfully.", lsErr);
+        }
       } catch (err) {
         console.warn("Error desant històric de versions:", err);
       }
-    }, 1500);
+    }, 1000);
   };
 
   // In-memory cache of latest state to avoid continuous expensive JSON cloning
@@ -184,6 +216,44 @@ export function useVersionHistory() {
     return newSnap;
   };
 
+  // Periodic hourly check
+  const checkAndTriggerHourlySnapshot = () => {
+    if (!isAutoRecording.value) return;
+    const hasData = !!(store.excelJsonData || store.templateText);
+    if (!hasData) return;
+
+    const nowTs = Date.now();
+    if (historyData.value.length === 0) {
+      createSnapshot('init', 'Punt de control inicial');
+      return;
+    }
+
+    const lastSnap = historyData.value[historyData.value.length - 1];
+    const lastSnapTs = new Date(lastSnap.timestamp).getTime();
+
+    // If >= 60 minutes have elapsed since last hourly snapshot, trigger automatic hourly snapshot
+    if (nowTs - lastSnapTs >= 3600000) {
+      createSnapshot('hourly', 'Còpia automàtica horària');
+    }
+  };
+
+  // Active periodic background timer for hourly auto-snapshots
+  let hourlyCheckInterval = null;
+  const startHourlyCheckInterval = () => {
+    if (hourlyCheckInterval) clearInterval(hourlyCheckInterval);
+    // Check every 60 seconds
+    hourlyCheckInterval = setInterval(() => {
+      checkAndTriggerHourlySnapshot();
+    }, 60000);
+  };
+
+  const stopHourlyCheckInterval = () => {
+    if (hourlyCheckInterval) {
+      clearInterval(hourlyCheckInterval);
+      hourlyCheckInterval = null;
+    }
+  };
+
   // Record a delta diff for live edits
   const recordChangeDiff = (note = 'Canvi detectat') => {
     if (!isAutoRecording.value) return;
@@ -200,8 +270,8 @@ export function useVersionHistory() {
     const lastSnap = historyData.value[historyData.value.length - 1];
     const lastSnapTs = new Date(lastSnap.timestamp).getTime();
 
-    // 2. Hourly check: If > 60 minutes have passed since last hourly snapshot, seal a new baseline
-    if (nowTs - lastSnapTs > 3600000) {
+    // 2. Hourly check: If > 60 minutes have passed since last snapshot, seal a new baseline
+    if (nowTs - lastSnapTs >= 3600000) {
       createSnapshot('hourly', 'Còpia horària automàtica');
       return;
     }
@@ -258,20 +328,20 @@ export function useVersionHistory() {
     };
 
     isAutoRecording.value = false;
+    const pName = getProjectName();
+    const aDoc = localStorage.getItem(`${pName}:activeDocName`) || 'Document Principal';
 
     if (mode === 'all' || mode === 'template') {
       if (state.templateText !== undefined) {
         store.templateText = state.templateText;
         localStorage.setItem('templateText', state.templateText);
-        const pName = getProjectName();
-        localStorage.setItem(`${pName}:doc:Document Principal:templateText`, state.templateText);
+        localStorage.setItem(`${pName}:doc:${aDoc}:templateText`, state.templateText);
       }
     }
 
     if (mode === 'all' || mode === 'data') {
       if (state.excelJsonData !== undefined) {
         store.excelJsonData = JSON.parse(JSON.stringify(state.excelJsonData));
-        const pName = getProjectName();
         localStorage.setItem(`${pName}:excelJsonData`, JSON.stringify(state.excelJsonData));
       }
     }
@@ -279,7 +349,6 @@ export function useVersionHistory() {
     if (mode === 'all' || mode === 'schema') {
       if (state.editorMetadata !== undefined) {
         store.editorMetadata = JSON.parse(JSON.stringify(state.editorMetadata));
-        const pName = getProjectName();
         localStorage.setItem(`${pName}:editorMetadata`, JSON.stringify(state.editorMetadata));
       }
     }
@@ -291,7 +360,7 @@ export function useVersionHistory() {
         all: 'Totes les dades (Plantilla, Model i Esquema)',
         template: 'Només la Plantilla',
         data: 'Només les Dades',
-        schema: 'Només l Esquema de Dades'
+        schema: "Només l'Esquema de Dades"
       };
       createSnapshot('manual', `Restauració de versió: ${modeLabels[mode]} (${entry.displayTime})`);
       store.addLog(`🔄 S'ha restaurat la versió (${modeLabels[mode]}) de ${entry.displayTime}`, 'success');
@@ -344,6 +413,10 @@ export function useVersionHistory() {
     flushPendingRecord,
     pauseAutoRecording,
     resumeAutoRecording,
-    restoreVersion
+    restoreVersion,
+    startHourlyCheckInterval,
+    stopHourlyCheckInterval,
+    checkAndTriggerHourlySnapshot
   };
 }
+

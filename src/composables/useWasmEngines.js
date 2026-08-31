@@ -37,6 +37,7 @@ export function useWasmEngines() {
       }
       
       _pyodide = await window.loadPyodide({ indexURL: pyIndexUrl });
+      window._pyodide = _pyodide;
       store.addLog("Pyodide Core carregat correctament.", 'success');
       
       store.addLog("Carregant paquets Python (jinja2 + openpyxl)...", 'info');
@@ -193,11 +194,11 @@ def _resolve_simple_cell_ref(form_str, wb_data, wb_formula, current_ws_name='', 
         return True, ''
     visited.add(clean)
     
-    m = re.match(r"^='?([^'!]+)'?!([A-Za-z]+)(\d+)$", clean)
+    m = re.match(r"^=[+]?(?:'([^']+)'|([A-Za-z0-9_\.]+))![$]?([A-Za-z]+)[$]?([0-9]+)$", clean)
     if m:
-        target_sheet = m.group(1)
-        col_str = m.group(2).upper()
-        row_num = int(m.group(3))
+        target_sheet = m.group(1) or m.group(2)
+        col_str = m.group(3).upper()
+        row_num = int(m.group(4))
         
         resolved_sheet = target_sheet
         if resolved_sheet not in wb_data.sheetnames:
@@ -851,11 +852,60 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
             'child_ref_key': c_custom.get('child_key', '')
         })
 
-    root['_sheet_info'] = sheet_info_list
+    meta_list = []
+    if 'editor_metadata' in wb_data.sheetnames:
+        try:
+            ws_meta = wb_data['editor_metadata']
+            headers = [str(ws_meta.cell(1, c).value or '').strip() for c in range(1, ws_meta.max_column + 1)]
+            for r in range(2, ws_meta.max_row + 1):
+                row_vals = [ws_meta.cell(r, c).value for c in range(1, len(headers) + 1)]
+                if all(v in (None, '') for v in row_vals):
+                    continue
+                row_dict = {}
+                for h, v in zip(headers, row_vals):
+                    if h:
+                        if v is None:
+                            row_dict[h] = ''
+                        elif isinstance(v, (int, float, bool, str)):
+                            row_dict[h] = v
+                        else:
+                            row_dict[h] = str(v)
+                if row_dict.get('group') or row_dict.get('element'):
+                    if 'multiple' in row_dict:
+                        row_dict['multiple'] = bool(row_dict['multiple']) if row_dict['multiple'] not in ('', None, 0, '0', False) else False
+                    meta_list.append(row_dict)
+        except Exception:
+            pass
+
+    existing_sheet_info = []
+    if '_sheet_info' in wb_data.sheetnames:
+        try:
+            ws_si = wb_data['_sheet_info']
+            headers = [str(ws_si.cell(1, c).value or '').strip() for c in range(1, ws_si.max_column + 1)]
+            for r in range(2, ws_si.max_row + 1):
+                row_vals = [ws_si.cell(r, c).value for c in range(1, len(headers) + 1)]
+                if all(v in (None, '') for v in row_vals):
+                    continue
+                row_dict = {}
+                for h, v in zip(headers, row_vals):
+                    if h:
+                        if v is None:
+                            row_dict[h] = ''
+                        elif isinstance(v, (int, float, bool, str)):
+                            row_dict[h] = v
+                        else:
+                            row_dict[h] = str(v)
+                if row_dict.get('clean_name') or row_dict.get('raw_name'):
+                    if isinstance(row_dict.get('headers'), str):
+                        row_dict['headers'] = [h.strip() for h in row_dict['headers'].split(',') if h.strip()]
+                    existing_sheet_info.append(row_dict)
+        except Exception:
+            pass
+
+    root['_sheet_info'] = existing_sheet_info if existing_sheet_info else sheet_info_list
     root['_sheet_logs'] = sheet_logs
     root['_excel_import_inspection'] = import_inspection
-    if 'editor_metadata' in parsed and isinstance(parsed['editor_metadata'][1], list):
-        root['editor_metadata'] = parsed['editor_metadata'][1]
+    root['editor_metadata'] = meta_list
 
     return {
         'data': root,
@@ -1006,7 +1056,7 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
         ws = wb.create_sheet(title='editor_metadata')
 
     ws.delete_rows(1, max(ws.max_row, 1))
-    headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula', 'gridRow', 'gridOrder', 'gridFill']
+    headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula', 'gridRow', 'gridOrder', 'gridFill', 'label', 'groupLayout', 'itemTitleFormula']
     for c_idx, h in enumerate(headers):
         ws.cell(1, c_idx + 1).value = h
     
@@ -1655,7 +1705,7 @@ def create_default_workbook_from_json(json_str, out_path):
     editor_meta = data.get('editor_metadata') or data.get('editorMetadata') or []
     if editor_meta:
         ws = wb.create_sheet(title='editor_metadata')
-        headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula', 'gridRow', 'gridOrder', 'gridFill']
+        headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula', 'gridRow', 'gridOrder', 'gridFill', 'label', 'groupLayout', 'itemTitleFormula']
         ws.append(headers)
         for row_obj in editor_meta:
             if isinstance(row_obj, dict):
@@ -2812,6 +2862,12 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
 
     if (parsedData && parsedData.editor_metadata && Array.isArray(parsedData.editor_metadata)) {
       store.editorMetadata = parsedData.editor_metadata;
+      delete parsedData.editor_metadata;
+    }
+
+    if (parsedData && parsedData._sheet_info && Array.isArray(parsedData._sheet_info)) {
+      store.sheetInfo = parsedData._sheet_info;
+      delete parsedData._sheet_info;
     }
 
     store.excelJsonData = parsedData;

@@ -33,6 +33,170 @@ const props = defineProps({
 const store = useWorkspaceStore();
 const { evaluateComputedFields } = useWasmEngines();
 
+// Base utility helpers
+const isPrimitive = (val) => {
+  return !Array.isArray(val) && (typeof val !== 'object' || val === null);
+};
+
+const cleanPath = (p) => {
+  if (!p) return '';
+  return String(p).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
+};
+
+const fullPath = computed(() => {
+  return props.parentPath ? `${props.parentPath}.${props.arrayKey}` : props.arrayKey;
+});
+
+const isNonEmptySchema = (s) => {
+  if (!s || typeof s !== 'object') return false;
+  const hasFields = Array.isArray(s.fields) && s.fields.length > 0;
+  const hasChildren = s.children && (Array.isArray(s.children) ? s.children.length > 0 : Object.keys(s.children).length > 0);
+  return hasFields || hasChildren;
+};
+
+const universalFindSchema = (targetPath, dict) => {
+  if (!dict || !targetPath) return { fields: [], children: {} };
+  
+  const cleanP = String(targetPath).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
+  
+  // 1. Direct match by node's data_path property
+  for (const [k, val] of Object.entries(dict)) {
+    if (val && typeof val === 'object' && val.data_path === cleanP && isNonEmptySchema(val)) {
+      return val;
+    }
+  }
+
+  // 2. Direct Flat Key Lookup
+  if (dict[cleanP] && isNonEmptySchema(dict[cleanP])) {
+    return dict[cleanP];
+  }
+  
+  // 3. Direct Tree Path Traversal
+  const parts = cleanP.split('.').filter(Boolean);
+  let curr = dict;
+  let foundTree = null;
+  
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (curr && typeof curr === 'object') {
+      const node = curr[p] || (curr.children && typeof curr.children === 'object' && !Array.isArray(curr.children) ? curr.children[p] : null);
+      if (node) {
+        foundTree = node;
+        curr = node.children;
+      } else {
+        foundTree = null;
+        break;
+      }
+    }
+  }
+  if (isNonEmptySchema(foundTree)) {
+    return foundTree;
+  }
+  
+  // 4. Search by key suffix or data_path
+  const lastKey = parts[parts.length - 1];
+  for (const [sKey, sVal] of Object.entries(dict)) {
+    if ((sKey === cleanP || sKey === lastKey || sKey.endsWith(`.${lastKey}`) || sVal?.data_path === cleanP || sVal?.data_path?.endsWith(`.${lastKey}`)) && isNonEmptySchema(sVal)) {
+      return sVal;
+    }
+  }
+  
+  // 5. Deep DFS
+  const dfs = (nodeObj) => {
+    if (!nodeObj || typeof nodeObj !== 'object') return null;
+    for (const [k, v] of Object.entries(nodeObj)) {
+      if ((k === lastKey || k === cleanP || v?.data_path === cleanP) && isNonEmptySchema(v)) {
+        return v;
+      }
+      if (v && v.children && typeof v.children === 'object' && !Array.isArray(v.children)) {
+        const sub = dfs(v.children);
+        if (sub) return sub;
+      }
+    }
+    return null;
+  };
+  
+  const dfsResult = dfs(dict);
+  if (dfsResult) return dfsResult;
+  
+  return { fields: [], children: {} };
+};
+
+// Core node state & schemas
+const nodeSchema = computed(() => {
+  const schemaDict = store.hierarchySchema || {};
+  if (isNonEmptySchema(props.schema)) {
+    return props.schema;
+  }
+  const effPath = cleanPath(props.schemaPath || fullPath.value);
+  return universalFindSchema(effPath || props.arrayKey, schemaDict);
+});
+
+const childSchemas = computed(() => {
+  const children = nodeSchema.value.children;
+  const res = {};
+  const schemaDict = store.hierarchySchema || {};
+  const currentPath = cleanPath(props.schemaPath || fullPath.value);
+  
+  if (Array.isArray(children)) {
+    children.forEach(cKey => {
+      if (typeof cKey === 'string') {
+        const fullKey = currentPath ? `${currentPath}.${cKey}` : cKey;
+        res[cKey] = universalFindSchema(fullKey, schemaDict);
+      }
+    });
+  } else if (children && typeof children === 'object') {
+    Object.entries(children).forEach(([cKey, cVal]) => {
+      if (isNonEmptySchema(cVal)) {
+        res[cKey] = cVal;
+      } else {
+        const fullKey = currentPath ? `${currentPath}.${cKey}` : cKey;
+        res[cKey] = universalFindSchema(fullKey, schemaDict);
+      }
+    });
+  }
+  return res;
+});
+
+const childKeys = computed(() => {
+  const keys = new Set(Object.keys(childSchemas.value));
+  if (Array.isArray(props.parentObj?.[props.arrayKey])) {
+    props.parentObj[props.arrayKey].forEach(item => {
+      if (item && typeof item === 'object') {
+        Object.keys(item).forEach(k => {
+          if (Array.isArray(item[k])) {
+            keys.add(k);
+          }
+        });
+      }
+    });
+  }
+  return Array.from(keys);
+});
+
+const isLeafLevel = computed(() => {
+  return childKeys.value.length === 0;
+});
+
+const items = computed(() => {
+  if (!props.parentObj || !props.arrayKey) return [];
+  if (!Array.isArray(props.parentObj[props.arrayKey])) {
+    props.parentObj[props.arrayKey] = [];
+  }
+  return props.parentObj[props.arrayKey];
+});
+
+const effectiveFields = computed(() => {
+  const schemaFields = nodeSchema.value.fields || [];
+  if (schemaFields.length > 0) {
+    return schemaFields;
+  }
+  if (items.value.length > 0 && typeof items.value[0] === 'object' && items.value[0] !== null) {
+    return Object.keys(items.value[0]).filter(k => k !== '_hierarchy_schema' && isPrimitive(items.value[0][k]));
+  }
+  return [];
+});
+
 let evalDebounceTimer = null;
 
 const onCellInput = () => {
@@ -165,90 +329,6 @@ const getChildTableColumns = (vectorName) => {
   return Array.from(cols);
 };
 
-const cleanPath = (p) => {
-  if (!p) return '';
-  return String(p).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
-};
-
-const fullPath = computed(() => {
-  return props.parentPath ? `${props.parentPath}.${props.arrayKey}` : props.arrayKey;
-});
-
-const isNonEmptySchema = (s) => {
-  if (!s || typeof s !== 'object') return false;
-  const hasFields = Array.isArray(s.fields) && s.fields.length > 0;
-  const hasChildren = s.children && (Array.isArray(s.children) ? s.children.length > 0 : Object.keys(s.children).length > 0);
-  return hasFields || hasChildren;
-};
-
-const universalFindSchema = (targetPath, dict) => {
-  if (!dict || !targetPath) return { fields: [], children: {} };
-  
-  const cleanP = String(targetPath).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
-  
-  // 1. Direct match by node's data_path property
-  for (const [k, val] of Object.entries(dict)) {
-    if (val && typeof val === 'object' && val.data_path === cleanP && isNonEmptySchema(val)) {
-      return val;
-    }
-  }
-
-  // 2. Direct Flat Key Lookup
-  if (dict[cleanP] && isNonEmptySchema(dict[cleanP])) {
-    return dict[cleanP];
-  }
-  
-  // 3. Direct Tree Path Traversal
-  const parts = cleanP.split('.').filter(Boolean);
-  let curr = dict;
-  let foundTree = null;
-  
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    if (curr && typeof curr === 'object') {
-      const node = curr[p] || (curr.children && typeof curr.children === 'object' && !Array.isArray(curr.children) ? curr.children[p] : null);
-      if (node) {
-        foundTree = node;
-        curr = node.children;
-      } else {
-        foundTree = null;
-        break;
-      }
-    }
-  }
-  if (isNonEmptySchema(foundTree)) {
-    return foundTree;
-  }
-  
-  // 4. Search by key suffix or data_path
-  const lastKey = parts[parts.length - 1];
-  for (const [sKey, sVal] of Object.entries(dict)) {
-    if ((sKey === cleanP || sKey === lastKey || sKey.endsWith(`.${lastKey}`) || sVal?.data_path === cleanP || sVal?.data_path?.endsWith(`.${lastKey}`)) && isNonEmptySchema(sVal)) {
-      return sVal;
-    }
-  }
-  
-  // 5. Deep DFS
-  const dfs = (nodeObj) => {
-    if (!nodeObj || typeof nodeObj !== 'object') return null;
-    for (const [k, v] of Object.entries(nodeObj)) {
-      if ((k === lastKey || k === cleanP || v?.data_path === cleanP) && isNonEmptySchema(v)) {
-        return v;
-      }
-      if (v && v.children && typeof v.children === 'object' && !Array.isArray(v.children)) {
-        const sub = dfs(v.children);
-        if (sub) return sub;
-      }
-    }
-    return null;
-  };
-  
-  const dfsResult = dfs(dict);
-  if (dfsResult) return dfsResult;
-  
-  return { fields: [], children: {} };
-};
-
 const formatPercentageDisplay = (val) => {
   if (val === undefined || val === null || val === '') return '';
   let strVal = String(val).replace('%', '').replace(',', '.').trim();
@@ -273,84 +353,6 @@ const updatePercentageValue = (targetObj, key, eventVal) => {
   // Always divide user input scale by 100 for internal proportion storage (21 -> 0.21, 100 -> 1)
   targetObj[key] = num / 100.0;
 };
-
-const nodeSchema = computed(() => {
-  const schemaDict = store.hierarchySchema || {};
-  if (isNonEmptySchema(props.schema)) {
-    return props.schema;
-  }
-  const effPath = cleanPath(props.schemaPath || fullPath.value);
-  return universalFindSchema(effPath || props.arrayKey, schemaDict);
-});
-
-const childSchemas = computed(() => {
-  const children = nodeSchema.value.children;
-  const res = {};
-  const schemaDict = store.hierarchySchema || {};
-  const currentPath = cleanPath(props.schemaPath || fullPath.value);
-  
-  if (Array.isArray(children)) {
-    children.forEach(cKey => {
-      if (typeof cKey === 'string') {
-        const fullKey = currentPath ? `${currentPath}.${cKey}` : cKey;
-        res[cKey] = universalFindSchema(fullKey, schemaDict);
-      }
-    });
-  } else if (children && typeof children === 'object') {
-    Object.entries(children).forEach(([cKey, cVal]) => {
-      if (isNonEmptySchema(cVal)) {
-        res[cKey] = cVal;
-      } else {
-        const fullKey = currentPath ? `${currentPath}.${cKey}` : cKey;
-        res[cKey] = universalFindSchema(fullKey, schemaDict);
-      }
-    });
-  }
-  return res;
-});
-
-const childKeys = computed(() => {
-  const keys = new Set(Object.keys(childSchemas.value));
-  if (Array.isArray(props.parentObj?.[props.arrayKey])) {
-    props.parentObj[props.arrayKey].forEach(item => {
-      if (item && typeof item === 'object') {
-        Object.keys(item).forEach(k => {
-          if (Array.isArray(item[k])) {
-            keys.add(k);
-          }
-        });
-      }
-    });
-  }
-  return Array.from(keys);
-});
-
-const isLeafLevel = computed(() => {
-  return childKeys.value.length === 0;
-});
-
-const items = computed(() => {
-  if (!props.parentObj || !props.arrayKey) return [];
-  if (!Array.isArray(props.parentObj[props.arrayKey])) {
-    props.parentObj[props.arrayKey] = [];
-  }
-  return props.parentObj[props.arrayKey];
-});
-
-const isPrimitive = (val) => {
-  return !Array.isArray(val) && (typeof val !== 'object' || val === null);
-};
-
-const effectiveFields = computed(() => {
-  const schemaFields = nodeSchema.value.fields || [];
-  if (schemaFields.length > 0) {
-    return schemaFields;
-  }
-  if (items.value.length > 0 && typeof items.value[0] === 'object' && items.value[0] !== null) {
-    return Object.keys(items.value[0]).filter(k => k !== '_hierarchy_schema' && isPrimitive(items.value[0][k]));
-  }
-  return [];
-});
 
 const getPrimitiveFields = (item) => {
   if (!item || typeof item !== 'object') return {};
@@ -1019,15 +1021,203 @@ const addNewFieldToConfig = () => {
   }
 };
 
+const getItemTitleFormula = (groupName) => {
+  const metaList = (store.editorMetadata && store.editorMetadata.length > 0) 
+    ? store.editorMetadata 
+    : (store.excelJsonData?.editor_metadata || store.excelJsonData?.editorMetadata || []);
+  if (!metaList || !Array.isArray(metaList)) return '';
+  const gName = groupName || props.arrayKey;
+  const shortName = gName ? gName.split('.').pop() : '';
+  const meta = metaList.find(m => {
+    const mGroup = m.group ? m.group.split('.').pop() : '';
+    const groupMatches = m.group === gName || m.group === shortName || m.group === fullPath.value || mGroup === shortName;
+    const isHeader = m.element === '_group_label' || m.element === '_group' || m.isGroupHeader || !m.element || m.element === '';
+    return groupMatches && isHeader && m.itemTitleFormula;
+  });
+  return meta ? meta.itemTitleFormula : '';
+};
+
+const formatCoin = (num) => {
+  if (num === null || num === undefined || num === '') return '';
+  const n = typeof num === 'number' ? num : parseFloat(String(num).replace(',', '.'));
+  if (isNaN(n)) return String(num);
+  return n.toLocaleString('ca-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+};
+
+const roundVal = (num, decimals = 2) => {
+  if (num === null || num === undefined || num === '') return '';
+  const n = typeof num === 'number' ? num : parseFloat(String(num).replace(',', '.'));
+  if (isNaN(n)) return String(num);
+  return n.toFixed(decimals);
+};
+
+const parseConcatArgs = (argsStr) => {
+  const parts = [];
+  let current = '';
+  let depth = 0;
+  let inQuotes = false;
+  let quoteChar = '';
+
+  for (let i = 0; i < argsStr.length; i++) {
+    const ch = argsStr[i];
+    if (inQuotes) {
+      if (ch === quoteChar) inQuotes = false;
+      current += ch;
+    } else if (ch === '"' || ch === "'") {
+      inQuotes = true;
+      quoteChar = ch;
+      current += ch;
+    } else if (ch === '(') {
+      depth++;
+      current += ch;
+    } else if (ch === ')') {
+      depth--;
+      current += ch;
+    } else if ((ch === ';' || ch === ',') && depth === 0) {
+      parts.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  parts.push(current.trim());
+  return parts;
+};
+
+const evaluateItemTitleFormula = (formulaStr, item, groupName, fallback) => {
+  if (!item || typeof item !== 'object') return fallback || '';
+  if (!formulaStr || !formulaStr.trim()) return '';
+
+  const trimmed = formulaStr.trim();
+
+  // 1. Jinja2 / Mustache style: {{ field }}
+  if (trimmed.includes('{{')) {
+    return trimmed.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_, fieldName) => {
+      const val = item[fieldName] !== undefined ? item[fieldName] : '';
+      return val !== null && val !== undefined ? String(val) : '';
+    });
+  }
+
+  // 2. Direct simple field name
+  if (item[trimmed] !== undefined) {
+    const v = item[trimmed];
+    return v !== null && v !== undefined ? String(v) : '';
+  }
+
+  // Helper to safely get field, literal or subfunction
+  const resolveToken = (token) => {
+    if (!token) return ' ';
+    const t = token.trim();
+    if (!t) return ' ';
+    if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+      return t.slice(1, -1);
+    }
+    
+    // Subfunctions: COIN(x) / MONEDA(x)
+    const coinMatch = /^(?:COIN|MONEDA)\s*\((.+)\)$/i.exec(t);
+    if (coinMatch) {
+      const inner = resolveToken(coinMatch[1]);
+      return formatCoin(inner);
+    }
+
+    // Subfunctions: ROUND(x, n) / ARRODONEIX(x, n)
+    const roundMatch = /^(?:ROUND|ARRODONEIX)\s*\((.+)\)$/i.exec(t);
+    if (roundMatch) {
+      const innerParts = parseConcatArgs(roundMatch[1]);
+      const val = resolveToken(innerParts[0]);
+      const dec = innerParts[1] ? parseInt(resolveToken(innerParts[1]), 10) : 2;
+      return roundVal(val, dec);
+    }
+
+    // UPPER / MAJUSCULES
+    const upperMatch = /^(?:UPPER|MAJUSCULES)\s*\((.+)\)$/i.exec(t);
+    if (upperMatch) {
+      return String(resolveToken(upperMatch[1])).toUpperCase();
+    }
+
+    // LOWER / MINUSCULES
+    const lowerMatch = /^(?:LOWER|MINUSCULES)\s*\((.+)\)$/i.exec(t);
+    if (lowerMatch) {
+      return String(resolveToken(lowerMatch[1])).toLowerCase();
+    }
+
+    if (item[t] !== undefined) {
+      const val = item[t];
+      return val !== null && val !== undefined ? String(val) : '';
+    }
+    return t;
+  };
+
+  // 3. Handle CONCAT / CONCATENA / CONCATENATE
+  const concatRegex = /\b(?:CONCAT|CONCATENA|CONCATENATE)\s*\(/i;
+  if (concatRegex.test(trimmed)) {
+    let str = trimmed;
+    let prev = '';
+    while (prev !== str) {
+      prev = str;
+      const match = concatRegex.exec(str);
+      if (!match) break;
+      const startIdx = match.index;
+      const openParenIdx = startIdx + match[0].length - 1;
+      let depth = 1;
+      let endIdx = -1;
+      let inQuotes = false;
+      let quoteChar = '';
+
+      for (let i = openParenIdx + 1; i < str.length; i++) {
+        const ch = str[i];
+        if (inQuotes) {
+          if (ch === quoteChar) inQuotes = false;
+        } else if (ch === '"' || ch === "'") {
+          inQuotes = true;
+          quoteChar = ch;
+        } else if (ch === '(') {
+          depth++;
+        } else if (ch === ')') {
+          depth--;
+          if (depth === 0) {
+            endIdx = i;
+            break;
+          }
+        }
+      }
+
+      if (endIdx === -1) break;
+
+      const fullMatch = str.substring(startIdx, endIdx + 1);
+      const argsStr = str.substring(openParenIdx + 1, endIdx);
+      const parts = parseConcatArgs(argsStr);
+
+      const evaluatedPieces = parts.map(part => {
+        if (!part) return ' '; // Empty param between semicolons (e.g. CONCAT(titol; ;import))
+        return resolveToken(part);
+      });
+
+      const resStr = evaluatedPieces.join('');
+      str = str.replace(fullMatch, resStr);
+    }
+    return str;
+  }
+
+  // 4. If expression has + separators (e.g. titol + " - " + import)
+  if (trimmed.includes('+')) {
+    const parts = trimmed.split('+').map(p => resolveToken(p.trim()));
+    return parts.join('');
+  }
+
+  return resolveToken(trimmed);
+};
+
 const handleSaveGroupConfig = (data) => {
   store.editorMetadata = store.editorMetadata.filter(m => m.group !== props.arrayKey);
   
-  // Save group layout & label header
+  // Save group layout, label header & item title formula
   const groupMeta = {
     group: props.arrayKey,
     element: '_group_label',
     isGroupHeader: true,
-    groupLayout: data.selectedLayout
+    groupLayout: data.selectedLayout,
+    itemTitleFormula: data.itemTitleFormula || ''
   };
   if (data.groupLabel && data.groupLabel.trim()) {
     groupMeta.label = data.groupLabel.trim();
@@ -1094,6 +1284,81 @@ const handleSaveGroupConfig = (data) => {
   }
 };
 
+// Accordion Collapsing state for intermediate items
+const collapsedItems = ref(new Set());
+
+const isItemCollapsed = (idx) => {
+  return collapsedItems.value.has(idx);
+};
+
+const toggleItemCollapse = (idx) => {
+  if (collapsedItems.value.has(idx)) {
+    collapsedItems.value.delete(idx);
+  } else {
+    collapsedItems.value.add(idx);
+  }
+};
+
+const collapseAllItems = () => {
+  items.value.forEach((_, idx) => {
+    collapsedItems.value.add(idx);
+  });
+};
+
+const expandAllItems = () => {
+  collapsedItems.value.clear();
+};
+
+const moveItemUp = (idx) => {
+  if (idx <= 0) return;
+  const list = props.parentObj[props.arrayKey];
+  if (!Array.isArray(list) || idx >= list.length) return;
+  
+  const wasCurCollapsed = collapsedItems.value.has(idx);
+  const wasPrevCollapsed = collapsedItems.value.has(idx - 1);
+  
+  const item = list.splice(idx, 1)[0];
+  list.splice(idx - 1, 0, item);
+  
+  if (wasCurCollapsed) collapsedItems.value.add(idx - 1); else collapsedItems.value.delete(idx - 1);
+  if (wasPrevCollapsed) collapsedItems.value.add(idx); else collapsedItems.value.delete(idx);
+  
+  onCellBlur();
+};
+
+const moveItemDown = (idx) => {
+  const list = props.parentObj[props.arrayKey];
+  if (!Array.isArray(list) || idx < 0 || idx >= list.length - 1) return;
+  
+  const wasCurCollapsed = collapsedItems.value.has(idx);
+  const wasNextCollapsed = collapsedItems.value.has(idx + 1);
+  
+  const item = list.splice(idx, 1)[0];
+  list.splice(idx + 1, 0, item);
+  
+  if (wasCurCollapsed) collapsedItems.value.add(idx + 1); else collapsedItems.value.delete(idx + 1);
+  if (wasNextCollapsed) collapsedItems.value.add(idx); else collapsedItems.value.delete(idx);
+  
+  onCellBlur();
+};
+
+const moveLeafRowUp = (rIdx) => {
+  if (rIdx <= 0) return;
+  const list = props.parentObj[props.arrayKey];
+  if (!Array.isArray(list) || rIdx >= list.length) return;
+  const item = list.splice(rIdx, 1)[0];
+  list.splice(rIdx - 1, 0, item);
+  onCellBlur();
+};
+
+const moveLeafRowDown = (rIdx) => {
+  const list = props.parentObj[props.arrayKey];
+  if (!Array.isArray(list) || rIdx < 0 || rIdx >= list.length - 1) return;
+  const item = list.splice(rIdx, 1)[0];
+  list.splice(rIdx + 1, 0, item);
+  onCellBlur();
+};
+
 const addNestedItem = () => {
   if (!Array.isArray(props.parentObj[props.arrayKey])) {
     props.parentObj[props.arrayKey] = [];
@@ -1145,12 +1410,21 @@ const selectedTargetParent = ref(null);
 
 const getItemLabel = (item, fallback) => {
   if (!item || typeof item !== 'object') return fallback;
-  const idKey = Object.keys(item).find(k => k.startsWith('id_') || k === 'id');
-  const labelKey = Object.keys(item).find(k => isPrimitive(item[k]) && k !== 'id' && !k.startsWith('id_') && typeof item[k] === 'string' && item[k].trim() !== '')
-    || Object.keys(item).find(k => isPrimitive(item[k]) && typeof item[k] === 'string' && item[k].trim() !== '');
+
+  const titleFormula = getItemTitleFormula(props.arrayKey);
+  if (titleFormula) {
+    const evaluated = evaluateItemTitleFormula(titleFormula, item, props.arrayKey, fallback);
+    if (evaluated && evaluated.trim()) {
+      return evaluated.trim();
+    }
+  }
+
+  const idKey = Object.keys(item).find(k => k.startsWith('id_') || k.endsWith('_id') || k === 'id' || k === 'codi');
+  const titleKey = Object.keys(item).find(k => ['titol', 'title', 'servei', 'activitat', 'nom', 'name', 'descripcio', 'descriptor', 'element'].includes(k.toLowerCase()) && isPrimitive(item[k]) && typeof item[k] === 'string' && item[k].trim() !== '');
+  const labelKey = titleKey || Object.keys(item).find(k => isPrimitive(item[k]) && k !== idKey && typeof item[k] === 'string' && item[k].trim() !== '');
   
-  const idVal = idKey ? String(item[idKey]) : '';
-  const labelVal = labelKey ? String(item[labelKey]) : '';
+  const idVal = idKey && item[idKey] !== undefined ? String(item[idKey]) : '';
+  const labelVal = labelKey && item[labelKey] !== undefined ? String(item[labelKey]) : '';
   
   if (idVal && labelVal && idVal !== labelVal) {
     return `${idVal} - ${labelVal}`;
@@ -1251,6 +1525,28 @@ const getItemPath = (idx, fieldKey) => {
       </div>
 
       <div style="display: flex; align-items: center; gap: 6px;">
+        <button 
+          v-if="!isLeafLevel && items.length > 0"
+          type="button"
+          class="btn btn-secondary" 
+          style="width: auto; padding: 2px 7px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px;"
+          @click="expandAllItems"
+          title="Desplega tots els elements d'aquest nivell"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          <span v-if="store.config.showButtonTexts">Desplega tot</span>
+        </button>
+        <button 
+          v-if="!isLeafLevel && items.length > 0"
+          type="button"
+          class="btn btn-secondary" 
+          style="width: auto; padding: 2px 7px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px;"
+          @click="collapseAllItems"
+          title="Col·lapsa tots els elements d'aquest nivell"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+          <span v-if="store.config.showButtonTexts">Col·lapsa tot</span>
+        </button>
         <button 
           type="button"
           class="btn btn-secondary" 
@@ -1428,7 +1724,29 @@ const getItemPath = (idx, fieldKey) => {
                 </div>
               </td>
               <td style="padding: 4px 6px; border-bottom: 1px solid var(--border-color); text-align: center;">
-                <div style="display: flex; align-items: center; justify-content: center; gap: 4px;">
+                <div style="display: flex; align-items: center; justify-content: center; gap: 3px;">
+                  <button 
+                    type="button"
+                    class="btn-icon-only" 
+                    :disabled="rIdx === 0"
+                    style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--border-color); border-radius: 3px;"
+                    :style="{ opacity: rIdx === 0 ? 0.35 : 1, cursor: rIdx === 0 ? 'not-allowed' : 'pointer' }"
+                    title="Desplaça fila amunt"
+                    @click="moveLeafRowUp(rIdx)"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                  </button>
+                  <button 
+                    type="button"
+                    class="btn-icon-only" 
+                    :disabled="rIdx === items.length - 1"
+                    style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--border-color); border-radius: 3px;"
+                    :style="{ opacity: rIdx === items.length - 1 ? 0.35 : 1, cursor: rIdx === items.length - 1 ? 'not-allowed' : 'pointer' }"
+                    title="Desplaça fila avall"
+                    @click="moveLeafRowDown(rIdx)"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                  </button>
                   <button 
                     type="button"
                     class="btn-icon-only" 
@@ -1473,50 +1791,111 @@ const getItemPath = (idx, fieldKey) => {
           class="nested-card-item"
           style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.4rem 0.6rem; box-shadow: 0 1px 3px rgba(0,0,0,0.03);"
         >
-          <!-- Card Header -->
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem; padding-bottom: 0.2rem; border-bottom: 1px dashed var(--border-color);">
-            <span style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary);">
-              #{{ idx + 1 }} 
-              <span 
-                :style="{ cursor: getGroupLabel(arrayKey) !== arrayKey ? 'help' : 'default' }"
-                :title="getGroupLabel(arrayKey) !== arrayKey ? 'Clau de grup: ' + arrayKey : undefined"
+          <!-- Card Header / Accordion Trigger -->
+          <div 
+            class="nested-card-header"
+            @click="toggleItemCollapse(idx)"
+            style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; padding: 0.35rem 0.6rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: var(--radius-xs); transition: background 0.15s ease; gap: 8px;"
+          >
+            <div style="display: flex; align-items: center; gap: 8px; flex-grow: 1; min-width: 0;">
+              <!-- Chevron Indicator (▼ / ▶) -->
+              <svg 
+                xmlns="http://www.w3.org/2000/svg" 
+                width="14" 
+                height="14" 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                stroke-width="2.5" 
+                stroke-linecap="round" 
+                stroke-linejoin="round"
+                style="transition: transform 0.2s ease; flex-shrink: 0; color: var(--color-primary);"
+                :style="{ transform: isItemCollapsed(idx) ? 'rotate(-90deg)' : 'rotate(0deg)' }"
               >
-                {{ getGroupLabel(arrayKey) }}
-              </span>: 
-              <strong>{{ getItemLabel(item, `Element #${idx + 1}`) }}</strong>
-            </span>
-            <div style="display: flex; align-items: center; gap: 4px;">
+                <path d="m6 9 6 6 6-6"/>
+              </svg>
+
+              <!-- Number + Group Name + Calculated Title -->
+              <span style="font-size: 0.78rem; font-weight: 700; color: var(--color-primary); display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                <span style="background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 3px; font-family: var(--font-mono); font-size: 0.72rem;">#{{ idx + 1 }}</span>
+                <span 
+                  style="color: var(--text-muted); font-weight: 600;"
+                  :style="{ cursor: getGroupLabel(arrayKey) !== arrayKey ? 'help' : 'default' }"
+                  :title="getGroupLabel(arrayKey) !== arrayKey ? 'Clau de grup: ' + arrayKey : undefined"
+                >
+                  {{ getGroupLabel(arrayKey) }}:
+                </span>
+                <strong style="color: var(--text-primary); font-size: 0.82rem;">{{ getItemLabel(item, `Element #${idx + 1}`) }}</strong>
+              </span>
+            </div>
+
+            <!-- Action buttons (Stop propagation to prevent accordion toggling) -->
+            <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;" @click.stop>
+              <!-- Move Up -->
+              <button 
+                type="button"
+                class="btn-icon-only"
+                :disabled="idx === 0"
+                style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 3px;"
+                :style="{ opacity: idx === 0 ? 0.35 : 1, cursor: idx === 0 ? 'not-allowed' : 'pointer' }"
+                title="Desplaça amunt"
+                @click.stop="moveItemUp(idx)"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+              </button>
+
+              <!-- Move Down -->
+              <button 
+                type="button"
+                class="btn-icon-only"
+                :disabled="idx === items.length - 1"
+                style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 3px;"
+                :style="{ opacity: idx === items.length - 1 ? 0.35 : 1, cursor: idx === items.length - 1 ? 'not-allowed' : 'pointer' }"
+                title="Desplaça avall"
+                @click.stop="moveItemDown(idx)"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+
+              <!-- Duplicate -->
               <button 
                 type="button"
                 class="btn btn-secondary" 
-                style="padding: 2px 6px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 3px;"
-                title="Duplica aquest element i totes les mebres aniuades"
-                @click="duplicateNestedItem(idx)"
+                style="padding: 2px 6px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 3px; height: 24px; background: var(--bg-primary);"
+                title="Duplica aquest element i totes les branques aniuades"
+                @click.stop="duplicateNestedItem(idx)"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                 <span v-if="store.config.showButtonTexts">Duplica</span>
               </button>
+
+              <!-- Move to another parent -->
               <button 
                 type="button"
                 class="btn btn-secondary" 
-                style="padding: 2px 6px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 3px;"
+                style="padding: 2px 6px; font-size: 0.72rem; display: inline-flex; align-items: center; gap: 3px; height: 24px; background: var(--bg-primary);"
                 title="Trasllada aquest element a un altre pare"
-                @click="openMoveModal(idx)"
+                @click.stop="openMoveModal(idx)"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 21 7 17 3"/><line x1="21" y1="7" x2="9" y2="7"/><polyline points="7 21 3 17 7 13"/><line x1="3" y1="17" x2="15" y2="17"/></svg>
                 <span v-if="store.config.showButtonTexts">Trasllada</span>
               </button>
+
+              <!-- Delete -->
               <button 
                 type="button"
                 class="btn-icon-only text-danger" 
-                style="height: 22px; width: 22px; min-width: 22px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+                style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
                 title="Elimina element"
-                @click="deleteNestedItem(idx)"
+                @click.stop="deleteNestedItem(idx)"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
               </button>
             </div>
           </div>
+
+          <!-- Accordion Body: Form Grid Rows & Child Hierarchies -->
+          <div v-show="!isItemCollapsed(idx)" style="padding-top: 0.45rem;">
 
           <!-- FORM GRID ROW BLOCKS FOR NESTED ITEM PRIMITIVE FIELDS -->
           <div style="display: flex; flex-direction: column; gap: 0.5rem; width: 100%; margin-bottom: 0.75rem;">
@@ -1678,17 +2057,19 @@ const getItemPath = (idx, fieldKey) => {
           </template>
         </div>
       </div>
-    </template>
+    </div>
+  </template>
 
-    <!-- Group Config Modal -->
-    <GroupConfigModal
-      v-model="isConfigModalOpen"
-      :groupName="arrayKey"
-      :configList="groupConfigList"
-      :groupLabel="groupLabelInput"
-      :selectedLayout="selectedLayout"
-      @save="handleSaveGroupConfig"
-    />
+  <!-- Group Config Modal -->
+  <GroupConfigModal
+    v-model="isConfigModalOpen"
+    :groupName="arrayKey"
+    :configList="groupConfigList"
+    :groupLabel="groupLabelInput"
+    :selectedLayout="selectedLayout"
+    :itemTitleFormula="getItemTitleFormula(arrayKey)"
+    @save="handleSaveGroupConfig"
+  />
 
     <!-- Visual Grid Layout Editor Modal -->
     <VisualGridEditorModal 

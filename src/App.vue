@@ -28,7 +28,8 @@ const {
   triggerDebouncedRecord,
   pauseAutoRecording,
   resumeAutoRecording,
-  restoreVersion
+  restoreVersion,
+  startHourlyCheckInterval
 } = useVersionHistory();
 
 const isSettingsOpen = ref(false);
@@ -312,7 +313,7 @@ const loadProject = async (name) => {
           await initEngines();
         }
         writeVirtualExcel(excelBuf);
-        if (!store.excelJsonData || Object.keys(store.excelJsonData).length === 0) {
+        if (!store.excelJsonData || Object.keys(store.excelJsonData).length === 0 || !store.editorMetadata || store.editorMetadata.length === 0) {
           const parsedData = await parseExcel(excelBuf);
           if (parsedData._sheet_info) {
             store.sheetInfo = parsedData._sheet_info;
@@ -325,7 +326,9 @@ const loadProject = async (name) => {
           if (parsedData._hierarchy_schema) {
             delete parsedData._hierarchy_schema;
           }
-          store.excelJsonData = parsedData;
+          if (!store.excelJsonData || Object.keys(store.excelJsonData).length === 0) {
+            store.excelJsonData = parsedData;
+          }
           saveCurrentProject();
         }
       } catch (err) {
@@ -730,6 +733,41 @@ const triggerDownload = (url, filename) => {
   URL.revokeObjectURL(url);
 };
 
+// Restore data model configuration from original Excel spreadsheet
+const restoreConfigFromExcel = async () => {
+  store.addLog("Restaurant configuració del model de dades des del full de càlcul Excel...", "info");
+  try {
+    const pName = currentProjectName.value || localStorage.getItem('currentProjectName') || 'Default';
+    let excelBuf = null;
+    if (store.excelFile) {
+      excelBuf = await store.excelFile.arrayBuffer();
+    } else {
+      excelBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
+    }
+    if (!excelBuf) {
+      store.addLog("No hi ha cap fitxer Excel carregat per restaurar la configuració.", "warning");
+      alert("No s'ha trobat cap fitxer Excel associat al projecte per poder restaurar la configuració.");
+      return false;
+    }
+    if (!store.enginesReady) {
+      store.addLog("Inicialitzant motors WASM per processar el model Excel...", "info");
+      await initEngines();
+    }
+    writeVirtualExcel(excelBuf);
+    await parseExcel(excelBuf);
+    const countMeta = (store.editorMetadata || []).length;
+    const countSheets = (store.sheetInfo || []).length;
+    saveCurrentProject();
+    store.addLog(`Configuració restaurada des de l'Excel: ${countMeta} regles de metadades i ${countSheets} definicions de pestanyes.`, "success");
+    alert(`S'ha restaurat amb èxit la configuració del model de dades des del full de càlcul Excel!\n\n• ${countMeta} regles de camps, tipus i fórmules (editor_metadata)\n• ${countSheets} estructures de fulls (_sheet_info)`);
+    return true;
+  } catch (err) {
+    store.addLog(`Error en restaurar la configuració des de l'Excel: ${err.message}`, "error");
+    alert(`Error al restaurar la configuració des de l'Excel: ${err.message}`);
+    return false;
+  }
+};
+
 // Export entire project into a portable ZIP archive
 const downloadAllProjectFiles = async () => {
   const pName = currentProjectName.value || 'projecte';
@@ -759,17 +797,34 @@ const downloadAllProjectFiles = async () => {
       } else if (store.excelFile) {
         const excelBuffer = await store.excelFile.arrayBuffer();
         zip.file(xFileName, excelBuffer);
-      } else if (store.excelJsonData) {
-        zip.file("dades_excel.json", JSON.stringify(store.excelJsonData, null, 2));
+      } else {
+        const idbBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
+        if (idbBuf) {
+          zip.file(xFileName, idbBuf);
+        }
       }
     } catch (e) {
       store.addLog(`Avís en incloure Excel al ZIP: ${e.message}`, 'warning');
-      if (store.excelJsonData) {
-        zip.file("dades_excel.json", JSON.stringify(store.excelJsonData, null, 2));
-      }
+      try {
+        const idbBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
+        if (idbBuf) {
+          zip.file(xFileName, idbBuf);
+        }
+      } catch (_) {}
     }
 
-    // 3. Add all Documents (.md.j2 templates & .docx reference files)
+    // 3. Always include raw JSON data and schemas as a 100% fail-safe copy
+    if (store.excelJsonData) {
+      zip.file("dades_excel.json", JSON.stringify(store.excelJsonData, null, 2));
+    }
+    if (store.editorMetadata && store.editorMetadata.length > 0) {
+      zip.file("editor_metadata.json", JSON.stringify(store.editorMetadata, null, 2));
+    }
+    if (store.hierarchySchema && Object.keys(store.hierarchySchema).length > 0) {
+      zip.file("hierarchy_schema.json", JSON.stringify(store.hierarchySchema, null, 2));
+    }
+
+    // 4. Add all Documents (.md.j2 templates & .docx reference files)
     const docsFolder = zip.folder("documents");
     for (const docName of documentsList.value) {
       const cleanDocName = docName.replace(/[/\\?%*:|"<>]/g, '_');
@@ -791,6 +846,11 @@ const downloadAllProjectFiles = async () => {
           u8arr[n] = bstr.charCodeAt(n);
         }
         docsFolder.file(rFileName, u8arr);
+      } else {
+        const rBuf = await getBinaryFile(`${pName}:doc:${docName}:refDocBuffer`);
+        if (rBuf && rFileName) {
+          docsFolder.file(rFileName, rBuf);
+        }
       }
     }
 
@@ -815,11 +875,19 @@ const importProjectZip = async (file) => {
     let manifest = {};
     if (manifestFile) {
       const text = await manifestFile.async("string");
-      manifest = JSON.parse(text);
+      try {
+        manifest = JSON.parse(text);
+      } catch (_) {}
     }
 
     let pName = manifest.projectName || file.name.replace(/\.zip$/i, '');
     pName = pName.replace(/[^a-zA-Z0-9_\-\s]/g, '_');
+
+    // Flush current active project state before switching
+    if (currentProjectName.value && activeDocName.value) {
+      saveCurrentProject();
+      saveCurrentDocumentState(currentProjectName.value, activeDocName.value);
+    }
 
     if (!savedProjectsList.value.includes(pName)) {
       savedProjectsList.value.push(pName);
@@ -836,29 +904,13 @@ const importProjectZip = async (file) => {
     activeDocName.value = aDoc;
     localStorage.setItem(`${pName}:activeDocName`, aDoc);
 
-    // Process Excel spreadsheet if included
-    const excelFiles = Object.keys(zip.files).filter(f => f.endsWith('.xlsx') && !f.startsWith('__MACOSX'));
-    if (excelFiles.length > 0) {
-      const xFileName = excelFiles[0];
-      const blob = await zip.files[xFileName].async("blob");
-      const excelFileObj = new File([blob], xFileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      await processExcelFile(excelFileObj);
-    } else {
-      const jsonFile = zip.file("dades_excel.json");
-      if (jsonFile) {
-        const jText = await jsonFile.async("string");
-        store.excelJsonData = JSON.parse(jText);
-        localStorage.setItem(`${pName}:excelJsonData`, jText);
-      }
-    }
-
     // Extract Templates and Reference DOCX files
     for (const docName of docsList) {
       const cleanDocName = docName.replace(/[/\\?%*:|"<>]/g, '_');
       
       let tFile = zip.file(`documents/${cleanDocName}.md.j2`) || zip.file(`documents/${docName}.md.j2`);
       if (!tFile) {
-        const matches = Object.keys(zip.files).filter(f => f.startsWith('documents/') && (f.endsWith('.md.j2') || f.endsWith('.j2') || f.endsWith('.md')));
+        const matches = Object.keys(zip.files).filter(f => f.startsWith('documents/') && (f.endsWith(`/${cleanDocName}.md.j2`) || f.endsWith(`/${docName}.md.j2`) || f.endsWith('.md.j2') || f.endsWith('.j2') || f.endsWith('.md')));
         if (matches.length > 0) tFile = zip.files[matches[0]];
       }
 
@@ -866,22 +918,80 @@ const importProjectZip = async (file) => {
         const tContent = await tFile.async("string");
         localStorage.setItem(`${pName}:doc:${docName}:templateText`, tContent);
         localStorage.setItem(`${pName}:doc:${docName}:templateFileName`, tFile.name.split('/').pop());
+        localStorage.setItem(`${pName}:doc:${docName}:templateFileSize`, String(tContent.length));
       }
 
       const refMatches = Object.keys(zip.files).filter(f => f.startsWith('documents/') && f.endsWith('.docx'));
       if (refMatches.length > 0) {
         const rFile = zip.files[refMatches[0]];
-        const rBlob = await rFile.async("blob");
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          localStorage.setItem(`${pName}:doc:${docName}:refDocFileBase64`, e.target.result);
-          localStorage.setItem(`${pName}:doc:${docName}:refDocFileName`, rFile.name.split('/').pop());
-        };
-        reader.readAsDataURL(rBlob);
+        const rBuf = await rFile.async("arraybuffer");
+        await saveBinaryFile(`${pName}:doc:${docName}:refDocBuffer`, rBuf);
+        localStorage.setItem(`${pName}:doc:${docName}:refDocFileName`, rFile.name.split('/').pop());
+        localStorage.setItem(`${pName}:doc:${docName}:refDocFileSize`, String(rBuf.byteLength));
+      }
+    }
+
+    // Extract raw JSON data & metadata if present in zip
+    let hasJsonData = false;
+    const jsonFile = zip.file("dades_excel.json");
+    if (jsonFile) {
+      const jText = await jsonFile.async("string");
+      try {
+        const jData = JSON.parse(jText);
+        store.excelJsonData = jData;
+        localStorage.setItem(`${pName}:excelJsonData`, jText);
+        hasJsonData = true;
+      } catch (_) {}
+    }
+
+    const metaFile = zip.file("editor_metadata.json");
+    if (metaFile) {
+      const mText = await metaFile.async("string");
+      try {
+        const mData = JSON.parse(mText);
+        store.editorMetadata = mData;
+        localStorage.setItem(`${pName}:editorMetadata`, mText);
+      } catch (_) {}
+    }
+
+    // Process Excel spreadsheet if included
+    const excelFiles = Object.keys(zip.files).filter(f => f.endsWith('.xlsx') && !f.startsWith('__MACOSX'));
+    if (excelFiles.length > 0) {
+      const xFileName = excelFiles[0];
+      const xBuffer = await zip.files[xFileName].async("arraybuffer");
+      store.excelFileName = xFileName;
+      store.excelFileSize = xBuffer.byteLength;
+      localStorage.setItem(`${pName}:excelFileName`, xFileName);
+      localStorage.setItem(`${pName}:excelFileSize`, String(xBuffer.byteLength));
+
+      await saveBinaryFile(`${pName}:excelFileBuffer`, xBuffer);
+      const excelFileObj = new File([xBuffer], xFileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      store.excelFile = excelFileObj;
+
+      try {
+        if (!store.enginesReady) {
+          store.addLog("Inicialitzant motors WASM per processar l'Excel...", "info");
+          await initEngines();
+        }
+        writeVirtualExcel(xBuffer);
+        const parsedData = await parseExcel(xBuffer);
+        if (!hasJsonData || (parsedData && Object.keys(parsedData).length > 0)) {
+          store.excelJsonData = parsedData;
+          localStorage.setItem(`${pName}:excelJsonData`, JSON.stringify(parsedData));
+        }
+      } catch (parseErr) {
+        console.warn("Avís en processar Excel del paquet ZIP:", parseErr);
       }
     }
 
     loadDocumentConfig(pName, aDoc);
+    saveCurrentProject();
+    await loadHistory();
+    if (historyData.value.length === 0) {
+      createSnapshot('init', 'Projecte importat des de ZIP');
+    }
+    isProjectsModalOpen.value = false;
+
     store.addLog(`Projecte '${pName}' restaurat correctament des del fitxer ZIP.`, 'success');
     alert(`El projecte '${pName}' s'ha carregat i restaurat satisfactòriament!`);
   } catch (err) {
@@ -974,17 +1084,16 @@ onMounted(async () => {
 
   window.__openExcelHierarchyModal = openHierarchyModal;
   window.__openVersionHistoryModal = () => { isHistoryModalOpen.value = true; };
+  window.__restoreConfigFromExcel = restoreConfigFromExcel;
 
   // Version History Initialization & Automatic Hourly Checkpoint Tracking
-  loadHistory();
-  if (historyData.value.length === 0) {
+  await loadHistory();
+  if (historyData.value.length === 0 && (store.excelJsonData || store.templateText)) {
     createSnapshot('init', 'Punt de control inicial de la sessió');
   }
 
-  // Periodic hourly check timer (every 5 minutes check if 1 hour has elapsed)
-  setInterval(() => {
-    recordChangeDiff('Comprovació automàtica horària');
-  }, 300000);
+  // Active periodic hourly check timer
+  startHourlyCheckInterval();
 
   // Watchers for automatic change differential recording (debounced by autoSaveDebounceSeconds) and instant localStorage sync
   watch(() => store.templateText, () => {
@@ -1003,6 +1112,9 @@ onMounted(async () => {
     saveCurrentProject();
   }, { deep: true });
 
+  if (!store.dataActions) store.dataActions = {};
+  store.dataActions.restoreConfigFromExcel = restoreConfigFromExcel;
+
   // Inicialitza automàticament els motors WASM al carregar la pàgina
   try {
     await initEngines();
@@ -1010,7 +1122,7 @@ onMounted(async () => {
     const excelBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
     if (excelBuf) {
       writeVirtualExcel(excelBuf);
-      if (!store.excelJsonData || Object.keys(store.excelJsonData).length === 0) {
+      if (!store.excelJsonData || Object.keys(store.excelJsonData).length === 0 || !store.editorMetadata || store.editorMetadata.length === 0) {
         try {
           const parsedData = await parseExcel(excelBuf);
           if (parsedData._sheet_info) {
@@ -1024,7 +1136,9 @@ onMounted(async () => {
           if (parsedData._hierarchy_schema) {
             delete parsedData._hierarchy_schema;
           }
-          store.excelJsonData = parsedData;
+          if (!store.excelJsonData || Object.keys(store.excelJsonData).length === 0) {
+            store.excelJsonData = parsedData;
+          }
           saveCurrentProject();
         } catch (err) {
           console.warn("Error re-processant Excel inicial:", err);
@@ -1772,7 +1886,7 @@ const generateDocuments = async () => {
           <div class="ribbon-group-label">CONJUNT ACTIU</div>
         </div>
 
-        <!-- Group: Estructura (Nou Full i Configura Tipus) -->
+        <!-- Group: Estructura (Nou Full, Configura Tipus i Restaura de l'Excel) -->
         <div class="ribbon-group-card">
           <div class="ribbon-group-body" style="display: grid; grid-template-rows: repeat(2, 28px); grid-auto-flow: column; gap: 4px;">
             <button 
@@ -1793,6 +1907,16 @@ const generateDocuments = async () => {
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 1 1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
               <span v-if="store.config.showButtonTexts">Configura Tipus</span>
+            </button>
+
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 2px 8px; font-size: 0.72rem; height: 100%; grid-row: 1 / span 2; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-color);"
+              @click="restoreConfigFromExcel"
+              title="Restaura la configuració del model de dades (tipus de camps, fórmules, metadades) directament des del full de càlcul Excel original"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span v-if="store.config.showButtonTexts">Restaura de l'Excel</span>
             </button>
           </div>
           <div class="ribbon-group-label">ESTRUCTURA</div>

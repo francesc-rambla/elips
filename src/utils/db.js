@@ -16,13 +16,13 @@ const openDB = () => {
   });
 };
 
-export const saveBinaryFile = async (key, arrayBuffer) => {
+export const saveDbItem = async (key, val) => {
   try {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
-      const req = store.put(arrayBuffer, key);
+      const req = store.put(val, key);
       req.onsuccess = () => resolve(true);
       req.onerror = (e) => reject(e.target.error);
     });
@@ -31,7 +31,7 @@ export const saveBinaryFile = async (key, arrayBuffer) => {
   }
 };
 
-export const getBinaryFile = async (key) => {
+export const getDbItem = async (key) => {
   try {
     const db = await openDB();
     return new Promise((resolve, reject) => {
@@ -47,7 +47,7 @@ export const getBinaryFile = async (key) => {
   }
 };
 
-export const deleteBinaryFile = async (key) => {
+export const deleteDbItem = async (key) => {
   try {
     const db = await openDB();
     return new Promise((resolve, reject) => {
@@ -61,3 +61,8 @@ export const deleteBinaryFile = async (key) => {
     console.warn("IndexedDB delete error:", err);
   }
 };
+
+export const saveBinaryFile = saveDbItem;
+export const getBinaryFile = getDbItem;
+export const deleteBinaryFile = deleteDbItem;
+

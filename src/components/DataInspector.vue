@@ -51,6 +51,94 @@ const runCellEvaluationAndSave = () => {
   }
 };
 
+const isPrimitive = (val) => {
+  return !Array.isArray(val) && (typeof val !== 'object' || val === null);
+};
+
+const getSheetType = (sheetData) => {
+  return Array.isArray(sheetData) ? 'tabular' : 'kv';
+};
+
+const isRootSheet = (name) => {
+  if (name === 'editor_metadata' || name === '_hierarchy_schema') return false;
+  return !name.includes('.');
+};
+
+const isNonEmptySchema = (s) => {
+  if (!s || typeof s !== 'object') return false;
+  const hasFields = Array.isArray(s.fields) && s.fields.length > 0;
+  const hasChildren = s.children && (Array.isArray(s.children) ? s.children.length > 0 : Object.keys(s.children).length > 0);
+  return hasFields || hasChildren;
+};
+
+const universalFindSchema = (targetPath, dict) => {
+  if (!dict || !targetPath) return { fields: [], children: {} };
+  
+  const cleanP = String(targetPath).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
+  
+  // 1. Direct match by node's data_path property
+  for (const [k, val] of Object.entries(dict)) {
+    if (val && typeof val === 'object' && val.data_path === cleanP && isNonEmptySchema(val)) {
+      return val;
+    }
+  }
+
+  // 2. Direct Flat Key Lookup
+  if (dict[cleanP] && isNonEmptySchema(dict[cleanP])) {
+    return dict[cleanP];
+  }
+  
+  // 3. Direct Tree Path Traversal
+  const parts = cleanP.split('.').filter(Boolean);
+  let curr = dict;
+  let foundTree = null;
+  
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (curr && typeof curr === 'object') {
+      const node = curr[p] || (curr.children && typeof curr.children === 'object' && !Array.isArray(curr.children) ? curr.children[p] : null);
+      if (node) {
+        foundTree = node;
+        curr = node.children;
+      } else {
+        foundTree = null;
+        break;
+      }
+    }
+  }
+  if (isNonEmptySchema(foundTree)) {
+    return foundTree;
+  }
+  
+  // 4. Search by key suffix or data_path
+  const lastKey = parts[parts.length - 1];
+  for (const [sKey, sVal] of Object.entries(dict)) {
+    if ((sKey === cleanP || sKey === lastKey || sKey.endsWith(`.${lastKey}`) || sVal?.data_path === cleanP || sVal?.data_path?.endsWith(`.${lastKey}`)) && isNonEmptySchema(sVal)) {
+      return sVal;
+    }
+  }
+  
+  // 5. Deep DFS
+  const dfs = (nodeObj) => {
+    if (!nodeObj || typeof nodeObj !== 'object') return null;
+    for (const [k, v] of Object.entries(nodeObj)) {
+      if ((k === lastKey || k === cleanP || v?.data_path === cleanP) && isNonEmptySchema(v)) {
+        return v;
+      }
+      if (v && v.children && typeof v.children === 'object' && !Array.isArray(v.children)) {
+        const sub = dfs(v.children);
+        if (sub) return sub;
+      }
+    }
+    return null;
+  };
+  
+  const dfsResult = dfs(dict);
+  if (dfsResult) return dfsResult;
+  
+  return { fields: [], children: {} };
+};
+
 // Trigger instant textarea height adjustments when sheets or data change
 watch([selectedCompactSheet, viewMode, () => store.excelJsonData], () => {
   nextTick(() => {
@@ -88,14 +176,6 @@ watch(() => store.excelJsonData, (newVal) => {
 
 const toggleSheet = (name) => {
   openSheets.value[name] = !openSheets.value[name];
-};
-
-const getSheetType = (sheetData) => {
-  return Array.isArray(sheetData) ? 'tabular' : 'kv';
-};
-
-const isPrimitive = (val) => {
-  return !Array.isArray(val) && (typeof val !== 'object' || val === null);
 };
 
 const getKvPrimitiveEntries = (sheetData) => {
@@ -197,86 +277,6 @@ const updatePercentageValue = (targetObj, key, eventVal) => {
     return;
   }
   targetObj[key] = Math.round((num / 100.0) * 1000000) / 1000000;
-};
-
-const isRootSheet = (name) => {
-  if (name === 'editor_metadata' || name === '_hierarchy_schema') return false;
-  return !name.includes('.');
-};
-
-const isNonEmptySchema = (s) => {
-  if (!s || typeof s !== 'object') return false;
-  const hasFields = Array.isArray(s.fields) && s.fields.length > 0;
-  const hasChildren = s.children && (Array.isArray(s.children) ? s.children.length > 0 : Object.keys(s.children).length > 0);
-  return hasFields || hasChildren;
-};
-
-const universalFindSchema = (targetPath, dict) => {
-  if (!dict || !targetPath) return { fields: [], children: {} };
-  
-  const cleanP = String(targetPath).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
-  
-  // 1. Direct match by node's data_path property
-  for (const [k, val] of Object.entries(dict)) {
-    if (val && typeof val === 'object' && val.data_path === cleanP && isNonEmptySchema(val)) {
-      return val;
-    }
-  }
-
-  // 2. Direct Flat Key Lookup (e.g. dict["pres.parts"])
-  if (dict[cleanP] && isNonEmptySchema(dict[cleanP])) {
-    return dict[cleanP];
-  }
-  
-  // 3. Direct Tree Path Traversal (e.g. dict["pres"].children["parts"])
-  const parts = cleanP.split('.').filter(Boolean);
-  let curr = dict;
-  let foundTree = null;
-  
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    if (curr && typeof curr === 'object') {
-      const node = curr[p] || (curr.children && typeof curr.children === 'object' && !Array.isArray(curr.children) ? curr.children[p] : null);
-      if (node) {
-        foundTree = node;
-        curr = node.children;
-      } else {
-        foundTree = null;
-        break;
-      }
-    }
-  }
-  if (isNonEmptySchema(foundTree)) {
-    return foundTree;
-  }
-  
-  // 4. Search by key suffix or data_path in flat dict
-  const lastKey = parts[parts.length - 1];
-  for (const [sKey, sVal] of Object.entries(dict)) {
-    if ((sKey === cleanP || sKey === lastKey || sKey.endsWith(`.${lastKey}`) || sVal?.data_path === cleanP || sVal?.data_path?.endsWith(`.${lastKey}`)) && isNonEmptySchema(sVal)) {
-      return sVal;
-    }
-  }
-  
-  // 5. Deep DFS in recursive tree dict matching data_path or node key
-  const dfs = (nodeObj) => {
-    if (!nodeObj || typeof nodeObj !== 'object') return null;
-    for (const [k, v] of Object.entries(nodeObj)) {
-      if ((k === lastKey || k === cleanP || v?.data_path === cleanP) && isNonEmptySchema(v)) {
-        return v;
-      }
-      if (v && v.children && typeof v.children === 'object' && !Array.isArray(v.children)) {
-        const sub = dfs(v.children);
-        if (sub) return sub;
-      }
-    }
-    return null;
-  };
-  
-  const dfsResult = dfs(dict);
-  if (dfsResult) return dfsResult;
-  
-  return { fields: [], children: {} };
 };
 
 const getGroupCleanName = (name) => {
@@ -1401,16 +1401,50 @@ const addNewFieldToConfig = () => {
   }
 };
 
+const getItemTitleFormula = (groupName) => {
+  const metaList = (store.editorMetadata && store.editorMetadata.length > 0) 
+    ? store.editorMetadata 
+    : (store.excelJsonData?.editor_metadata || store.excelJsonData?.editorMetadata || []);
+  if (!metaList || !Array.isArray(metaList) || !groupName) return '';
+  const shortName = groupName.split('.').pop();
+  const meta = metaList.find(m => {
+    const mGroup = m.group ? m.group.split('.').pop() : '';
+    const groupMatches = m.group === groupName || m.group === shortName || mGroup === shortName;
+    const isHeader = m.element === '_group_label' || m.element === '_group' || m.isGroupHeader || !m.element || m.element === '';
+    return groupMatches && isHeader && m.itemTitleFormula;
+  });
+  return meta ? meta.itemTitleFormula : '';
+};
+
+const moveTabularRowUp = (name, idx) => {
+  if (idx <= 0 || !store.excelJsonData?.[name]) return;
+  const list = store.excelJsonData[name];
+  if (!Array.isArray(list)) return;
+  const item = list.splice(idx, 1)[0];
+  list.splice(idx - 1, 0, item);
+  onCellBlur();
+};
+
+const moveTabularRowDown = (name, idx) => {
+  if (!store.excelJsonData?.[name]) return;
+  const list = store.excelJsonData[name];
+  if (!Array.isArray(list) || idx >= list.length - 1) return;
+  const item = list.splice(idx, 1)[0];
+  list.splice(idx + 1, 0, item);
+  onCellBlur();
+};
+
 const handleSaveGroupConfig = (data) => {
   const groupName = activeConfigGroup.value;
   store.editorMetadata = store.editorMetadata.filter(m => m.group !== groupName);
 
-  // Save group layout & label header
+  // Save group layout, label header & item title formula
   const groupMeta = {
     group: groupName,
     element: '_group_label',
     isGroupHeader: true,
-    groupLayout: data.selectedLayout
+    groupLayout: data.selectedLayout,
+    itemTitleFormula: data.itemTitleFormula || ''
   };
   if (data.groupLabel && data.groupLabel.trim()) {
     groupMeta.label = data.groupLabel.trim();
@@ -1905,6 +1939,7 @@ const handleCellKeyDown = (e) => {
 
 onMounted(() => {
   store.dataActions = {
+    ...store.dataActions,
     setViewMode: (mode) => { viewMode.value = mode; },
     toggleJsonView: () => { showJsonView.value = !showJsonView.value; },
     exportExcel: () => exportExcel(),
@@ -2001,6 +2036,7 @@ const loadMockData = () => {
 
 onMounted(() => {
   store.dataActions = {
+    ...store.dataActions,
     loadMockData: () => loadMockData(),
     setViewMode: (mode) => { viewMode.value = mode; },
     getViewMode: () => viewMode.value,
@@ -2350,14 +2386,39 @@ onMounted(() => {
                       </div>
                     </td>
                     <td style="text-align: center; vertical-align: middle; padding: 4px;">
-                      <button 
-                        class="btn-icon-only text-danger" 
-                        style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
-                        title="Elimina fila"
-                        @click="deleteTabularRow(name, idx)"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                      </button>
+                      <div style="display: flex; align-items: center; justify-content: center; gap: 3px;">
+                        <button 
+                          type="button"
+                          class="btn-icon-only" 
+                          :disabled="idx === 0"
+                          style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--border-color); border-radius: 3px;"
+                          :style="{ opacity: idx === 0 ? 0.35 : 1, cursor: idx === 0 ? 'not-allowed' : 'pointer' }"
+                          title="Desplaça fila amunt"
+                          @click="moveTabularRowUp(name, idx)"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                        </button>
+                        <button 
+                          type="button"
+                          class="btn-icon-only" 
+                          :disabled="idx === sheetData.length - 1"
+                          style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--border-color); border-radius: 3px;"
+                          :style="{ opacity: idx === sheetData.length - 1 ? 0.35 : 1, cursor: idx === sheetData.length - 1 ? 'not-allowed' : 'pointer' }"
+                          title="Desplaça fila avall"
+                          @click="moveTabularRowDown(name, idx)"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                        </button>
+                        <button 
+                          type="button"
+                          class="btn-icon-only text-danger" 
+                          style="height: 24px; width: 24px; min-width: 24px; font-size: 0.8rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+                          title="Elimina fila"
+                          @click="deleteTabularRow(name, idx)"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 </tbody>
@@ -2640,6 +2701,7 @@ onMounted(() => {
       :configList="groupConfigList"
       :groupLabel="groupLabelInput"
       :selectedLayout="selectedLayout"
+      :itemTitleFormula="getItemTitleFormula(activeConfigGroup)"
       @save="handleSaveGroupConfig"
       @copyGroup="copyGroupConfig"
       @pasteGroup="pasteGroupConfig"

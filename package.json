@@ -1,13 +1,13 @@
 {
   "name": "generador-contractes-vue",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "test:python": "python3 tests/test_excel_python_engine.py",
     "test:js": "vitest run",
-    "test:e2e": "node tests/e2e_browser.e2e.js",
+    "test:e2e": "node tests/e2e_browser.e2e.js && node tests/test_nested_features.e2e.js && node tests/test_zip_recovery.e2e.js",
     "test": "npm run test:python && npm run test:js && npm run test:e2e",
     "build": "npm run test && vite build",
     "preview": "vite preview"

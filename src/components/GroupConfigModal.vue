@@ -8,7 +8,8 @@ const props = defineProps({
   groupName: { type: String, default: '' },
   configList: { type: Array, default: () => [] },
   groupLabel: { type: String, default: '' },
-  selectedLayout: { type: String, default: 'vertical' }
+  selectedLayout: { type: String, default: 'vertical' },
+  itemTitleFormula: { type: String, default: '' }
 });
 
 const emit = defineEmits(['update:modelValue', 'save', 'copyGroup', 'pasteGroup']);
@@ -17,6 +18,7 @@ const store = useWorkspaceStore();
 
 const localGroupLabel = ref('');
 const localSelectedLayout = ref('vertical');
+const localItemTitleFormula = ref('');
 const localConfigList = ref([]);
 const isVisualGridModalOpen = ref(false);
 
@@ -60,6 +62,7 @@ watch(() => props.modelValue, (newVal) => {
   if (newVal) {
     localGroupLabel.value = props.groupLabel || '';
     localSelectedLayout.value = props.selectedLayout || 'vertical';
+    localItemTitleFormula.value = props.itemTitleFormula || '';
     localConfigList.value = (props.configList || []).map(item => {
       let fn = item.calcFn;
       const isCalc = item.isCalculated === true || 
@@ -82,6 +85,39 @@ watch(() => props.modelValue, (newVal) => {
   }
 });
 
+const insertFieldIntoTitleFormula = (fieldName) => {
+  if (!localItemTitleFormula.value || localItemTitleFormula.value.trim() === '') {
+    localItemTitleFormula.value = fieldName;
+  } else if (localItemTitleFormula.value.includes('CONCAT(') || localItemTitleFormula.value.includes('CONCATENA(')) {
+    const lastParen = localItemTitleFormula.value.lastIndexOf(')');
+    if (lastParen !== -1) {
+      const before = localItemTitleFormula.value.substring(0, lastParen).trim();
+      const sep = (before.endsWith('(') || before.endsWith(';') || before.endsWith(',')) ? '' : '; ';
+      localItemTitleFormula.value = before + sep + fieldName + ')';
+    } else {
+      localItemTitleFormula.value += '; ' + fieldName;
+    }
+  } else {
+    localItemTitleFormula.value = `CONCAT(${localItemTitleFormula.value}; " - "; ${fieldName})`;
+  }
+};
+
+const wrapTitleFormulaWithConcat = () => {
+  const cur = localItemTitleFormula.value.trim();
+  if (!cur) {
+    const firstTwo = localConfigList.value.slice(0, 2).map(x => x.element);
+    if (firstTwo.length >= 2) {
+      localItemTitleFormula.value = `CONCAT(${firstTwo[0]}; " - "; ${firstTwo[1]})`;
+    } else if (firstTwo.length === 1) {
+      localItemTitleFormula.value = `CONCAT(${firstTwo[0]}; ; import)`;
+    } else {
+      localItemTitleFormula.value = `CONCAT(titol; ; import)`;
+    }
+  } else if (!cur.startsWith('CONCAT(') && !cur.startsWith('CONCATENA(')) {
+    localItemTitleFormula.value = `CONCAT(${cur})`;
+  }
+};
+
 const onCalculatedToggle = (item) => {
   if (item.isCalculated) {
     item.sourceType = 'computed';
@@ -101,6 +137,30 @@ const onCalculatedToggle = (item) => {
 
 const closeModal = () => {
   emit('update:modelValue', false);
+};
+
+const restoreFromExcel = async () => {
+  if (store.dataActions?.restoreConfigFromExcel) {
+    const ok = await store.dataActions.restoreConfigFromExcel();
+    if (ok) {
+      const metaList = (store.editorMetadata || []).filter(m => m.group === props.groupName);
+      if (metaList.length > 0) {
+        const groupHeader = metaList.find(m => m.isGroupHeader);
+        if (groupHeader) {
+          if (groupHeader.label) localGroupLabel.value = groupHeader.label;
+          if (groupHeader.groupLayout) localSelectedLayout.value = groupHeader.groupLayout;
+          if (groupHeader.itemTitleFormula) localItemTitleFormula.value = groupHeader.itemTitleFormula;
+        }
+        const fieldMetas = metaList.filter(m => !m.isGroupHeader);
+        if (fieldMetas.length > 0) {
+          localConfigList.value = fieldMetas.map(item => ({
+            ...item,
+            isCalculated: item.type === 'Computed' || item.sourceType === 'computed' || (item.calcFn && item.calcFn !== 'NONE') || Boolean(item.calcFormula)
+          }));
+        }
+      }
+    }
+  }
 };
 
 const handleSave = () => {
@@ -137,6 +197,7 @@ const handleSave = () => {
   emit('save', {
     groupLabel: localGroupLabel.value,
     selectedLayout: localSelectedLayout.value,
+    itemTitleFormula: localItemTitleFormula.value,
     configList: cleanedList
   });
   closeModal();
@@ -559,6 +620,75 @@ const saveFormulaModal = () => {
           </div>
         </div>
 
+        <!-- Group Level Header Configurations (Label, Layout & Title Formula for Intermediate Elements) -->
+        <div style="flex-shrink: 0; padding: 0.65rem 1rem; border-bottom: 1px solid var(--border-color); background: var(--bg-tertiary); display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;">
+            <!-- Group Label -->
+            <div style="display: flex; align-items: center; gap: 8px; flex: 1 1 240px;">
+              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-primary); white-space: nowrap;">Etiqueta del Grup:</label>
+              <input 
+                type="text" 
+                v-model="localGroupLabel" 
+                class="data-input" 
+                placeholder="Nom visible del grup..."
+                style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+              />
+            </div>
+
+            <!-- Group Layout -->
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-primary); white-space: nowrap;">Disposició:</label>
+              <select v-model="localSelectedLayout" class="data-input" style="height: 28px; font-size: 0.78rem; width: 140px;">
+                <option value="vertical">Vertical (Llista)</option>
+                <option value="horizontal">Horitzontal (Graella)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Item Title Formula (for intermediate levels & cards) -->
+          <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--bg-primary); padding: 6px 10px; border-radius: var(--radius-xs); border: 1px solid var(--border-color);">
+            <div style="display: flex; align-items: center; gap: 6px; min-width: 200px;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+              <label style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary); white-space: nowrap;" title="Fórmula o camp que es mostrarà com a títol resum de cada element intermedi">
+                Títol dels Elements:
+              </label>
+            </div>
+            
+            <input 
+              type="text" 
+              v-model="localItemTitleFormula" 
+              class="data-input" 
+              placeholder='ex: CONCAT(titol; " - "; import) o CONCAT(titol; ;import) o {{ titol }}'
+              style="flex-grow: 1; height: 28px; font-family: var(--font-mono); font-size: 0.78rem; min-width: 260px;"
+            />
+
+            <!-- Quick Pill Inserters for Available Group Fields -->
+            <div style="display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
+              <span style="font-size: 0.7rem; color: var(--text-muted);">Insereix:</span>
+              <button 
+                v-for="item in localConfigList.slice(0, 6)" 
+                :key="item.element"
+                type="button"
+                class="btn btn-secondary"
+                style="padding: 1px 5px; font-size: 0.7rem; font-family: var(--font-mono); height: 22px; width: auto;"
+                @click="insertFieldIntoTitleFormula(item.element)"
+                :title="'Afegeix ' + item.element + ' al títol'"
+              >
+                + {{ item.element }}
+              </button>
+              <button 
+                type="button"
+                class="btn btn-secondary"
+                style="padding: 1px 5px; font-size: 0.7rem; font-family: var(--font-mono); height: 22px; width: auto; color: var(--color-primary); border-color: var(--color-primary);"
+                @click="wrapTitleFormulaWithConcat"
+                title="Aplica CONCAT(...) automàticament"
+              >
+                CONCAT(...)
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Scrollable Modal Body (Only table rows scroll) -->
         <div class="modal-body" style="flex: 1; min-height: 0; overflow-y: auto; padding: 0;">
           <!-- Configuration Fields Table -->
@@ -781,9 +911,23 @@ const saveFormulaModal = () => {
         </div>
 
         <!-- Modal Footer -->
-        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 0.5rem;">
-          <button type="button" class="btn btn-secondary" style="width: auto;" @click="closeModal">Cancel·la</button>
-          <button type="button" class="btn btn-primary" style="width: auto;" @click="handleSave">Desa Configuració</button>
+        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 0.5rem;">
+          <div>
+            <button 
+              type="button" 
+              class="btn btn-secondary" 
+              style="width: auto; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 5px;" 
+              @click="restoreFromExcel"
+              title="Restaura totes les regles i tipus de dades des del full de càlcul Excel original"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span>Restaura de l'Excel</span>
+            </button>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" class="btn btn-secondary" style="width: auto;" @click="closeModal">Cancel·la</button>
+            <button type="button" class="btn btn-primary" style="width: auto;" @click="handleSave">Desa Configuració</button>
+          </div>
         </div>
 
       </div>
