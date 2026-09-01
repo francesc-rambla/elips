@@ -2634,3 +2634,619 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
             'traceback': tb_str,
             'line': lineno
         }, ensure_ascii=False, default=_custom_json_default)
+
+
+# =============================================================================
+# Calculated-field evaluation engine (SI/ARRODONEIX/CONCAT/MONEDA/... mini-language)
+# =============================================================================
+# Ported from src/composables/useWasmEngines.js (evaluateCustomFormula /
+# evaluateComputedFields), moved here so calculated-field formulas execute
+# inside Pyodide's WASM sandbox instead of via a JS `new Function(...)`
+# (dynamic eval) in the page's own execution context — the browser tab that
+# also holds cookies, localStorage and DOM access. A hostile formula string
+# smuggled in via editor_metadata now runs inside a restricted Python `eval`
+# with no builtins beyond a small whitelist, isolated in the WASM sandbox with
+# no path back to `window`/`document`/network APIs.
+#
+# Foreign-key hydration of dynamic Select fields (hydrateModelWithForeignKeys
+# in useWasmEngines.js) stays in JS: it is a data-shape transformation, not
+# calculation, and JS calls it before handing data to evaluate_computed_fields.
+
+_CEF_RESERVED_TOKENS = {
+    'SI', 'IF', 'ARRODONEIX', 'ROUND', 'ABS', 'MIN', 'MAX', 'OR', 'O', 'AND', 'I',
+    'ANY', 'SOME', 'EVERY', 'ALL', 'Math', '__round', '__or', '__and',
+    'CERT', 'FALS', 'cert', 'fals', 'is_cert', 'is_fals', '__is_cert', '__is_fals',
+    'true', 'false', 'null', 'undefined', 'doc', 'dades', 'return', 'function',
+    'abs', 'True', 'False', 'None', 'and', 'or', 'not', 'if', 'else', 'is', 'in',
+}
+
+_CEF_TOKEN_RE = re.compile(
+    r'\b(?:[a-zA-Z_][a-zA-Z0-9_]*|doc\.[a-zA-Z0-9_.]+|dades\.[a-zA-Z0-9_.]+)'
+    r'(?:\[\d+\])?(?:\.[a-zA-Z_][a-zA-Z0-9_.]*(?:\[\d+\])?)*\b'
+)
+_CEF_ARRAY_INDEX_RE = re.compile(r'^([a-zA-Z0-9_]+)\[(\d+)\]$')
+
+
+def _cef_balanced_call_args(s, open_paren_idx):
+    """Finds the matching ')' for a '(' at open_paren_idx, respecting nested
+    parens and quoted strings. Returns (end_idx, args_str) or (None, None)."""
+    depth = 1
+    in_quotes = False
+    quote_char = ''
+    end_idx = None
+    for i in range(open_paren_idx + 1, len(s)):
+        ch = s[i]
+        if in_quotes:
+            if ch == quote_char:
+                in_quotes = False
+        elif ch in ('"', "'"):
+            in_quotes = True
+            quote_char = ch
+        elif ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth == 0:
+                end_idx = i
+                break
+    if end_idx is None:
+        return None, None
+    return end_idx, s[open_paren_idx + 1:end_idx]
+
+
+def _cef_split_args(args_str):
+    """Splits a function-call argument string on ';' or ',' at paren/quote depth 0."""
+    parts = []
+    current = ''
+    depth = 0
+    in_quotes = False
+    quote_char = ''
+    for ch in args_str:
+        if in_quotes:
+            current += ch
+            if ch == quote_char:
+                in_quotes = False
+        elif ch in ('"', "'"):
+            in_quotes = True
+            quote_char = ch
+            current += ch
+        elif ch == '(':
+            depth += 1
+            current += ch
+        elif ch == ')':
+            depth -= 1
+            current += ch
+        elif ch in (';', ',') and depth == 0:
+            parts.append(current.strip())
+            current = ''
+        else:
+            current += ch
+    parts.append(current.strip())
+    return parts
+
+
+def _cef_transform_if(s):
+    """SI(cond; a; b) / IF(cond; a; b) -> Python ternary: ((a) if (cond) else (b))."""
+    prev = None
+    while prev != s:
+        prev = s
+        m = re.search(r'\b(SI|IF)\s*\(', s, re.IGNORECASE)
+        if not m:
+            break
+        end_idx, args_str = _cef_balanced_call_args(s, m.end() - 1)
+        if end_idx is None:
+            break
+        full_match = s[m.start():end_idx + 1]
+        parts = _cef_split_args(args_str)
+        if len(parts) >= 3:
+            cond, t_val = parts[0], parts[1]
+            f_val = ';'.join(parts[2:])
+            s = s.replace(full_match, f'(({t_val}) if ({cond}) else ({f_val}))', 1)
+        else:
+            break
+    return s
+
+
+def _cef_transform_round(s):
+    """ARRODONEIX(valor; decimals) / ROUND(...) -> __round(valor, decimals)."""
+    prev = None
+    while prev != s:
+        prev = s
+        m = re.search(r'\b(ARRODONEIX|ROUND)\s*\(', s, re.IGNORECASE)
+        if not m:
+            break
+        end_idx, args_str = _cef_balanced_call_args(s, m.end() - 1)
+        if end_idx is None:
+            break
+        full_match = s[m.start():end_idx + 1]
+        parts = _cef_split_args(args_str)
+        val_expr = parts[0] if parts and parts[0] else '0'
+        prec_expr = parts[1] if len(parts) > 1 else '0'
+        s = s.replace(full_match, f'__round({val_expr}, {prec_expr})', 1)
+    return s
+
+
+def _cef_transform_or_and(s):
+    """OR(path)/AND(path) (plus O/I/ANY/SOME/EVERY/ALL synonyms) -> __or("path")/__and("path")."""
+    prev = None
+    while prev != s:
+        prev = s
+        m = re.search(r'\b(OR|O|AND|I|ANY|SOME|EVERY|ALL)\s*\(', s, re.IGNORECASE)
+        if not m:
+            break
+        end_idx, arg_str = _cef_balanced_call_args(s, m.end() - 1)
+        if end_idx is None:
+            break
+        fn_name = m.group(1).upper()
+        full_match = s[m.start():end_idx + 1]
+        # Escape backslashes before quotes (the original JS port only escaped
+        # quotes, which could desync the generated string literal).
+        escaped = arg_str.strip().replace('\\', '\\\\').replace('"', '\\"')
+        if fn_name in ('OR', 'O', 'ANY', 'SOME'):
+            s = s.replace(full_match, f'__or("{escaped}")', 1)
+        elif fn_name in ('AND', 'I', 'EVERY', 'ALL'):
+            s = s.replace(full_match, f'__and("{escaped}")', 1)
+        else:
+            break
+    return s
+
+
+def _cef_transform_cert_fals(s):
+    s = re.sub(r'\b(CERT|is_cert)\s*\(', '__is_cert(', s, flags=re.IGNORECASE)
+    s = re.sub(r'\b(FALS|is_fals)\s*\(', '__is_fals(', s, flags=re.IGNORECASE)
+    return s
+
+
+def _cef_parse_num_or_string(raw_val):
+    """Returns either a number/bool (embedded later as a literal) or a Python
+    `str` that is ALREADY valid quoted Python source (via repr) — mirroring
+    the JS version's dual return type, which the caller dispatches on."""
+    if isinstance(raw_val, bool):
+        return raw_val
+    if isinstance(raw_val, (int, float)):
+        return raw_val
+    if isinstance(raw_val, str):
+        if raw_val.strip() == '':
+            return 0
+        try:
+            return float(raw_val.replace(',', '.'))
+        except ValueError:
+            return repr(raw_val)
+    return 0
+
+
+def _cef_get_nested_value(obj, parts, global_data):
+    current = obj
+    for part in parts:
+        if current is None:
+            return None
+        m = _CEF_ARRAY_INDEX_RE.match(part)
+        if m:
+            arr_key, idx = m.group(1), int(m.group(2))
+            arr = current.get(arr_key) if isinstance(current, dict) else None
+            current = arr[idx] if isinstance(arr, list) and idx < len(arr) else None
+            if current is None:
+                return None
+        elif isinstance(current, list):
+            nums = []
+            for item in current:
+                if isinstance(item, dict) and part in item:
+                    try:
+                        nums.append(float(item[part]))
+                    except (TypeError, ValueError):
+                        pass
+            return sum(nums) if nums else 0
+        elif isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, (str, int, float)):
+            # Fallback: current is a scalar FK value (e.g. "PART-01"); look it
+            # up in the global tables for a row that carries this `part` field.
+            found_val = None
+            if global_data:
+                for table in global_data.values():
+                    if isinstance(table, list):
+                        match_row = next((r for r in table if isinstance(r, dict)
+                                           and any(str(v) == str(current) for v in r.values())), None)
+                        if match_row is not None and part in match_row:
+                            found_val = match_row[part]
+                            break
+            if found_val is not None:
+                current = found_val
+            else:
+                return None
+        else:
+            return None
+    return current
+
+
+def _cef_resolve_value(path_str, row, global_data):
+    if not path_str:
+        return None
+    if isinstance(row, dict) and path_str in row:
+        return _cef_parse_num_or_string(row[path_str])
+    clean_path = re.sub(r'^(doc|dades)\.', '', path_str, flags=re.IGNORECASE)
+    path_parts = [p for p in clean_path.split('.') if p]
+
+    val = _cef_get_nested_value(row, path_parts, global_data)
+    if val is not None:
+        return _cef_parse_num_or_string(val)
+
+    if global_data:
+        val = _cef_get_nested_value(global_data, path_parts, global_data)
+        if val is None and path_parts:
+            prefixed = ['OUT_' + path_parts[0]] + path_parts[1:]
+            val = _cef_get_nested_value(global_data, prefixed, global_data)
+        if val is not None:
+            return _cef_parse_num_or_string(val)
+    return None
+
+
+def _cef_is_cert(val):
+    if val in (None, False, '', 0, 0.0, '0', '0.0'):
+        return False
+    if isinstance(val, str) and val.strip().upper() in ('NO', 'FALS', 'FALSE', '0', '0.0', 'N', 'OFF', 'DESACTIVAT'):
+        return False
+    return True
+
+
+def _cef_is_fals(val):
+    return not _cef_is_cert(val)
+
+
+def _cef_extract_bool_val(val):
+    if val in (None, False, 0, '0', '', '0.0'):
+        return False
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
+    if isinstance(val, str):
+        return val.strip().lower() in ('true', '1', 'si', 'sí', 'cert', 'yes')
+    return bool(val)
+
+
+def _cef_eval_or_and(path_str, mode, row, global_data):
+    clean_path = re.sub(r"^['\"]|['\"]$", '', path_str.strip())
+    clean_path = re.sub(r'^(doc|dades)\.', '', clean_path, flags=re.IGNORECASE)
+    parts = [p for p in clean_path.split('.') if p]
+    if not parts:
+        return False
+
+    def collect_values(start_obj):
+        if not isinstance(start_obj, (dict, list)):
+            return None
+        current = start_obj
+        for i, part in enumerate(parts):
+            if current is None:
+                return None
+            if isinstance(current, list):
+                remaining = parts[i:]
+                out = []
+                for item in current:
+                    if not isinstance(item, dict):
+                        out.append(item)
+                        continue
+                    sub = item
+                    for p in remaining:
+                        if sub is None:
+                            sub = None
+                            break
+                        sub = sub.get(p) if isinstance(sub, dict) else None
+                    out.append(sub)
+                return out
+            current = current.get(part) if isinstance(current, dict) else None
+        return current if isinstance(current, list) else [current]
+
+    lst = collect_values(row)
+    if (not lst) and global_data:
+        lst = collect_values(global_data)
+        if (not lst) and parts:
+            sheet_key = parts[0]
+            prefixed = global_data.get('OUT_' + sheet_key)
+            if prefixed is not None:
+                lst = collect_values({'OUT_' + sheet_key: prefixed})
+
+    if not isinstance(lst, list):
+        lst = []
+
+    if mode == 'OR':
+        return any(_cef_extract_bool_val(v) for v in lst)
+    return len(lst) > 0 and all(_cef_extract_bool_val(v) for v in lst)
+
+
+def _cef_normalize_number(n):
+    """Rounds to 6 decimals and collapses whole-number floats to int (e.g.
+    30.0 -> 30). JS's single Number type never carries this distinction —
+    JSON.stringify(30.0) is "30" — so without this, a value that used to
+    render as "30" in a generated document would render as "30.0" now that
+    calculation happens in Python."""
+    rounded = round(float(n) * 1000000) / 1000000
+    if rounded == int(rounded) and abs(rounded) < 1e15:
+        return int(rounded)
+    return rounded
+
+
+def evaluate_custom_formula(formula_str, row, global_data=None):
+    """Evaluates one CUSTOM-formula string (the SI/ARRODONEIX/CONCAT/MONEDA/...
+    mini-language) against `row` (the record being computed) and `global_data`
+    (the whole data tree, for cross-group lookups). Returns a number, bool or
+    string, or `row.get(formula_str)` as a last-resort fallback on any error —
+    matching the JS version's forgiving behavior (a broken formula shouldn't
+    crash the form, just leave the field showing something recognizable)."""
+    if not formula_str or not isinstance(formula_str, str):
+        return 0
+    try:
+        expr = formula_str.strip()
+
+        # Defense in depth: even with a restricted __builtins__, Python's eval()
+        # still allows plain attribute access, which is enough for the classic
+        # `().__class__.__bases__[0].__subclasses__()`-style sandbox escape (that
+        # chain, and `__import__(...)`, both require a literal '__'). A bare
+        # `import`/`eval`/`open`/... call can't do anything here regardless —
+        # eval() only accepts expressions, so `import` is a SyntaxError inside
+        # it, and every other name in that family is simply absent from the
+        # restricted __builtins__ below — so only '__' itself needs blocking.
+        # (Field names like "import" — Catalan for "amount" — are common and
+        # legitimate in this app's domain and must not be caught here.)
+        if '__' in expr:
+            return row.get(formula_str, 0) if isinstance(row, dict) else 0
+
+        expr = _cef_transform_if(expr)
+        expr = _cef_transform_round(expr)
+        expr = _cef_transform_or_and(expr)
+        expr = _cef_transform_cert_fals(expr)
+
+        expr = re.sub(r'\bABS\s*\(', 'abs(', expr, flags=re.IGNORECASE)
+        expr = re.sub(r'(^|[^<>=!])=([^=])', r'\1==\2', expr)
+        expr = expr.replace('<>', '!=')
+        expr = expr.replace('^', '**')
+
+        found_tokens = set()
+        for m in _CEF_TOKEN_RE.finditer(expr):
+            t = m.group(0)
+            if t not in _CEF_RESERVED_TOKENS and t.upper() not in _CEF_RESERVED_TOKENS:
+                found_tokens.add(t)
+
+        for t in sorted(found_tokens, key=len, reverse=True):
+            resolved = _cef_resolve_value(t, row, global_data)
+            if resolved is not None:
+                replacement = resolved if isinstance(resolved, str) else f'({resolved!r})'
+                expr = re.sub(r'\b' + re.escape(t) + r'\b', lambda _m: replacement, expr)
+
+        safe_globals = {
+            '__builtins__': {'abs': abs, 'min': min, 'max': max, 'True': True, 'False': False, 'None': None},
+            '__round': lambda val, prec=0: round(float(val), int(prec)) if str(val).strip() != '' else 0,
+            '__is_cert': _cef_is_cert,
+            '__is_fals': _cef_is_fals,
+            '__or': lambda arg: _cef_eval_or_and(str(arg), 'OR', row, global_data),
+            '__and': lambda arg: _cef_eval_or_and(str(arg), 'AND', row, global_data),
+            'CERT': _cef_is_cert, 'FALS': _cef_is_fals, 'cert': _cef_is_cert, 'fals': _cef_is_fals,
+        }
+        result = eval(expr, safe_globals, {})
+
+        if isinstance(result, bool):
+            return result
+        if isinstance(result, (int, float)):
+            return _cef_normalize_number(result)
+        if result is not None:
+            return str(result)
+        return 0
+    except Exception:
+        return row.get(formula_str, 0) if isinstance(row, dict) else 0
+
+
+def _cef_is_custom_fn(fn, formula):
+    if formula and str(formula).strip():
+        return True
+    upper = (fn or '').upper()
+    return upper in ('CUSTOM', 'FORMULA', '', 'NONE')
+
+
+def _cef_is_group_match(meta_group, hint):
+    if not meta_group:
+        return True
+    if not hint:
+        return False
+    clean_m = re.sub(r'^OUT_', '', meta_group, flags=re.IGNORECASE).lower()
+    clean_h = re.sub(r'^OUT_', '', hint, flags=re.IGNORECASE).lower()
+    if clean_m == clean_h:
+        return True
+    if clean_m.split('.')[-1] == clean_h.split('.')[-1]:
+        return True
+    root_hints = {'doc', 'dades', 'global', 'header', 'general', 'presupost', 'pressupost', 'resum', 'summary', 'root', 'main', ''}
+    return clean_h in root_hints and clean_m in root_hints
+
+
+def _cef_extract_val(child, col):
+    if child is None:
+        return 0
+    if isinstance(child, dict):
+        if col and child.get(col) is not None:
+            try:
+                return float(child[col])
+            except (TypeError, ValueError):
+                return 0
+        for k, v in child.items():
+            if not str(k).startswith('_'):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    continue
+        return 0
+    try:
+        return float(child)
+    except (TypeError, ValueError):
+        return 0
+
+
+def evaluate_computed_fields(data_json, metadata_json, debug_mode=False):
+    """Two-phase bottom-up evaluation of every calculated field in `data_json`:
+    first row-level CUSTOM formulas (evaluate_custom_formula), then SUM/COUNT/
+    AVERAGE/MIN/MAX/OR/AND aggregations that read the just-computed CUSTOM
+    values from child tables. Mutates and returns a JSON string of the full
+    data tree (mirroring the JS version's in-place mutation of store.excelJsonData,
+    so Vue's reactivity still targets the same paths after the round trip).
+
+    `data_json` must already have dynamic Select fields hydrated (done in JS
+    by hydrateModelWithForeignKeys before this is called) — this function only
+    computes formulas/aggregations, it does not resolve foreign keys.
+    """
+    try:
+        data = json.loads(data_json)
+        metadata = json.loads(metadata_json) if metadata_json else []
+    except Exception as ex:
+        return json.dumps({'success': False, 'error': str(ex)})
+
+    if not isinstance(data, dict):
+        return json.dumps({'success': True, 'data': data, 'logs': []})
+
+    logs = []
+
+    computed_metas = [m for m in metadata if isinstance(m, dict) and (
+        m.get('isCalculated') is True or
+        m.get('type') == 'Computed' or
+        m.get('sourceType') == 'computed' or
+        (m.get('calcFn') and m.get('calcFn') not in ('', 'NONE')) or
+        (m.get('calcFormula') and str(m.get('calcFormula')).strip() != '')
+    )]
+
+    if debug_mode:
+        if not computed_metas:
+            logs.append(f"🧮 [DEPURACIÓ CAMPS CALCULATS] No s'ha trobat cap camp marcat com a calculat (editor_metadata té {len(metadata)} metadades en total).")
+        else:
+            details = '\n'.join(
+                f"  • [Grup: {m.get('group') or 'global'} | Camp: {m.get('element')}] "
+                f"Tipus: {m.get('calcFn') or 'CUSTOM'} | Fórmula/Vector: \"{m.get('calcFormula') or m.get('calcVector') or ''}\""
+                for m in computed_metas
+            )
+            logs.append(f"🧮 [DEPURACIÓ CAMPS CALCULATS] Detectats {len(computed_metas)} camps calculats:\n{details}")
+
+    if not computed_metas:
+        return json.dumps({'success': True, 'data': data, 'logs': logs})
+
+    custom_metas = [m for m in computed_metas if _cef_is_custom_fn(m.get('calcFn'), m.get('calcFormula')) and m.get('calcFormula')]
+    agg_metas = [m for m in computed_metas if not _cef_is_custom_fn(m.get('calcFn'), m.get('calcFormula'))]
+
+    def run_custom_pass(container, group_hint='', visited=None):
+        if visited is None:
+            visited = set()
+        if not isinstance(container, (dict, list)):
+            return
+        cid = id(container)
+        if cid in visited:
+            return
+        visited.add(cid)
+
+        if isinstance(container, list):
+            for item in container:
+                run_custom_pass(item, group_hint, visited)
+            return
+
+        for k, v in container.items():
+            if k not in ('_sheet_info', '_hierarchy_schema', 'editor_metadata') and isinstance(v, (dict, list)):
+                run_custom_pass(v, k if isinstance(v, list) else group_hint, visited)
+
+        for meta in custom_metas:
+            if _cef_is_group_match(meta.get('group'), group_hint):
+                calculated_val = evaluate_custom_formula(meta.get('calcFormula'), container, data)
+                if calculated_val is not None:
+                    old_val = container.get(meta.get('element'))
+                    container[meta.get('element')] = calculated_val
+                    if debug_mode:
+                        logs.append(f"✨ [CÀLCUL CUSTOM] {meta.get('group') or group_hint}.{meta.get('element')} = {calculated_val} "
+                                    f"(Fórmula: \"{meta.get('calcFormula')}\", Anterior: {old_val})")
+
+    def find_sub_list(obj, target_vec, sub_visited=None, depth=0):
+        """Recursively searches container (dict values or list items, at any
+        depth up to 5) for the first dict that has target_vec as an array key."""
+        if sub_visited is None:
+            sub_visited = set()
+        if not isinstance(obj, (dict, list)) or depth > 5:
+            return None
+        oid = id(obj)
+        if oid in sub_visited:
+            return None
+        sub_visited.add(oid)
+
+        if isinstance(obj, dict) and isinstance(obj.get(target_vec), list):
+            return obj[target_vec]
+
+        children = obj.values() if isinstance(obj, dict) else obj
+        for child in children:
+            if isinstance(child, (dict, list)):
+                found = find_sub_list(child, target_vec, sub_visited, depth + 1)
+                if found is not None:
+                    return found
+        return None
+
+    def run_agg_pass(container, group_hint='', visited=None):
+        if visited is None:
+            visited = set()
+        if not isinstance(container, (dict, list)):
+            return
+        cid = id(container)
+        if cid in visited:
+            return
+        visited.add(cid)
+
+        if isinstance(container, list):
+            for item in container:
+                run_agg_pass(item, group_hint, visited)
+            return
+
+        for k, v in container.items():
+            if k not in ('_sheet_info', '_hierarchy_schema', 'editor_metadata') and isinstance(v, (dict, list)):
+                run_agg_pass(v, k if isinstance(v, list) else group_hint, visited)
+
+        for meta in agg_metas:
+            target_vec = meta.get('calcVector')
+            fn = (meta.get('calcFn') or 'SUM').upper()
+            col = meta.get('calcTargetCol')
+
+            if _cef_is_group_match(meta.get('group'), group_hint) or (target_vec and isinstance(container.get(target_vec), list)):
+                child_list = None
+                if target_vec and isinstance(container.get(target_vec), list):
+                    child_list = container[target_vec]
+                elif target_vec and isinstance(data.get(target_vec), list):
+                    child_list = data[target_vec]
+                elif target_vec:
+                    child_list = find_sub_list(container, target_vec)
+
+                if child_list is not None:
+                    if fn == 'COUNT':
+                        calculated_val = len(child_list)
+                    elif fn == 'SUM':
+                        calculated_val = _cef_normalize_number(sum(_cef_extract_val(c, col) for c in child_list))
+                    elif fn in ('AVG', 'AVERAGE'):
+                        nums = [_cef_extract_val(c, col) for c in child_list]
+                        calculated_val = _cef_normalize_number(sum(nums) / len(nums) if nums else 0)
+                    elif fn == 'MIN':
+                        nums = [_cef_extract_val(c, col) for c in child_list]
+                        calculated_val = _cef_normalize_number(min(nums)) if nums else 0
+                    elif fn == 'MAX':
+                        nums = [_cef_extract_val(c, col) for c in child_list]
+                        calculated_val = _cef_normalize_number(max(nums)) if nums else 0
+                    elif fn in ('OR', 'O', 'SOME', 'ANY'):
+                        calculated_val = any(_cef_extract_bool_val(c.get(col) if col and isinstance(c, dict) else c) for c in child_list)
+                    elif fn in ('AND', 'I', 'EVERY', 'ALL'):
+                        calculated_val = len(child_list) > 0 and all(_cef_extract_bool_val(c.get(col) if col and isinstance(c, dict) else c) for c in child_list)
+                    else:
+                        continue
+
+                    old_val = container.get(meta.get('element'))
+                    container[meta.get('element')] = calculated_val
+                    if debug_mode:
+                        logs.append(f"📊 [CÀLCUL AGREGACIÓ] {meta.get('group') or group_hint}.{meta.get('element')} = {calculated_val} "
+                                    f"({fn} de '{target_vec}' [{len(child_list)} elements], Anterior: {old_val})")
+                elif debug_mode:
+                    logs.append(f"⚠️ [CÀLCUL AGREGACIÓ] No s'ha trobat la llista '{target_vec}' per calcular {meta.get('element')}.")
+
+    for key, val in list(data.items()):
+        if key not in ('_sheet_info', '_hierarchy_schema', 'editor_metadata'):
+            run_custom_pass(val, key)
+
+    for key, val in list(data.items()):
+        if key not in ('_sheet_info', '_hierarchy_schema', 'editor_metadata'):
+            run_agg_pass(val, key)
+
+    return json.dumps({'success': True, 'data': data, 'logs': logs}, ensure_ascii=False, default=_custom_json_default)

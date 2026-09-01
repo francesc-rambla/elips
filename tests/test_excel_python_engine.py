@@ -210,6 +210,66 @@ class TestExcelPythonEngine(unittest.TestCase):
         self.assertIn("Portàtils: IVA calculat = 6300.0", md)
         self.assertNotIn("iva_calculat", md, "El placeholder de recuperació indica que el camp calculat no s'ha trobat")
 
+    def test_10_evaluate_custom_formula_mini_language(self):
+        """Verifica el llenguatge de fórmules CUSTOM (SI/ARRODONEIX/CERT/FALS) que abans
+        s'executava al navegador amb new Function() i ara corre dins de Pyodide."""
+        ecf = self.engine.evaluate_custom_formula
+
+        row = {"import": 100, "unitats": 3, "persones": 2, "actiu": True}
+
+        # "import" (Catalan per "import/quantia") és un nom de camp legítim i molt
+        # habitual en aquest domini: no s'ha de confondre mai amb la paraula clau
+        # Python "import" (regressió real detectada i corregida durant aquesta fase).
+        self.assertEqual(ecf("ARRODONEIX(import * 0.21; 2)", row), 21.0)
+        self.assertEqual(ecf("import * unitats", row), 300)
+
+        self.assertEqual(
+            ecf("SI(persones > 0; persones * unitats * import; unitats * import)", row),
+            600,
+        )
+        self.assertEqual(ecf('SI(actiu; "Sí"; "No")', row), "Sí")
+
+        # Un enter (30) no s'ha de convertir en float (30.0) en travessar Python/JSON:
+        # coherent amb com JS serialitza sempre com a "30", no "30.0".
+        r = ecf("import * 3", {"import": 10})
+        self.assertEqual(r, 30)
+        self.assertIsInstance(r, int)
+
+        # Una fórmula trencada no ha de petar mai: cau al valor ja present al camp.
+        r = ecf("aquest_camp_no_existeix + 1", {"aquest_camp_no_existeix_backup": 5})
+        self.assertEqual(r, 0)
+
+    def test_11_evaluate_custom_formula_blocks_sandbox_escape(self):
+        """La substitució de new Function() per un eval() Python restringit s'ha de mantenir
+        tancada als intents habituals d'escapar del sandbox (accés a dunders / __import__)."""
+        ecf = self.engine.evaluate_custom_formula
+        self.assertEqual(ecf("().__class__.__bases__[0].__subclasses__()", {}), 0)
+        self.assertEqual(ecf("__import__('os').system('echo pwned')", {}), 0)
+
+    def test_12_evaluate_computed_fields_custom_and_aggregation(self):
+        """Verifica el motor complet (evaluate_computed_fields): una fórmula CUSTOM per
+        fila i una agregació SUM sobre la mateixa taula, tal com fa servir l'aplicació."""
+        data = {
+            "pres": {
+                "anualitat": 2026,
+                "parts": [
+                    {"id": "A", "import": 100, "iva": None},
+                    {"id": "B", "import": 200, "iva": None},
+                ],
+                "total": None,
+            }
+        }
+        metadata = [
+            {"group": "pres.parts", "element": "iva", "type": "Computed", "calcFormula": "ARRODONEIX(import * 0.21; 2)"},
+            {"group": "pres", "element": "total", "type": "Computed", "calcFn": "SUM", "calcVector": "parts", "calcTargetCol": "import"},
+        ]
+        result = json.loads(self.engine.evaluate_computed_fields(json.dumps(data), json.dumps(metadata)))
+        self.assertTrue(result["success"])
+        parts = result["data"]["pres"]["parts"]
+        self.assertEqual(parts[0]["iva"], 21.0)
+        self.assertEqual(parts[1]["iva"], 42.0)
+        self.assertEqual(result["data"]["pres"]["total"], 300)
+
 
 if __name__ == "__main__":
     unittest.main()

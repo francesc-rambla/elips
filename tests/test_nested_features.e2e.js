@@ -293,8 +293,50 @@ async function testNestedFeatures() {
   }
   console.log("  ✓ L'etiqueta del grup aniuat s'ha desat correctament sota 'pres.parts'.");
 
+  // 6. Regression: calculated fields (row-level CUSTOM formula + a SUM
+  // aggregation) must evaluate correctly through the real Pyodide bridge
+  // (evaluate_computed_fields in src/python/engine.py), not just in an
+  // isolated Python unit test. This exact scenario — a field literally named
+  // "import" (Catalan for "amount", very common in this domain) — is what
+  // caught a real bug during development: an overly broad security
+  // blocklist rejected any formula containing the word "import".
+  console.log("➡️ 6. Verificant que els camps calculats (fórmula CUSTOM + agregació SUM) s'avaluen via Pyodide...");
+
+  const calcSetup = await page.evaluate(() => {
+    const parts = window.store.excelJsonData.pres.parts;
+    parts.forEach(p => { p.preu_amb_iva = null; });
+    window.store.excelJsonData.pres.total_pressupost = null;
+    window.store.editorMetadata.push(
+      { group: 'pres.parts', element: 'preu_amb_iva', type: 'Computed', calcFormula: 'ARRODONEIX(import * 1.21; 2)' },
+      { group: 'pres', element: 'total_pressupost', type: 'Computed', calcFn: 'SUM', calcVector: 'parts', calcTargetCol: 'import' }
+    );
+    const expectedTotal = parts.reduce((sum, p) => sum + Number(p.import), 0);
+    const expectedPerPart = parts.map(p => Math.round(Number(p.import) * 1.21 * 100) / 100);
+    // Reassign to trigger DataInspector's deep watcher -> evaluateComputedFields.
+    window.store.excelJsonData = JSON.parse(JSON.stringify(window.store.excelJsonData));
+    return { expectedTotal, expectedPerPart };
+  });
+  await new Promise(r => setTimeout(r, 1500));
+
+  const calcResult = await page.evaluate(() => {
+    const p = window.store.excelJsonData.pres;
+    return {
+      perPart: p.parts.map(x => x.preu_amb_iva),
+      total: p.total_pressupost,
+    };
+  });
+
+  console.log("  Esperat:", calcSetup, "  Obtingut:", calcResult);
+  if (JSON.stringify(calcResult.perPart) !== JSON.stringify(calcSetup.expectedPerPart)) {
+    throw new Error(`La fórmula CUSTOM per fila no ha donat el resultat esperat: ${JSON.stringify(calcResult.perPart)} vs ${JSON.stringify(calcSetup.expectedPerPart)}`);
+  }
+  if (calcResult.total !== calcSetup.expectedTotal) {
+    throw new Error(`L'agregació SUM no ha donat el resultat esperat: ${calcResult.total} vs ${calcSetup.expectedTotal}`);
+  }
+  console.log("  ✓ Els camps calculats s'han avaluat correctament a través del pont Pyodide (Python).");
+
   await browser.close();
-  console.log("🎉 TOTES LES PROVES DE TÍTOL PER FÓRMULA, ACORDIÓ, REORDENACIÓ I ETIQUETES ANIUADES HAN PASSAT AMB ÈXIT!");
+  console.log("🎉 TOTES LES PROVES DE TÍTOL PER FÓRMULA, ACORDIÓ, REORDENACIÓ, ETIQUETES ANIUADES I CAMPS CALCULATS HAN PASSAT AMB ÈXIT!");
 }
 
 testNestedFeatures().catch(err => {

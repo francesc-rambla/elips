@@ -497,682 +497,111 @@ orphan_count
     return rootData;
   };
 
-  const evaluateCustomFormula = (formulaStr, row, globalData = null) => {
-    if (!formulaStr || typeof formulaStr !== 'string') return 0;
-    try {
-      let expr = formulaStr.trim();
-
-      // 1. Transform SI(...) or IF(...) into JS ternary operators
-      const transformIf = (str) => {
-        let prev = '';
-        while (prev !== str) {
-          prev = str;
-          const regex = /\b(SI|IF)\s*\(/i;
-          const match = regex.exec(str);
-          if (!match) break;
-
-          const startIdx = match.index;
-          const openParenIdx = startIdx + match[0].length - 1;
-          let depth = 1;
-          let endIdx = -1;
-          let inQuotes = false;
-          let quoteChar = '';
-
-          for (let i = openParenIdx + 1; i < str.length; i++) {
-            const ch = str[i];
-            if (inQuotes) {
-              if (ch === quoteChar) inQuotes = false;
-            } else if (ch === '"' || ch === "'") {
-              inQuotes = true;
-              quoteChar = ch;
-            } else if (ch === '(') {
-              depth++;
-            } else if (ch === ')') {
-              depth--;
-              if (depth === 0) {
-                endIdx = i;
-                break;
-              }
-            }
-          }
-
-          if (endIdx === -1) break;
-
-          const fullMatch = str.substring(startIdx, endIdx + 1);
-          const argsStr = str.substring(openParenIdx + 1, endIdx);
-
-          const parts = [];
-          let current = '';
-          depth = 0;
-          inQuotes = false;
-
-          for (let i = 0; i < argsStr.length; i++) {
-            const ch = argsStr[i];
-            if (inQuotes) {
-              if (ch === quoteChar) inQuotes = false;
-              current += ch;
-            } else if (ch === '"' || ch === "'") {
-              inQuotes = true;
-              quoteChar = ch;
-              current += ch;
-            } else if (ch === '(') {
-              depth++;
-              current += ch;
-            } else if (ch === ')') {
-              depth--;
-              current += ch;
-            } else if ((ch === ';' || ch === ',') && depth === 0) {
-              parts.push(current.trim());
-              current = '';
-            } else {
-              current += ch;
-            }
-          }
-          parts.push(current.trim());
-
-          if (parts.length >= 3) {
-            const cond = parts[0];
-            const tVal = parts[1];
-            const fVal = parts.slice(2).join(';');
-            const ternary = `( (${cond}) ? (${tVal}) : (${fVal}) )`;
-            str = str.replace(fullMatch, ternary);
-          } else {
-            break;
-          }
-        }
-        return str;
-      };
-
-      // 2. Transform ARRODONEIX(...) / ROUND(...) into __round(...)
-      const transformRound = (str) => {
-        let prev = '';
-        while (prev !== str) {
-          prev = str;
-          const regex = /\b(ARRODONEIX|ROUND)\s*\(/i;
-          const match = regex.exec(str);
-          if (!match) break;
-
-          const startIdx = match.index;
-          const openParenIdx = startIdx + match[0].length - 1;
-          let depth = 1;
-          let endIdx = -1;
-          let inQuotes = false;
-          let quoteChar = '';
-
-          for (let i = openParenIdx + 1; i < str.length; i++) {
-            const ch = str[i];
-            if (inQuotes) {
-              if (ch === quoteChar) inQuotes = false;
-            } else if (ch === '"' || ch === "'") {
-              inQuotes = true;
-              quoteChar = ch;
-            } else if (ch === '(') {
-              depth++;
-            } else if (ch === ')') {
-              depth--;
-              if (depth === 0) {
-                endIdx = i;
-                break;
-              }
-            }
-          }
-
-          if (endIdx === -1) break;
-
-          const fullMatch = str.substring(startIdx, endIdx + 1);
-          const argsStr = str.substring(openParenIdx + 1, endIdx);
-
-          const parts = [];
-          let current = '';
-          depth = 0;
-          inQuotes = false;
-
-          for (let i = 0; i < argsStr.length; i++) {
-            const ch = argsStr[i];
-            if (inQuotes) {
-              if (ch === quoteChar) inQuotes = false;
-              current += ch;
-            } else if (ch === '"' || ch === "'") {
-              inQuotes = true;
-              quoteChar = ch;
-              current += ch;
-            } else if (ch === '(') {
-              depth++;
-              current += ch;
-            } else if (ch === ')') {
-              depth--;
-              current += ch;
-            } else if ((ch === ';' || ch === ',') && depth === 0) {
-              parts.push(current.trim());
-              current = '';
-            } else {
-              current += ch;
-            }
-          }
-          parts.push(current.trim());
-
-          const valExpr = parts[0] || '0';
-          const precExpr = parts[1] !== undefined ? parts[1] : '0';
-          const roundCall = `__round(${valExpr}, ${precExpr})`;
-          str = str.replace(fullMatch, roundCall);
-        }
-        return str;
-      };
-
-      // 2. Transform OR(...) and AND(...) aggregated functions on vectors/arrays
-      const transformOrAnd = (str) => {
-        let prev = '';
-        while (prev !== str) {
-          prev = str;
-          const regex = /\b(OR|O|AND|I|ANY|SOME|EVERY|ALL)\s*\(/i;
-          const match = regex.exec(str);
-          if (!match) break;
-
-          const startIdx = match.index;
-          const openParenIdx = startIdx + match[0].length - 1;
-          let depth = 1;
-          let endIdx = -1;
-          let inQuotes = false;
-          let quoteChar = '';
-
-          for (let i = openParenIdx + 1; i < str.length; i++) {
-            const ch = str[i];
-            if (inQuotes) {
-              if (ch === quoteChar) inQuotes = false;
-            } else if (ch === '"' || ch === "'") {
-              inQuotes = true;
-              quoteChar = ch;
-            } else if (ch === '(') {
-              depth++;
-            } else if (ch === ')') {
-              depth--;
-              if (depth === 0) {
-                endIdx = i;
-                break;
-              }
-            }
-          }
-
-          if (endIdx === -1) break;
-
-          const fnName = match[1].toUpperCase();
-          const fullMatch = str.substring(startIdx, endIdx + 1);
-          const argStr = str.substring(openParenIdx + 1, endIdx).trim();
-
-          if (['OR', 'O', 'ANY', 'SOME'].includes(fnName)) {
-            str = str.replace(fullMatch, `__or("${argStr.replace(/"/g, '\\"')}")`);
-          } else if (['AND', 'I', 'EVERY', 'ALL'].includes(fnName)) {
-            str = str.replace(fullMatch, `__and("${argStr.replace(/"/g, '\\"')}")`);
-          } else {
-            break;
-          }
-        }
-        return str;
-      };
-
-      // 3. Transform CERT(...) and FALS(...) into JS helper calls
-      const transformCertFals = (str) => {
-        let exprStr = str;
-        exprStr = exprStr.replace(/\b(CERT|is_cert)\s*\(/gi, '__is_cert(');
-        exprStr = exprStr.replace(/\b(FALS|is_fals)\s*\(/gi, '__is_fals(');
-        return exprStr;
-      };
-
-      expr = transformIf(expr);
-      expr = transformRound(expr);
-      expr = transformOrAnd(expr);
-      expr = transformCertFals(expr);
-
-      // 4. Math replacements
-      expr = expr.replace(/\bABS\s*\(/gi, 'Math.abs(');
-      expr = expr.replace(/(^|[^<>=!])=([^=])/g, '$1==$2');
-      expr = expr.replace(/<>/g, '!=');
-      expr = expr.replace(/\^/g, '**');
-
-      // 5. Value Resolution Context Helper
-      const parseNumOrString = (rawVal) => {
-        if (typeof rawVal === 'number') return rawVal;
-        if (typeof rawVal === 'boolean') return rawVal;
-        if (typeof rawVal === 'string') {
-          if (rawVal.trim() === '') return 0;
-          const parsed = parseFloat(rawVal.replace(',', '.'));
-          return isNaN(parsed) ? `"${rawVal.replace(/"/g, '\\"')}"` : parsed;
-        }
-        return 0;
-      };
-
-      const getNestedValue = (obj, parts) => {
-        let current = obj;
-        for (let i = 0; i < parts.length; i++) {
-          if (current === undefined || current === null) return undefined;
-          const part = parts[i];
-
-          const arrayMatch = part.match(/^([a-zA-Z0-9_]+)\[(\d+)\]$/);
-          if (arrayMatch) {
-            const arrKey = arrayMatch[1];
-            const index = parseInt(arrayMatch[2], 10);
-            current = current[arrKey];
-            if (Array.isArray(current)) {
-              current = current[index];
-            } else {
-              return undefined;
-            }
-          } else if (Array.isArray(current)) {
-            const prop = part;
-            const nums = current.map(item => item ? parseFloat(item[prop]) : NaN).filter(n => !isNaN(n));
-            return nums.length > 0 ? nums.reduce((a, b) => a + b, 0) : 0;
-          } else if (typeof current === 'object' && current !== null) {
-            current = current[part];
-          } else if (typeof current === 'string' || typeof current === 'number') {
-            // Fallback: If current is a scalar FK value (e.g. "Tova"), attempt to lookup in global tables for matching row
-            const gData = globalData || store.excelJsonData;
-            let foundVal = undefined;
-            if (gData) {
-              for (const sheetKey of Object.keys(gData)) {
-                const table = gData[sheetKey];
-                if (Array.isArray(table)) {
-                  const matchRow = table.find(r => r && typeof r === 'object' && Object.values(r).some(v => String(v) === String(current)));
-                  if (matchRow && matchRow[part] !== undefined) {
-                    foundVal = matchRow[part];
-                    break;
-                  }
-                }
-              }
-            }
-            if (foundVal !== undefined) {
-              current = foundVal;
-            } else {
-              return undefined;
-            }
-          } else {
-            return undefined;
-          }
-        }
-        return current;
-      };
-
-      const resolveValue = (pathStr) => {
-        if (!pathStr) return undefined;
-        if (row && row[pathStr] !== undefined) {
-          return parseNumOrString(row[pathStr]);
-        }
-        let cleanPath = pathStr.replace(/^(doc|dades)\./i, '');
-        const pathParts = cleanPath.split('.').filter(Boolean);
-
-        let val = getNestedValue(row, pathParts);
-        if (val !== undefined) return parseNumOrString(val);
-
-        const gData = globalData || store.excelJsonData;
-        if (gData) {
-          val = getNestedValue(gData, pathParts);
-          if (val === undefined && pathParts.length > 0) {
-            const prefixedParts = ['OUT_' + pathParts[0], ...pathParts.slice(1)];
-            val = getNestedValue(gData, prefixedParts);
-          }
-          if (val !== undefined) return parseNumOrString(val);
-        }
-        return undefined;
-      };
-
-      // 6. Extract and replace all tokens/paths in formula
-      const tokenRegex = /\b(?:[a-zA-Z_][a-zA-Z0-9_]*|doc\.[a-zA-Z0-9_.]+|dades\.[a-zA-Z0-9_.]+)(?:\[\d+\])?(?:\.[a-zA-Z_][a-zA-Z0-9_.]*(?:\[\d+\])?)*\b/g;
-      const reservedKeywords = new Set([
-        'SI', 'IF', 'ARRODONEIX', 'ROUND', 'ABS', 'MIN', 'MAX', 'OR', 'O', 'AND', 'I', 'ANY', 'SOME', 'EVERY', 'ALL', 'Math', '__round', '__or', '__and',
-        'CERT', 'FALS', 'cert', 'fals', 'is_cert', 'is_fals', '__is_cert', '__is_fals',
-        'true', 'false', 'null', 'undefined', 'doc', 'dades', 'return', 'function'
-      ]);
-
-      const foundTokens = new Set();
-      let match;
-      while ((match = tokenRegex.exec(expr)) !== null) {
-        const t = match[0];
-        if (!reservedKeywords.has(t) && !reservedKeywords.has(t.toUpperCase())) {
-          foundTokens.add(t);
-        }
-      }
-
-      const sortedTokens = Array.from(foundTokens).sort((a, b) => b.length - a.length);
-
-      sortedTokens.forEach(t => {
-        const resolvedVal = resolveValue(t);
-        if (resolvedVal !== undefined) {
-          const escapedToken = t.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-          const varRegex = new RegExp(`\\b${escapedToken}\\b`, 'g');
-          expr = expr.replace(varRegex, typeof resolvedVal === 'string' ? resolvedVal : `(${resolvedVal})`);
-        }
-      });
-
-      const __is_cert = (val) => {
-        if (val === undefined || val === null || val === false || val === '' || val === 0 || val === 0.0 || val === '0' || val === '0.0') {
-          return false;
-        }
-        if (typeof val === 'string') {
-          const s = val.trim().toUpperCase();
-          if (['NO', 'FALS', 'FALSE', '0', '0.0', 'N', 'OFF', 'DESACTIVAT'].includes(s)) {
-            return false;
-          }
-        }
-        return true;
-      };
-      const __is_fals = (val) => !__is_cert(val);
-
-      const evalOrAndFn = (pathStr, mode) => {
-        if (!pathStr) return false;
-        let cleanPath = pathStr.trim().replace(/^['"]|['"]$/g, '').replace(/^(doc|dades)\./i, '');
-        const parts = cleanPath.split('.').filter(Boolean);
-        if (parts.length === 0) return false;
-
-        const gData = globalData || store.excelJsonData;
-
-        const collectValues = (startObj) => {
-          if (!startObj || typeof startObj !== 'object') return null;
-          let current = startObj;
-          for (let i = 0; i < parts.length; i++) {
-            if (current === undefined || current === null) return null;
-            const part = parts[i];
-            if (Array.isArray(current)) {
-              const remainingProp = parts.slice(i).join('.');
-              return current.map(item => {
-                if (!item || typeof item !== 'object') return item;
-                const propParts = remainingProp.split('.');
-                let sub = item;
-                for (const p of propParts) {
-                  if (sub === undefined || sub === null) return undefined;
-                  sub = sub[p];
-                }
-                return sub;
-              });
-            }
-            current = current[part];
-          }
-          if (Array.isArray(current)) return current;
-          return [current];
-        };
-
-        let list = collectValues(row);
-        if ((!list || list.length === 0) && gData) {
-          list = collectValues(gData);
-          if ((!list || list.length === 0) && parts.length > 0) {
-            const sheetKey = parts[0];
-            if (gData['OUT_' + sheetKey]) {
-              list = collectValues({ ['OUT_' + sheetKey]: gData['OUT_' + sheetKey] });
-            }
-          }
-        }
-
-        if (!list || !Array.isArray(list)) list = [];
-
-        const extractBoolVal = (val) => {
-          if (val === undefined || val === null || val === false || val === 0 || val === '0' || val === '' || val === '0.0') return false;
-          if (typeof val === 'boolean') return val;
-          if (typeof val === 'number') return val !== 0;
-          if (typeof val === 'string') {
-            const s = val.trim().toLowerCase();
-            return ['true', '1', 'si', 'sí', 'cert', 'yes'].includes(s);
-          }
-          return Boolean(val);
-        };
-
-        if (mode === 'OR') {
-          return list.some(extractBoolVal);
-        } else {
-          return list.length > 0 && list.every(extractBoolVal);
-        }
-      };
-
-      const __or = (arg) => evalOrAndFn(String(arg), 'OR');
-      const __and = (arg) => evalOrAndFn(String(arg), 'AND');
-
-      const safeEval = new Function('__round', '__is_cert', '__is_fals', '__or', '__and', 'CERT', 'FALS', 'cert', 'fals', `"use strict"; return (${expr});`);
-      const __round = (val, prec = 0) => {
-        const p = Math.pow(10, prec);
-        return Math.round(parseFloat(val) * p) / p;
-      };
-
-      const result = safeEval(__round, __is_cert, __is_fals, __or, __and, __is_cert, __is_fals, __is_cert, __is_fals);
-
-      if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
-        return Math.round(result * 1000000) / 1000000;
-      } else if (typeof result === 'boolean') {
-        return result;
-          } else if (result !== undefined && result !== null) {
-        return String(result);
-      }
-      return 0;
-    } catch (err) {
-      return row[formulaStr] !== undefined ? row[formulaStr] : 0;
-    }
-  };
-
+  /**
+   * Evaluates every calculated field in `dataObj` (row-level CUSTOM formulas,
+   * then SUM/COUNT/AVERAGE/MIN/MAX/OR/AND aggregations) by delegating the
+   * actual computation to Python's evaluate_computed_fields (src/python/engine.py),
+   * which runs inside Pyodide's WASM sandbox instead of via a JS `new Function(...)`
+   * in the page's own execution context. Mutates dataObj in place (so Vue's
+   * reactivity keeps targeting the same objects/arrays) and returns it.
+   *
+   * Foreign-key hydration of dynamic Select fields (turning a scalar into a
+   * rich object for display) stays in JS via hydrateModelWithForeignKeys: it's
+   * a data-shape transformation, not calculation, so it runs first, in place,
+   * exactly as before this was split across languages.
+   */
   const evaluateComputedFields = (dataObj, metadataList = [], debugMode = store.debugComputedFields) => {
     if (!dataObj || typeof dataObj !== 'object') return dataObj;
     const metadata = metadataList.length > 0 ? metadataList : (dataObj.editor_metadata || store.editorMetadata || []);
 
-    const computedMetas = metadata.filter(m => 
+    const computedMetas = metadata.filter(m =>
       m.isCalculated === true ||
-      m.type === 'Computed' || 
-      m.sourceType === 'computed' || 
-      (m.calcFn && m.calcFn !== '' && m.calcFn !== 'NONE') || 
+      m.type === 'Computed' ||
+      m.sourceType === 'computed' ||
+      (m.calcFn && m.calcFn !== '' && m.calcFn !== 'NONE') ||
       (m.calcFormula && m.calcFormula.trim() !== '')
     );
 
-    if (debugMode) {
-      if (computedMetas.length === 0) {
+    if (computedMetas.length === 0) {
+      if (debugMode) {
         store.addLog(`🧮 [DEPURACIÓ CAMPS CALCULATS] No s'ha trobat cap camp marcat com a calculat (editor_metadata té ${metadata.length} metadades en total).`, 'warning');
-      } else {
-        store.addLog(`🧮 [DEPURACIÓ CAMPS CALCULATS] Detectats ${computedMetas.length} camps calculats:\n` +
-          computedMetas.map(m => `  • [Grup: ${m.group || 'global'} | Camp: ${m.element}] Tipus: ${m.calcFn || 'CUSTOM'} | Fórmula/Vector: "${m.calcFormula || m.calcVector || ''}"`).join('\n'),
-          'info'
-        );
       }
+      return dataObj;
     }
 
-    if (computedMetas.length === 0) return dataObj;
+    if (!_pyodide) {
+      // Engines not ready yet (e.g. very first render before Pyodide loads):
+      // skip silently, a later edit/save will trigger recomputation once ready.
+      return dataObj;
+    }
 
     const data = hydrateModelWithForeignKeys(dataObj, metadata);
 
-    const isCustomFn = (fn, formula) => {
-      if (formula && formula.trim()) return true;
-      const upper = (fn || '').toUpperCase();
-      return upper === 'CUSTOM' || upper === 'FORMULA' || upper === '' || upper === 'NONE';
-    };
+    const fn = _pyodide.globals.get('evaluate_computed_fields');
+    let resultStr;
+    try {
+      resultStr = fn(JSON.stringify(data), JSON.stringify(metadata), debugMode);
+    } finally {
+      fn.destroy();
+    }
 
-    const isGroupMatch = (metaGroup, hint) => {
-      if (!metaGroup) return true;
-      if (!hint) return false;
-      const cleanM = metaGroup.replace(/^OUT_/, '').toLowerCase();
-      const cleanH = hint.replace(/^OUT_/, '').toLowerCase();
-      if (cleanM === cleanH) return true;
+    let result;
+    try {
+      result = JSON.parse(resultStr);
+    } catch (e) {
+      store.addLog(`Error interpretant el resultat del motor de càlcul: ${e.message}`, 'error');
+      return dataObj;
+    }
 
-      const gShort = cleanM.split('.').pop();
-      const hShort = cleanH.split('.').pop();
-      if (gShort === hShort) return true;
+    if (!result.success) {
+      store.addLog(`Error avaluant camps calculats: ${result.error}`, 'error');
+      return dataObj;
+    }
 
-      const rootHints = ['doc', 'dades', 'global', 'header', 'general', 'presupost', 'pressupost', 'resum', 'summary', 'root', 'main', ''];
-      if (rootHints.includes(cleanH) && rootHints.includes(cleanM)) return true;
-
-      return false;
-    };
-
-    const customMetas = computedMetas.filter(m => isCustomFn(m.calcFn, m.calcFormula) && m.calcFormula);
-    const aggMetas = computedMetas.filter(m => !isCustomFn(m.calcFn, m.calcFormula));
-
-    // Helper to evaluate CUSTOM formulas on a container (bottom-up)
-    const runCustomPass = (container, groupHint = '', visited = new Set()) => {
-      if (!container || typeof container !== 'object') return;
-      if (visited.has(container)) return;
-      visited.add(container);
-
-      if (Array.isArray(container)) {
-        container.forEach(item => runCustomPass(item, groupHint, visited));
-        return;
-      }
-
-      // First recurse into child objects/arrays (bottom-up)
-      Object.keys(container).forEach(k => {
-        if (k !== '_sheet_info' && k !== '_hierarchy_schema' && k !== 'editor_metadata') {
-          const val = container[k];
-          if (val && typeof val === 'object') {
-            runCustomPass(val, Array.isArray(val) ? k : groupHint, visited);
-          }
-        }
+    if (debugMode && Array.isArray(result.logs)) {
+      result.logs.forEach(msg => {
+        const level = msg.startsWith('⚠️') ? 'warning' : (msg.startsWith('✨') || msg.startsWith('📊') ? 'success' : 'info');
+        store.addLog(msg, level);
       });
+    }
 
-      // Evaluate CUSTOM formulas for this node
-      customMetas.forEach(meta => {
-        if (isGroupMatch(meta.group, groupHint)) {
-          const calculatedVal = evaluateCustomFormula(meta.calcFormula, container, data);
-          if (calculatedVal !== undefined && calculatedVal !== null) {
-            const oldVal = container[meta.element];
-            container[meta.element] = calculatedVal;
-            if (debugMode) {
-              store.addLog(`✨ [CÀLCUL CUSTOM] ${meta.group || groupHint}.${meta.element} = ${calculatedVal} (Fórmula: "${meta.calcFormula}", Anterior: ${oldVal})`, 'success');
-            }
-          }
-        }
-      });
-    };
+    mergeComputedValuesInPlace(data, result.data);
 
-    // Helper to evaluate Aggregation (SUM, COUNT, AVG) formulas on a container (bottom-up)
-    const runAggPass = (container, groupHint = '', visited = new Set()) => {
-      if (!container || typeof container !== 'object') return;
-      if (visited.has(container)) return;
-      visited.add(container);
-
-      if (Array.isArray(container)) {
-        container.forEach(item => runAggPass(item, groupHint, visited));
-        return;
-      }
-
-      // First recurse into child objects/arrays (bottom-up)
-      Object.keys(container).forEach(k => {
-        if (k !== '_sheet_info' && k !== '_hierarchy_schema' && k !== 'editor_metadata') {
-          const val = container[k];
-          if (val && typeof val === 'object') {
-            runAggPass(val, Array.isArray(val) ? k : groupHint, visited);
-          }
-        }
-      });
-
-      // Evaluate Aggregation formulas for this node
-      aggMetas.forEach(meta => {
-        const targetVec = meta.calcVector;
-        const fn = (meta.calcFn || 'SUM').toUpperCase();
-        const col = meta.calcTargetCol;
-
-        if (isGroupMatch(meta.group, groupHint) || (targetVec && container[targetVec])) {
-          let childList = null;
-          if (targetVec && Array.isArray(container[targetVec])) {
-            childList = container[targetVec];
-          } else if (targetVec && data[targetVec] && Array.isArray(data[targetVec])) {
-            childList = data[targetVec];
-          } else if (targetVec) {
-            // Search recursively for targetVec in container (safely guarded against infinite loops)
-            const findSubList = (obj, subVisited = new Set(), depth = 0) => {
-              if (!obj || typeof obj !== 'object' || childList || depth > 5) return;
-              if (subVisited.has(obj)) return;
-              subVisited.add(obj);
-
-              if (Array.isArray(obj[targetVec])) {
-                childList = obj[targetVec];
-                return;
-              }
-              Object.values(obj).forEach(val => {
-                if (val && typeof val === 'object') findSubList(val, subVisited, depth + 1);
-              });
-            };
-            findSubList(container);
-          }
-
-          if (childList) {
-            let calculatedVal = 0;
-
-            const extractVal = (child) => {
-              if (child === null || child === undefined) return 0;
-              if (typeof child === 'object') {
-                if (col && child[col] !== undefined) {
-                  const v = parseFloat(child[col]);
-                  return isNaN(v) ? 0 : v;
-                }
-                // Fallback: find first numeric property if col is empty
-                const firstNumKey = Object.keys(child).find(k => !k.startsWith('_') && !isNaN(parseFloat(child[k])));
-                if (firstNumKey) {
-                  const v = parseFloat(child[firstNumKey]);
-                  return isNaN(v) ? 0 : v;
-                }
-                return 0;
-              }
-              const v = parseFloat(child);
-              return isNaN(v) ? 0 : v;
-            };
-
-            const extractBool = (child) => {
-              if (child === null || child === undefined) return false;
-              let val = child;
-              if (typeof child === 'object') {
-                if (col && child[col] !== undefined) {
-                  val = child[col];
-                } else {
-                  const firstBoolKey = Object.keys(child).find(k => !k.startsWith('_'));
-                  if (firstBoolKey) val = child[firstBoolKey];
-                }
-              }
-              if (typeof val === 'boolean') return val;
-              if (typeof val === 'number') return val !== 0;
-              if (typeof val === 'string') {
-                const clean = val.trim().toLowerCase();
-                return ['true', '1', 'si', 'sí', 'cert', 'yes'].includes(clean);
-              }
-              return Boolean(val);
-            };
-
-            if (fn === 'COUNT') {
-              calculatedVal = childList.length;
-            } else if (fn === 'SUM') {
-              const total = childList.reduce((sum, child) => sum + extractVal(child), 0);
-              calculatedVal = Math.round(total * 1000000) / 1000000;
-            } else if (fn === 'AVG' || fn === 'AVERAGE') {
-              const numbers = childList.map(extractVal);
-              const avg = numbers.length > 0 ? numbers.reduce((a, b) => a + b, 0) / numbers.length : 0;
-              calculatedVal = Math.round(avg * 1000000) / 1000000;
-            } else if (fn === 'MIN') {
-              const numbers = childList.map(extractVal);
-              calculatedVal = numbers.length > 0 ? Math.min(...numbers) : 0;
-            } else if (fn === 'MAX') {
-              const numbers = childList.map(extractVal);
-              calculatedVal = numbers.length > 0 ? Math.max(...numbers) : 0;
-            } else if (fn === 'OR' || fn === 'O' || fn === 'SOME' || fn === 'ANY') {
-              calculatedVal = childList.some(extractBool);
-            } else if (fn === 'AND' || fn === 'I' || fn === 'EVERY' || fn === 'ALL') {
-              calculatedVal = childList.length > 0 && childList.every(extractBool);
-            }
-
-            const oldVal = container[meta.element];
-            container[meta.element] = calculatedVal;
-            if (debugMode) {
-              store.addLog(`📊 [CÀLCUL AGREGACIÓ] ${meta.group || groupHint}.${meta.element} = ${calculatedVal} (${fn} de '${targetVec}' [${childList.length} elements], Anterior: ${oldVal})`, 'success');
-            }
-          } else if (debugMode) {
-            store.addLog(`⚠️ [CÀLCUL AGREGACIÓ] No s'ha trobat la llista '${targetVec}' per calcular ${meta.element}.`, 'warning');
-          }
-        }
-      });
-    };
-
-    // PHASE 1: Run CUSTOM formulas across all sheets & sub-tables (bottom-up)
-    Object.keys(data).forEach(key => {
-      if (key !== '_sheet_info' && key !== '_hierarchy_schema' && key !== 'editor_metadata') {
-        runCustomPass(data[key], key);
-      }
-    });
-
-    // PHASE 2: Run SUM/COUNT/AVG aggregations across all sheets & sub-tables (bottom-up)
-    Object.keys(data).forEach(key => {
-      if (key !== '_sheet_info' && key !== '_hierarchy_schema' && key !== 'editor_metadata') {
-        runAggPass(data[key], key);
-      }
-    });
+    return dataObj;
   };
+
+  /**
+   * Copies leaf values from `source` into `target` in place, recursing through
+   * parallel object/array structures (never replacing an intermediate object
+   * or array's own identity) — so Vue's reactivity keeps tracking the same
+   * refs a bound <input> is reading, instead of losing focus/cursor position
+   * when a computed field elsewhere in the form updates.
+   */
+  const mergeComputedValuesInPlace = (target, source) => {
+    if (Array.isArray(target) && Array.isArray(source)) {
+      if (target.length !== source.length) return;
+      for (let i = 0; i < target.length; i++) {
+        mergeComputedValuesInPlace(target[i], source[i]);
+      }
+      return;
+    }
+    if (target && source && typeof target === 'object' && typeof source === 'object' && !Array.isArray(target) && !Array.isArray(source)) {
+      Object.keys(source).forEach(k => {
+        const sVal = source[k];
+        const tVal = target[k];
+        if (sVal && typeof sVal === 'object') {
+          if (tVal && typeof tVal === 'object') {
+            mergeComputedValuesInPlace(tVal, sVal);
+          } else {
+            target[k] = sVal;
+          }
+        } else if (tVal !== sVal) {
+          target[k] = sVal;
+        }
+      });
+    }
+  };
+
 
   const saveExcelHierarchy = async (renamesMap) => {
     if (!_pyodide) throw new Error("Pyodide no està disponible.");
