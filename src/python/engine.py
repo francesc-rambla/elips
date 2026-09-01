@@ -16,52 +16,6 @@ def sanitize_empty_jinja_tags(src):
     src = re.sub(r'\\{\\%\\s*\\%\\}', '', src)
     return src
 
-def render_with_recovery(env, template_src, ctx, pass_label, max_fixes=1000):
-    issues = []
-    current_src = sanitize_empty_jinja_tags(template_src)
-    for _ in range(max_fixes):
-        try:
-            out = env.from_string(current_src).render(**ctx)
-            return out, issues
-        except TemplateSyntaxError as e:
-            lineno = getattr(e, 'lineno', None)
-            lines = current_src.splitlines()
-            if lineno and 1 <= lineno <= len(lines):
-                bad_line = lines[lineno-1]
-                fixed_line = re.sub(r'\\{\\{\\s*\\}\\}', '[Variable sense nom]', bad_line)
-                if fixed_line == bad_line:
-                    fixed_line = re.sub(r'\\{\\{\\s*', '{{ _var_indefinida_', bad_line)
-                lines[lineno-1] = fixed_line
-                current_src = '\\n'.join(lines)
-                issues.append({
-                    'pass': pass_label,
-                    'line': lineno,
-                    'key': 'syntax_error',
-                    'message': f"Error de sintaxi Jinja2 a la línia {lineno}. S'ha corregit automàticament."
-                })
-                continue
-            raise e
-        except UndefinedError as e:
-            lineno = getattr(e, 'lineno', None)
-            line_text = _get_line(current_src, lineno)
-            keypath = _parse_missing(e, line_text)
-            keypath = '.'.join(sanitize_id(p) for p in str(keypath).split('.'))
-            
-            issues.append({
-                'pass': pass_label,
-                'line': lineno,
-                'key': keypath,
-                'message': f"Clau no definida '{keypath}' resolta amb marcador a la línia {lineno} de la {pass_label} passada."
-            })
-            
-            if '.' in keypath:
-                parent, last = _ensure_path(ctx, keypath)
-                if parent is not None and last is not None:
-                    parent[last] = _placeholder(keypath)
-            else:
-                ctx[keypath] = _placeholder(keypath)
-            continue
-    raise UndefinedError(f"Massa variables indefinides; s'han corregit {len(issues)} variables sense èxit.")
 def sanitize_id(s, allow_dots=False):
     s = '' if s is None else str(s)
     s = s.replace(' ', '_')
@@ -1265,29 +1219,6 @@ class TrackedList(list):
         for idx, item in enumerate(lst):
             sub_path = f"{path}.{idx}"
             self.append(_wrap_tracked(item, sub_path, enable_links, visited))
-
-def _wrap_tracked(val, path='', enable_links=True, visited=None):
-    if visited is None:
-        visited = set()
-    if isinstance(val, (dict, list)):
-        val_id = id(val)
-        if val_id in visited:
-            return val
-        visited.add(val_id)
-
-    if isinstance(val, dict):
-        if isinstance(val, TrackedDict):
-            return val
-        return TrackedDict(val, path, enable_links, visited)
-    elif isinstance(val, list):
-        if isinstance(val, TrackedList):
-            return val
-        return TrackedList(val, path, enable_links, visited)
-    elif isinstance(val, (SafeDict, Placeholder)):
-        return val
-    elif isinstance(val, TrackedValue):
-        return val
-    return TrackedValue(val, path, enable_links)
 
 class Placeholder:
     def __init__(self, path):

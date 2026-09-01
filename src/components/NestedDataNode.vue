@@ -1,8 +1,11 @@
 <script setup>
-import { computed, ref, onMounted, onUnmounted, nextTick } from 'vue';
+import { computed, ref, onMounted, onUnmounted } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 
 import { useWasmEngines } from '../composables/useWasmEngines';
+import { isPrimitive, isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
+import { builtinFunctions, useFormulaAutocomplete } from '../composables/useFormulaAutocomplete';
+import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, saveGroupConfig as saveGroupConfigShared } from '../composables/useGroupMetadata';
 import VisualGridEditorModal from './VisualGridEditorModal.vue';
 import GroupConfigModal from './GroupConfigModal.vue';
 import TemplateEditor from './TemplateEditor.vue';
@@ -34,10 +37,6 @@ const store = useWorkspaceStore();
 const { evaluateComputedFields, saveExcelData } = useWasmEngines();
 
 // Base utility helpers
-const isPrimitive = (val) => {
-  return !Array.isArray(val) && (typeof val !== 'object' || val === null);
-};
-
 const cleanPath = (p) => {
   if (!p) return '';
   return String(p).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
@@ -46,81 +45,6 @@ const cleanPath = (p) => {
 const fullPath = computed(() => {
   return props.parentPath ? `${props.parentPath}.${props.arrayKey}` : props.arrayKey;
 });
-
-const isNonEmptySchema = (s) => {
-  if (!s || typeof s !== 'object') return false;
-  const hasFields = Array.isArray(s.fields) && s.fields.length > 0;
-  const hasChildren = s.children && (Array.isArray(s.children) ? s.children.length > 0 : Object.keys(s.children).length > 0);
-  return hasFields || hasChildren;
-};
-
-const universalFindSchema = (targetPath, dict) => {
-  if (!dict || !targetPath) return { fields: [], children: {} };
-  
-  const cleanP = String(targetPath).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
-  
-  // 1. Direct match by node's data_path property
-  for (const [k, val] of Object.entries(dict)) {
-    if (val && typeof val === 'object' && val.data_path === cleanP && isNonEmptySchema(val)) {
-      return val;
-    }
-  }
-
-  // 2. Direct Flat Key Lookup
-  if (dict[cleanP] && isNonEmptySchema(dict[cleanP])) {
-    return dict[cleanP];
-  }
-  
-  // 3. Direct Tree Path Traversal
-  const parts = cleanP.split('.').filter(Boolean);
-  let curr = dict;
-  let foundTree = null;
-  
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    if (curr && typeof curr === 'object') {
-      const node = curr[p] || (curr.children && typeof curr.children === 'object' && !Array.isArray(curr.children) ? curr.children[p] : null);
-      if (node) {
-        foundTree = node;
-        curr = node.children;
-      } else {
-        foundTree = null;
-        break;
-      }
-    }
-  }
-  if (isNonEmptySchema(foundTree)) {
-    return foundTree;
-  }
-  
-  // 4. Search by key suffix or data_path
-  const lastKey = parts[parts.length - 1];
-  for (const [sKey, sVal] of Object.entries(dict)) {
-    if ((sKey === cleanP || sKey === lastKey || sKey.endsWith(`.${lastKey}`) || sVal?.data_path === cleanP || sVal?.data_path?.endsWith(`.${lastKey}`)) && isNonEmptySchema(sVal)) {
-      return sVal;
-    }
-  }
-  
-  // 5. Deep DFS
-  const dfs = (nodeObj) => {
-    if (!nodeObj || typeof nodeObj !== 'object') return null;
-    for (const [k, v] of Object.entries(nodeObj)) {
-      if ((k === lastKey || k === cleanP || v?.data_path === cleanP) && isNonEmptySchema(v)) {
-        return v;
-      }
-      if (v && v.children && typeof v.children === 'object' && !Array.isArray(v.children)) {
-        const sub = dfs(v.children);
-        if (sub) return sub;
-      }
-    }
-    return null;
-  };
-  
-  const dfsResult = dfs(dict);
-  if (dfsResult) return dfsResult;
-  
-  return { fields: [], children: {} };
-};
 
 // Core node state & schemas
 const nodeSchema = computed(() => {
@@ -471,61 +395,11 @@ const groupLayout = computed(() => {
 
 const groupLabelInput = ref('');
 
-const getGroupLabel = (groupName) => {
-  if (!groupName) return '';
-  if (store.editorMetadata) {
-    const meta = store.editorMetadata.find(m => 
-      (m.group === groupName || m.group === groupName.split('.').pop() || m.group === fullPath.value) && 
-      (m.element === '_group_label' || m.element === '_group' || m.isGroupHeader) && 
-      m.label && m.label.trim()
-    );
-    if (meta) {
-      return meta.label.trim();
-    }
-  }
-  return groupName;
-};
-
-// Metadata Schema helpers for custom types
-const getElementMetadata = (elementName) => {
-  if (!store.editorMetadata) return null;
-  const gName = fullPath.value;
-  const shortName = props.arrayKey;
-  const cleanGroup = gName ? gName.replace(/^OUT_/, '') : '';
-  const cleanShort = shortName ? shortName.replace(/^OUT_/, '') : '';
-  return store.editorMetadata.find(m =>
-    m && m.element === elementName && (
-      m.group === gName ||
-      m.group === shortName ||
-      m.group === cleanGroup ||
-      m.group === cleanShort ||
-      m.group === `OUT_${cleanGroup}`
-    )
-  ) || null;
-};
-
-const isCalculatedField = (elementName) => {
-  const meta = getElementMetadata(elementName);
-  if (!meta) return false;
-  if (meta.isCalculated === true || meta.sourceType === 'computed' || meta.type === 'Computed') {
-    return true;
-  }
-  if (meta.calcFormula && String(meta.calcFormula).trim() !== '') {
-    return true;
-  }
-  if (meta.calcFn && meta.calcFn !== 'NONE' && meta.calcFn !== '') {
-    return Boolean(meta.calcVector || meta.calcFormula);
-  }
-  return false;
-};
-
-const getFieldLabel = (elementName) => {
-  const meta = getElementMetadata(elementName);
-  if (meta && meta.label && meta.label.trim()) {
-    return meta.label.trim();
-  }
-  return elementName;
-};
+// Metadata Schema helpers for custom types (shared implementation in useGroupMetadata.js)
+const getGroupLabel = (groupName) => groupLabel(store, groupName, [fullPath.value]);
+const getElementMetadata = (elementName) => findElementMetadata(store, fullPath.value, elementName);
+const isCalculatedField = (elementName) => isFieldCalculated(store, fullPath.value, elementName);
+const getFieldLabel = (elementName) => fieldLabel(store, fullPath.value, elementName);
 
 const getElementType = (elementName) => {
   const meta = getElementMetadata(elementName);
@@ -733,222 +607,26 @@ const availableFormulaFields = ref([]);
 const globalFormulaPaths = ref([]);
 const formulaTextareaRef = ref(null);
 
-const getGlobalFormulaPaths = () => {
-  if (!store.excelJsonData) return [];
-  const paths = [];
-  Object.keys(store.excelJsonData).forEach(groupKey => {
-    if (groupKey === 'editor_metadata' || groupKey === '_hierarchy_schema' || groupKey === '_sheet_info') return;
-    const groupData = store.excelJsonData[groupKey];
-    if (Array.isArray(groupData) && groupData.length > 0 && typeof groupData[0] === 'object') {
-      Object.keys(groupData[0]).forEach(field => {
-        if (field !== '_hierarchy_schema' && isPrimitive(groupData[0][field])) {
-          paths.push(`${groupKey}.${field}`);
-        }
-      });
-    } else if (typeof groupData === 'object' && !Array.isArray(groupData)) {
-      Object.keys(groupData).forEach(field => {
-        if (field !== '_hierarchy_schema' && isPrimitive(groupData[field])) {
-          paths.push(`${groupKey}.${field}`);
-        }
-      });
-    }
-  });
-  return paths;
-};
-
-// Autocomplete state for formula modal
-const autocompleteQuery = ref('');
-const autocompleteIndex = ref(0);
-const showAutocomplete = ref(false);
-const autocompletePosition = ref({ left: 10, top: 40 });
-
-const getCaretCoordinates = (element, position) => {
-  const div = document.createElement('div');
-  const style = getComputedStyle(element);
-
-  const properties = [
-    'direction', 'boxSizing', 'width', 'height', 'overflowX', 'overflowY',
-    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
-    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
-    'fontStyle', 'fontVariant', 'fontWeight', 'fontStretch', 'fontSize',
-    'fontSizeAdjust', 'lineHeight', 'fontFamily', 'textAlign', 'textTransform',
-    'textIndent', 'textDecoration', 'letterSpacing', 'wordSpacing', 'tabSize'
-  ];
-
-  div.style.position = 'absolute';
-  div.style.visibility = 'hidden';
-  div.style.whiteSpace = 'pre-wrap';
-  div.style.wordWrap = 'break-word';
-
-  properties.forEach(prop => {
-    div.style[prop] = style[prop];
-  });
-
-  div.textContent = element.value.substring(0, position);
-
-  const span = document.createElement('span');
-  span.textContent = element.value.substring(position) || '.';
-  div.appendChild(span);
-
-  document.body.appendChild(div);
-
-  const coordinates = {
-    top: span.offsetTop + parseInt(style.borderTopWidth || 0) - element.scrollTop,
-    left: span.offsetLeft + parseInt(style.borderLeftWidth || 0) - element.scrollLeft,
-    height: parseInt(style.lineHeight) || 20
-  };
-
-  document.body.removeChild(div);
-  return coordinates;
-};
-
-const builtinFunctions = [
-  { name: 'SI(condició; cert; fals)', insert: 'SI(condició; cert; fals)', label: 'SI / IF (Condicional)', category: 'Funció' },
-  { name: 'ARRODONEIX(valor; decimals)', insert: 'ARRODONEIX(valor; 2)', label: 'ARRODONEIX / ROUND', category: 'Funció' },
-  { name: 'ABS(valor)', insert: 'ABS(valor)', label: 'Valor absolut', category: 'Funció' },
-  { name: 'MIN(val1; val2)', insert: 'MIN(val1; val2)', label: 'Mínim de valors', category: 'Funció' },
-  { name: 'MAX(val1; val2)', insert: 'MAX(val1; val2)', label: 'Màxim de valors', category: 'Funció' },
-  { name: 'PERCENT(valor)', insert: 'PERCENT(valor)', label: 'Escala percentatge (* 100)', category: 'Funció' },
-  { name: 'ISNULL(valor)', insert: 'ISNULL(valor)', label: 'Comprova si és nul', category: 'Funció' },
-  { name: 'CONCAT(text1; text2)', insert: 'CONCAT(text1; text2)', label: 'Concatena text', category: 'Funció' },
-  { name: 'TEXT(valor)', insert: 'TEXT(valor)', label: 'Converteix a text', category: 'Funció' },
-  { name: 'REMPLAÇA(text; vell; nou)', insert: 'REMPLAÇA(text; vell; nou)', label: 'Reemplaça text', category: 'Funció' },
-  { name: 'UPPER(text)', insert: 'UPPER(text)', label: 'Majúscules', category: 'Funció' },
-  { name: 'LOWER(text)', insert: 'LOWER(text)', label: 'Minúscules', category: 'Funció' },
-];
-
-const autocompleteCandidates = computed(() => {
-  const q = autocompleteQuery.value.trim().toLowerCase();
-  if (!q) return [];
-
-  const results = [];
-
-  // Local fields
-  availableFormulaFields.value.forEach(field => {
-    if (field.toLowerCase().includes(q)) {
-      results.push({ name: field, insert: field, label: `Camp: ${field}`, category: '🏷️ Camp' });
-    }
-  });
-
-  // Global paths
-  globalFormulaPaths.value.forEach(path => {
-    if (path.toLowerCase().includes(q)) {
-      results.push({ name: path, insert: path, label: `Ruta: ${path}`, category: '🌐 Global' });
-    }
-  });
-
-  // Builtin functions
-  builtinFunctions.forEach(fn => {
-    if (fn.name.toLowerCase().includes(q) || fn.label.toLowerCase().includes(q)) {
-      results.push({ name: fn.name, insert: fn.insert, label: fn.label, category: '⚡ Funció' });
-    }
-  });
-
-  return results.slice(0, 10);
+const {
+  autocompleteQuery,
+  autocompleteIndex,
+  showAutocomplete,
+  autocompletePosition,
+  autocompleteCandidates,
+  insertTokenIntoFormula,
+  onFormulaInputKey,
+  selectAutocompleteCandidate,
+  openFormulaModal,
+  saveFormulaModal,
+} = useFormulaAutocomplete({
+  formulaTextBuffer,
+  formulaTextareaRef,
+  availableFormulaFields,
+  globalFormulaPaths,
+  isFormulaModalOpen,
+  editingFormulaItem,
+  store,
 });
-
-const openFormulaModal = (item, fields) => {
-  editingFormulaItem.value = item;
-  formulaTextBuffer.value = item.calcFormula || '';
-  availableFormulaFields.value = (fields || []).filter(f => f !== item.element);
-  globalFormulaPaths.value = getGlobalFormulaPaths();
-  showAutocomplete.value = false;
-  autocompleteQuery.value = '';
-  autocompleteIndex.value = 0;
-  isFormulaModalOpen.value = true;
-};
-
-const insertTokenIntoFormula = (token) => {
-  if (!formulaTextareaRef.value) {
-    formulaTextBuffer.value += token;
-    return;
-  }
-  const el = formulaTextareaRef.value;
-  const start = el.selectionStart || formulaTextBuffer.value.length;
-  const end = el.selectionEnd || formulaTextBuffer.value.length;
-  const val = formulaTextBuffer.value;
-  formulaTextBuffer.value = val.substring(0, start) + token + val.substring(end);
-  nextTick(() => {
-    el.focus();
-    const newPos = start + token.length;
-    el.setSelectionRange(newPos, newPos);
-  });
-};
-
-const onFormulaInputKey = (e) => {
-  const el = formulaTextareaRef.value;
-  if (!el) return;
-
-  const pos = el.selectionStart || 0;
-  const textBefore = formulaTextBuffer.value.substring(0, pos);
-  const match = textBefore.match(/([a-zA-Z0-9_.]+)$/);
-
-  if (match) {
-    autocompleteQuery.value = match[1];
-    showAutocomplete.value = true;
-    try {
-      const coords = getCaretCoordinates(el, pos);
-      const maxLeft = Math.max(10, el.clientWidth - 300);
-      autocompletePosition.value = {
-        left: Math.min(Math.max(10, coords.left), maxLeft),
-        top: Math.min(coords.top + coords.height + 4, el.clientHeight + 10)
-      };
-    } catch (err) {
-      autocompletePosition.value = { left: 10, top: 40 };
-    }
-  } else {
-    showAutocomplete.value = false;
-    autocompleteQuery.value = '';
-  }
-
-  if (showAutocomplete.value && autocompleteCandidates.value.length > 0) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      autocompleteIndex.value = (autocompleteIndex.value + 1) % autocompleteCandidates.value.length;
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      autocompleteIndex.value = (autocompleteIndex.value - 1 + autocompleteCandidates.value.length) % autocompleteCandidates.value.length;
-    } else if (e.key === 'Enter' || e.key === 'Tab') {
-      if (autocompleteIndex.value < autocompleteCandidates.value.length) {
-        e.preventDefault();
-        selectAutocompleteCandidate(autocompleteCandidates.value[autocompleteIndex.value]);
-      }
-    } else if (e.key === 'Escape') {
-      showAutocomplete.value = false;
-    }
-  }
-};
-
-const selectAutocompleteCandidate = (candidate) => {
-  const el = formulaTextareaRef.value;
-  if (!el) return;
-  const pos = el.selectionStart || 0;
-  const textBefore = formulaTextBuffer.value.substring(0, pos);
-  const textAfter = formulaTextBuffer.value.substring(pos);
-  const match = textBefore.match(/([a-zA-Z0-9_.]+)$/);
-  
-  if (match) {
-    const startPos = pos - match[1].length;
-    formulaTextBuffer.value = textBefore.substring(0, startPos) + candidate.insert + textAfter;
-    nextTick(() => {
-      el.focus();
-      const newPos = startPos + candidate.insert.length;
-      el.setSelectionRange(newPos, newPos);
-    });
-  } else {
-    insertTokenIntoFormula(candidate.insert);
-  }
-  showAutocomplete.value = false;
-  autocompleteQuery.value = '';
-  autocompleteIndex.value = 0;
-};
-
-const saveFormulaModal = () => {
-  if (editingFormulaItem.value) {
-    editingFormulaItem.value.calcFormula = formulaTextBuffer.value;
-  }
-  isFormulaModalOpen.value = false;
-};
 
 const openGroupConfig = () => {
   selectedLayout.value = groupLayout.value;
@@ -1209,83 +887,17 @@ const evaluateItemTitleFormula = (formulaStr, item, groupName, fallback) => {
 };
 
 const handleSaveGroupConfig = (data) => {
-  // Clear both the correct (full dotted path) group entries and any legacy
-  // entries mistakenly saved under the short local key, so re-saving also
-  // heals data written before this was fixed.
-  store.editorMetadata = store.editorMetadata.filter(m => m.group !== fullPath.value && m.group !== props.arrayKey);
-
-  // Save group layout, label header & item title formula
-  const groupMeta = {
-    group: fullPath.value,
-    element: '_group_label',
-    isGroupHeader: true,
-    groupLayout: data.selectedLayout,
-    itemTitleFormula: data.itemTitleFormula || ''
-  };
-  if (data.groupLabel && data.groupLabel.trim()) {
-    groupMeta.label = data.groupLabel.trim();
-  }
-  store.editorMetadata.push(groupMeta);
-
-  // Save field config items
-  data.configList.forEach(item => {
-    const meta = {
-      group: fullPath.value,
-      element: item.element,
-      type: item.type
-    };
-    if (item.label && item.label.trim()) {
-      meta.label = item.label.trim();
-    }
-    if (item.type === 'Select') {
-      meta.sourceType = item.sourceType;
-      meta.multiple = !!item.multiple;
-      if (item.sourceType === 'dynamic') {
-        meta.vectorPath = item.vectorPath;
-        meta.displayField = item.displayField;
-        meta.valueField = item.valueField;
-      } else {
-        meta.options = (item.optionsRaw || '').split(',').map(x => x.trim()).filter(x => x);
-      }
-    }
-    meta.isCalculated = !!item.isCalculated;
-    if (item.isCalculated || item.type === 'Computed') {
-      meta.isCalculated = true;
-      meta.sourceType = 'computed';
-      meta.calcFn = item.calcFn || 'CUSTOM';
-      meta.calcVector = item.calcVector || '';
-      meta.calcTargetCol = item.calcTargetCol || '';
-      meta.calcFormula = item.calcFormula || '';
-    } else {
-      meta.isCalculated = false;
-      if (item.type !== 'Select') {
-        meta.sourceType = 'static';
-      }
-      meta.calcFn = 'NONE';
-      meta.calcVector = '';
-      meta.calcTargetCol = '';
-      meta.calcFormula = '';
-    }
-    if (item.type === 'Table') {
-      meta.vectorPath = item.vectorPath;
-    }
-
-    if (item.width) meta.width = item.width;
-    if (item.gridRow) meta.gridRow = item.gridRow;
-    if (item.gridOrder) meta.gridOrder = item.gridOrder;
-    if (item.gridFill) meta.gridFill = item.gridFill;
-
-    store.editorMetadata.push(meta);
+  // legacyGroupNames: [props.arrayKey] clears any entries mistakenly saved
+  // under the short local key (before the 2026-09-01 fix), so re-saving
+  // a group also heals data written by the old, buggy version.
+  saveGroupConfigShared(store, {
+    groupPath: fullPath.value,
+    legacyGroupNames: [props.arrayKey],
+    data,
+    saveExcelData,
+    evaluateComputedFields,
   });
-
   isConfigModalOpen.value = false;
-  store.addLog(`Configuració desada per al grup '${fullPath.value}'.`, 'success');
-
-  if (store.excelJsonData) {
-    store.excelJsonData = JSON.parse(JSON.stringify(store.excelJsonData));
-    saveExcelData();
-    evaluateComputedFields(store.excelJsonData);
-  }
 };
 
 // Accordion Collapsing state for intermediate items

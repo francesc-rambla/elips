@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
+import { isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
 
@@ -311,76 +312,6 @@ const findAnyArrayByName = (obj, targetName) => {
   };
   
   return search(obj);
-};
-
-const isNonEmptySchema = (s) => {
-  if (!s || typeof s !== 'object') return false;
-  const hasFields = Array.isArray(s.fields) && s.fields.length > 0;
-  const hasChildren = s.children && (Array.isArray(s.children) ? s.children.length > 0 : Object.keys(s.children).length > 0);
-  return hasFields || hasChildren;
-};
-
-const universalFindSchema = (targetPath, dict) => {
-  if (!dict || !targetPath) return { fields: [], children: {} };
-  
-  const cleanP = String(targetPath).replace(/\.\d+\b/g, '').replace(/^#?(dades|doc)\./, '');
-  
-  for (const [k, val] of Object.entries(dict)) {
-    if (val && typeof val === 'object' && val.data_path === cleanP && isNonEmptySchema(val)) {
-      return val;
-    }
-  }
-
-  if (dict[cleanP] && isNonEmptySchema(dict[cleanP])) {
-    return dict[cleanP];
-  }
-  
-  const parts = cleanP.split('.').filter(Boolean);
-  let curr = dict;
-  let foundTree = null;
-  
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    if (curr && typeof curr === 'object') {
-      const node = curr[p] || (curr.children && typeof curr.children === 'object' && !Array.isArray(curr.children) ? curr.children[p] : null);
-      if (node) {
-        foundTree = node;
-        curr = node.children;
-      } else {
-        foundTree = null;
-        break;
-      }
-    }
-  }
-  if (isNonEmptySchema(foundTree)) {
-    return foundTree;
-  }
-  
-  const lastKey = parts[parts.length - 1];
-  for (const [sKey, sVal] of Object.entries(dict)) {
-    if ((sKey === cleanP || sKey === lastKey || sKey.endsWith(`.${lastKey}`) || sVal?.data_path === cleanP || sVal?.data_path?.endsWith(`.${lastKey}`)) && isNonEmptySchema(sVal)) {
-      return sVal;
-    }
-  }
-  
-  const dfs = (nodeObj) => {
-    if (!nodeObj || typeof nodeObj !== 'object') return null;
-    for (const [k, v] of Object.entries(nodeObj)) {
-      if ((k === lastKey || k === cleanP || v?.data_path === cleanP) && isNonEmptySchema(v)) {
-        return v;
-      }
-      if (v && v.children && typeof v.children === 'object' && !Array.isArray(v.children)) {
-        const sub = dfs(v.children);
-        if (sub) return sub;
-      }
-    }
-    return null;
-  };
-  
-  const dfsResult = dfs(dict);
-  if (dfsResult) return dfsResult;
-
-  return { fields: [], children: {} };
 };
 
 // Helper: Map transient Jinja iterator variables (e.g. "part.activitats") to canonical schema paths (e.g. "pres.parts.activitats")

@@ -1,6 +1,8 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
+import { isPrimitive } from '../composables/useSchemaResolver';
+import { builtinFunctions, useFormulaAutocomplete } from '../composables/useFormulaAutocomplete';
 import VisualGridEditorModal from './VisualGridEditorModal.vue';
 
 const props = defineProps({
@@ -364,7 +366,6 @@ const availableFormulaFields = computed(() => {
 const globalFormulaPaths = computed(() => {
   if (!store.excelJsonData) return [];
   const paths = [];
-  const isPrimitive = (val) => val === null || val === undefined || typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean';
 
   Object.keys(store.excelJsonData).forEach(groupKey => {
     if (groupKey === 'editor_metadata' || groupKey === '_hierarchy_schema' || groupKey === '_sheet_info') return;
@@ -386,97 +387,28 @@ const globalFormulaPaths = computed(() => {
   return paths;
 });
 
-// Autocomplete state for formula modal
-const autocompleteQuery = ref('');
-const autocompleteIndex = ref(0);
-const showAutocomplete = ref(false);
-const autocompletePosition = ref({ left: 10, top: 40 });
-
-const getCaretCoordinates = (element, position) => {
-  const div = document.createElement('div');
-  const style = getComputedStyle(element);
-
-  const properties = [
-    'direction', 'boxSizing', 'width', 'height', 'overflowX', 'overflowY',
-    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
-    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
-    'fontStyle', 'fontVariant', 'fontWeight', 'fontStretch', 'fontSize',
-    'fontSizeAdjust', 'lineHeight', 'fontFamily', 'textAlign', 'textTransform',
-    'textIndent', 'textDecoration', 'letterSpacing', 'wordSpacing', 'tabSize'
-  ];
-
-  div.style.position = 'absolute';
-  div.style.visibility = 'hidden';
-  div.style.whiteSpace = 'pre-wrap';
-  div.style.wordWrap = 'break-word';
-
-  properties.forEach(prop => {
-    div.style[prop] = style[prop];
-  });
-
-  div.textContent = element.value.substring(0, position);
-
-  const span = document.createElement('span');
-  span.textContent = element.value.substring(position) || '.';
-  div.appendChild(span);
-
-  document.body.appendChild(div);
-
-  const coordinates = {
-    top: span.offsetTop + parseInt(style.borderTopWidth || 0) - element.scrollTop,
-    left: span.offsetLeft + parseInt(style.borderLeftWidth || 0) - element.scrollLeft,
-    height: parseInt(style.lineHeight) || 20
-  };
-
-  document.body.removeChild(div);
-  return coordinates;
-};
-
-const builtinFunctions = [
-  { name: 'SI(condició; cert; fals)', insert: 'SI(condició; cert; fals)', label: 'SI / IF (Condicional)', category: 'Funció' },
-  { name: 'ARRODONEIX(valor; decimals)', insert: 'ARRODONEIX(valor; 2)', label: 'ARRODONEIX / ROUND', category: 'Funció' },
-  { name: 'ABS(valor)', insert: 'ABS(valor)', label: 'Valor absolut', category: 'Funció' },
-  { name: 'MIN(val1; val2)', insert: 'MIN(val1; val2)', label: 'Mínim de valors', category: 'Funció' },
-  { name: 'MAX(val1; val2)', insert: 'MAX(val1; val2)', label: 'Màxim de valors', category: 'Funció' },
-  { name: 'PERCENT(valor)', insert: 'PERCENT(valor)', label: 'Escala percentatge (* 100)', category: 'Funció' },
-  { name: 'ISNULL(valor)', insert: 'ISNULL(valor)', label: 'Comprova si és nul', category: 'Funció' },
-  { name: 'CONCAT(text1; text2)', insert: 'CONCAT(text1; text2)', label: 'Concatena text', category: 'Funció' },
-  { name: 'TEXT(valor)', insert: 'TEXT(valor)', label: 'Converteix a text', category: 'Funció' },
-  { name: 'REMPLAÇA(text; vell; nou)', insert: 'REMPLAÇA(text; vell; nou)', label: 'Reemplaça text', category: 'Funció' },
-  { name: 'UPPER(text)', insert: 'UPPER(text)', label: 'Majúscules', category: 'Funció' },
-  { name: 'LOWER(text)', insert: 'LOWER(text)', label: 'Minúscules', category: 'Funció' },
-];
-
-const autocompleteCandidates = computed(() => {
-  const q = autocompleteQuery.value.trim().toLowerCase();
-  if (!q) return [];
-
-  const results = [];
-
-  // Local fields
-  availableFormulaFields.value.forEach(field => {
-    if (field.toLowerCase().includes(q)) {
-      results.push({ name: field, insert: field, label: `Camp: ${field}`, category: '🏷️ Camp' });
-    }
-  });
-
-  // Global paths
-  globalFormulaPaths.value.forEach(path => {
-    if (path.toLowerCase().includes(q)) {
-      results.push({ name: path, insert: path, label: `Ruta: ${path}`, category: '🌐 Global' });
-    }
-  });
-
-  // Builtin functions
-  builtinFunctions.forEach(fn => {
-    if (fn.name.toLowerCase().includes(q) || fn.label.toLowerCase().includes(q)) {
-      results.push({ name: fn.name, insert: fn.insert, label: fn.label, category: '⚡ Funció' });
-    }
-  });
-
-  return results.slice(0, 10);
+const {
+  autocompleteQuery,
+  autocompleteIndex,
+  showAutocomplete,
+  autocompletePosition,
+  autocompleteCandidates,
+  insertTokenIntoFormula,
+  onFormulaInputKey,
+  selectAutocompleteCandidate,
+  saveFormulaModal,
+} = useFormulaAutocomplete({
+  formulaTextBuffer,
+  formulaTextareaRef,
+  availableFormulaFields,
+  globalFormulaPaths,
+  isFormulaModalOpen,
+  editingFormulaItem,
 });
 
+// Unlike DataInspector.vue/NestedDataNode.vue, availableFormulaFields/globalFormulaPaths
+// above are live `computed` refs (not a snapshot), so opening the modal here only needs
+// to reset the editor's own state — the composable's openFormulaModal() isn't used.
 const openFormulaEditor = (item) => {
   editingFormulaItem.value = item;
   formulaTextBuffer.value = item.calcFormula || '';
@@ -484,98 +416,6 @@ const openFormulaEditor = (item) => {
   autocompleteQuery.value = '';
   autocompleteIndex.value = 0;
   isFormulaModalOpen.value = true;
-};
-
-const insertTokenIntoFormula = (token) => {
-  if (!formulaTextareaRef.value) {
-    formulaTextBuffer.value += token;
-    return;
-  }
-  const el = formulaTextareaRef.value;
-  const start = el.selectionStart || formulaTextBuffer.value.length;
-  const end = el.selectionEnd || formulaTextBuffer.value.length;
-  const val = formulaTextBuffer.value;
-  formulaTextBuffer.value = val.substring(0, start) + token + val.substring(end);
-  nextTick(() => {
-    el.focus();
-    const newPos = start + token.length;
-    el.setSelectionRange(newPos, newPos);
-  });
-};
-
-const onFormulaInputKey = (e) => {
-  const el = formulaTextareaRef.value;
-  if (!el) return;
-
-  const pos = el.selectionStart || 0;
-  const textBefore = formulaTextBuffer.value.substring(0, pos);
-  const match = textBefore.match(/([a-zA-Z0-9_.]+)$/);
-
-  if (match) {
-    autocompleteQuery.value = match[1];
-    showAutocomplete.value = true;
-    try {
-      const coords = getCaretCoordinates(el, pos);
-      const maxLeft = Math.max(10, el.clientWidth - 300);
-      autocompletePosition.value = {
-        left: Math.min(Math.max(10, coords.left), maxLeft),
-        top: Math.min(coords.top + coords.height + 4, el.clientHeight + 10)
-      };
-    } catch (err) {
-      autocompletePosition.value = { left: 10, top: 40 };
-    }
-  } else {
-    showAutocomplete.value = false;
-    autocompleteQuery.value = '';
-  }
-
-  if (showAutocomplete.value && autocompleteCandidates.value.length > 0) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      autocompleteIndex.value = (autocompleteIndex.value + 1) % autocompleteCandidates.value.length;
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      autocompleteIndex.value = (autocompleteIndex.value - 1 + autocompleteCandidates.value.length) % autocompleteCandidates.value.length;
-    } else if (e.key === 'Enter' || e.key === 'Tab') {
-      if (autocompleteIndex.value < autocompleteCandidates.value.length) {
-        e.preventDefault();
-        selectAutocompleteCandidate(autocompleteCandidates.value[autocompleteIndex.value]);
-      }
-    } else if (e.key === 'Escape') {
-      showAutocomplete.value = false;
-    }
-  }
-};
-
-const selectAutocompleteCandidate = (candidate) => {
-  const el = formulaTextareaRef.value;
-  if (!el) return;
-  const pos = el.selectionStart || 0;
-  const textBefore = formulaTextBuffer.value.substring(0, pos);
-  const textAfter = formulaTextBuffer.value.substring(pos);
-  const match = textBefore.match(/([a-zA-Z0-9_.]+)$/);
-  
-  if (match) {
-    const startPos = pos - match[1].length;
-    formulaTextBuffer.value = textBefore.substring(0, startPos) + candidate.insert + textAfter;
-    nextTick(() => {
-      el.focus();
-      const newPos = startPos + candidate.insert.length;
-      el.setSelectionRange(newPos, newPos);
-    });
-  } else {
-    insertTokenIntoFormula(candidate.insert);
-  }
-  showAutocomplete.value = false;
-  autocompleteQuery.value = '';
-  autocompleteIndex.value = 0;
-};
-
-const saveFormulaModal = () => {
-  if (editingFormulaItem.value) {
-    editingFormulaItem.value.calcFormula = formulaTextBuffer.value;
-  }
-  isFormulaModalOpen.value = false;
 };
 </script>
 
