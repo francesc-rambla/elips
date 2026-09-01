@@ -2307,6 +2307,31 @@ def render_json_text(excel_path, date_format='iso', strict=False):
     doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
     return json.dumps(doc, ensure_ascii=False, default=_custom_json_default)
 
+def _merge_live_json_into_doc(doc_val, live_val, depth=0, max_depth=20):
+    """Recursively backfills doc_val (freshly re-parsed from the .xlsx) with
+    anything present in live_val (the live in-browser JSON) that is missing
+    or falsy on the doc side. Never removes or renames real data; only adds
+    keys the Excel re-read couldn't have produced (e.g. calculated fields),
+    at any nesting depth and inside tabular (list) rows."""
+    if depth > max_depth:
+        return doc_val
+    if isinstance(doc_val, dict) and isinstance(live_val, dict):
+        for k, v in live_val.items():
+            if isinstance(k, str) and (k.startswith('_') or k in ('editor_metadata', 'editormetadata', '_hierarchy_schema', 'hierarchy_schema')):
+                continue
+            if k not in doc_val or not doc_val[k]:
+                doc_val[k] = v
+            else:
+                doc_val[k] = _merge_live_json_into_doc(doc_val[k], v, depth + 1, max_depth)
+        return doc_val
+    if isinstance(doc_val, list) and isinstance(live_val, list):
+        if len(doc_val) != len(live_val):
+            # Row count diverged since the Excel was last regenerated (e.g. a
+            # row was added/removed live): trust the live data wholesale.
+            return live_val
+        return [_merge_live_json_into_doc(d, l, depth + 1, max_depth) for d, l in zip(doc_val, live_val)]
+    return doc_val
+
 def _filter_empty_rows(data, visited=None, depth=0, max_depth=15):
     if depth > max_depth:
         return data
@@ -2430,7 +2455,14 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         doc.pop('editormetadata', None)
         doc.pop('hierarchy_schema', None)
 
-        # Merge latest JSON from /work/in.json if present
+        # Merge latest JSON from /work/in.json if present. This backfills anything
+        # present in the live in-browser state (store.excelJsonData) but absent from
+        # a fresh re-read of the .xlsx — most importantly, calculated/virtual fields
+        # (editor_metadata type "Computed" or row-level CUSTOM formulas), which are
+        # never written back as real Excel columns and so never survive excel_to_json
+        # on their own. Recurses through nested groups and tabular (list) rows at any
+        # depth, not just the top level, so calculated fields inside a `{% for %}`
+        # loop over a sub-table are picked up too.
         try:
             if os.path.exists('/work/in.json'):
                 with open('/work/in.json', 'r', encoding='utf-8') as f:
@@ -2443,10 +2475,8 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
                                 continue
                             if k not in doc or not doc[k]:
                                 doc[k] = v
-                            elif isinstance(v, dict) and isinstance(doc[k], dict):
-                                for sub_k, sub_v in v.items():
-                                    if sub_k not in doc[k] or not doc[k][sub_k]:
-                                        doc[k][sub_k] = sub_v
+                            else:
+                                doc[k] = _merge_live_json_into_doc(doc[k], v)
         except Exception:
             pass
 

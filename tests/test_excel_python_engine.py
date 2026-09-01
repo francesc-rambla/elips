@@ -16,6 +16,7 @@ import shutil
 import tempfile
 import unittest
 import importlib.util
+from unittest import mock
 
 from openpyxl import load_workbook
 
@@ -172,6 +173,42 @@ class TestExcelPythonEngine(unittest.TestCase):
 
         # La variable inexistent del final de la plantilla no ha de trencar el renderitzat
         self.assertGreater(len(result["issues"]), 0, "El motor hauria de reportar la variable indefinida com a incidència")
+
+    def test_09_calculated_field_inside_tabular_loop_renders(self):
+        """Un camp calculat (virtual, no és una columna real de l'Excel) present a l'estat viu
+        (/work/in.json, equivalent a store.excelJsonData amb evaluateComputedFields ja aplicat) s'ha
+        de veure reflectit en renderitzar una plantilla que itera sobre la taula que el conté."""
+        data = self.engine.excel_to_json(self.fixture_path)["data"]
+        for part in data["pres"]["parts"]:
+            part["iva_calculat"] = round(part["import"] * 0.21, 2)
+        live_json_str = json.dumps(data, ensure_ascii=False)
+
+        loop_template_path = os.path.join(self.tmp_dir, "loop_template.md.j2")
+        with open(loop_template_path, "w", encoding="utf-8") as f:
+            f.write("{% for part in pres.parts %}\n- {{ part.nom_partida }}: IVA calculat = {{ part.iva_calculat }}\n{% endfor %}\n")
+
+        live_json_path = os.path.join(self.tmp_dir, "in.json")
+        with open(live_json_path, "w", encoding="utf-8") as f:
+            f.write(live_json_str)
+
+        real_exists = os.path.exists
+        real_open = open
+
+        def fake_exists(path):
+            return True if path == '/work/in.json' else real_exists(path)
+
+        def fake_open(path, *args, **kwargs):
+            return real_open(live_json_path, *args, **kwargs) if path == '/work/in.json' else real_open(path, *args, **kwargs)
+
+        with mock.patch.object(self.engine.os.path, 'exists', side_effect=fake_exists), \
+             mock.patch.object(self.engine, 'open', side_effect=fake_open, create=True):
+            result = json.loads(self.engine.render_md_two_pass_with_report(self.fixture_path, loop_template_path))
+
+        self.assertTrue(result["success"], result.get("traceback"))
+        md = result["markdown"]
+        self.assertIn("Equips de sobretaula: IVA calculat = 9450.0", md)
+        self.assertIn("Portàtils: IVA calculat = 6300.0", md)
+        self.assertNotIn("iva_calculat", md, "El placeholder de recuperació indica que el camp calculat no s'ha trobat")
 
 
 if __name__ == "__main__":
