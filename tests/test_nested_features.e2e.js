@@ -335,8 +335,71 @@ async function testNestedFeatures() {
   }
   console.log("  ✓ Els camps calculats s'han avaluat correctament a través del pont Pyodide (Python).");
 
+  // 7. Regression: configuring a sub-table nested two levels deep (here,
+  // "activitats" inside a specific "parts" row) must save the config under
+  // the SHARED schema-level group ("pres.parts.activitats"), not a group forked
+  // per row index ("parts.0.activitats") — which would silently apply the
+  // configuration to only the first row's sub-table and never to the rest,
+  // even though every row shares the exact same column structure.
+  console.log("➡️ 7. Verificant que la configuració d'una taula aniuada de 2n nivell s'aplica a totes les files, no només a la primera...");
+
+  const nestedGearInfo = await page.evaluate(() => {
+    const gears = Array.from(document.querySelectorAll('button[title="Configura tipus de dades i disposició per a aquest grup"]'));
+    return gears.map((g, i) => {
+      const heading = g.closest('.nested-hierarchy-container')?.querySelector('h5')?.textContent.trim() || '';
+      return { i, heading };
+    });
+  });
+  const activitatsGearIndex = nestedGearInfo.findIndex(x => x.heading.toLowerCase().includes('activitats'));
+  if (activitatsGearIndex === -1) {
+    throw new Error(`No s'ha trobat cap botó de configuració per a 'activitats': ${JSON.stringify(nestedGearInfo)}`);
+  }
+
+  await page.evaluate((idx) => {
+    const gears = Array.from(document.querySelectorAll('button[title="Configura tipus de dades i disposició per a aquest grup"]'));
+    gears[idx].click();
+  }, activitatsGearIndex);
+  await new Promise(r => setTimeout(r, 500));
+
+  const nestedModalVisible = await page.evaluate(() => !!document.querySelector('.modal-overlay input.data-input[placeholder="Etiqueta visible..."]'));
+  if (!nestedModalVisible) {
+    throw new Error("No s'ha obert el modal de configuració per a 'activitats'");
+  }
+
+  await page.evaluate(() => {
+    const input = document.querySelector('.modal-overlay input.data-input[placeholder="Etiqueta visible..."]');
+    input.value = 'Etiqueta activitat compartida';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await new Promise(r => setTimeout(r, 200));
+
+  await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('.modal-overlay button'));
+    const saveBtn = btns.find(b => /desa|guardar|save/i.test(b.textContent));
+    if (saveBtn) saveBtn.click();
+  });
+  await new Promise(r => setTimeout(r, 500));
+
+  const nestedGroupCheck = await page.evaluate(() => {
+    const meta = window.store.editorMetadata || [];
+    return {
+      hasSharedGroup: meta.some(m => m.group === 'pres.parts.activitats' && m.label === 'Etiqueta activitat compartida'),
+      hasRowIndexedGroup: meta.some(m => /^pres\.parts\.\d+\.activitats$/.test(m.group || '')),
+      allGroups: [...new Set(meta.map(m => m.group))],
+    };
+  });
+
+  console.log("  Grups de metadades resultants:", nestedGroupCheck.allGroups);
+  if (!nestedGroupCheck.hasSharedGroup) {
+    throw new Error(`La configuració no s'ha desat sota el grup compartit 'pres.parts.activitats': ${JSON.stringify(nestedGroupCheck)}`);
+  }
+  if (nestedGroupCheck.hasRowIndexedGroup) {
+    throw new Error(`La configuració s'ha desat sota un grup indexat per fila (p.ex. 'parts.0.activitats') en lloc del grup compartit: ${JSON.stringify(nestedGroupCheck)}`);
+  }
+  console.log("  ✓ La configuració de la sub-taula aniuada s'aplica a totes les files (grup compartit 'pres.parts.activitats').");
+
   await browser.close();
-  console.log("🎉 TOTES LES PROVES DE TÍTOL PER FÓRMULA, ACORDIÓ, REORDENACIÓ, ETIQUETES ANIUADES I CAMPS CALCULATS HAN PASSAT AMB ÈXIT!");
+  console.log("🎉 TOTES LES PROVES DE TÍTOL PER FÓRMULA, ACORDIÓ, REORDENACIÓ, ETIQUETES ANIUADES, CAMPS CALCULATS I CONFIGURACIÓ COMPARTIDA HAN PASSAT AMB ÈXIT!");
 }
 
 testNestedFeatures().catch(err => {

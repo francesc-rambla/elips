@@ -1682,12 +1682,17 @@ const getItemPath = (idx, fieldKey) => {
           </div>
 
           <!-- Child Hierarchies -->
+          <!-- parentPath must be the SCHEMA-level path (fullPath, e.g. "pres.parts"), not
+               getItemPath(idx, '') (e.g. "pres.parts.0") — the row's own data object is
+               already passed correctly via :parentObj="item", but the *group* identifier
+               used for editor_metadata/schema lookups must stay shared across every row of
+               this table, not be forked per row index. -->
           <template v-for="cKey in childKeys" :key="cKey">
-            <NestedDataNode 
+            <NestedDataNode
               :parentObj="item"
               :arrayKey="cKey"
               :schema="childSchemas[cKey] || { fields: [], children: {} }"
-              :parentPath="getItemPath(idx, '')"
+              :parentPath="fullPath"
             />
           </template>
         </div>
