@@ -9,6 +9,9 @@ const buildCode = `BUILD-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  // Relative base so the build works when served from a sub-path
+  // (e.g. GitHub Pages at https://<user>.github.io/<repo>/).
+  base: './',
   define: {
     __BUILD_CODE__: JSON.stringify(buildCode)
   },

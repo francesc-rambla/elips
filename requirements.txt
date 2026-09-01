@@ -1,0 +1,8 @@
+# Python dependencies for the local/CI test harness (tests/test_excel_python_engine.py),
+# which imports src/python/engine.py directly as a plain CPython module.
+#
+# This is unrelated to the versions Pyodide loads at runtime in the browser
+# (see src/composables/useWasmEngines.js / store.config.pyIndex) — those are
+# fetched independently inside the WASM sandbox.
+openpyxl>=3.1
+jinja2>=3.1
