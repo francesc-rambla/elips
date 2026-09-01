@@ -85,6 +85,19 @@ Per representar estructures aniuades (relacions pare-fill 1 a N o N a M), **elip
 - **Transpilació de documents**:
   - **Pandoc WASM**: Conversió de Markdown transpilat cap a documents Microsoft Word `.docx` utilitzant documents de referència corporatius.
 
+### 📁 El motor Python (`src/python/engine.py`)
+
+Tota la lògica de negoci que corre dins de Pyodide (parsing d'Excel a JSON, reconstrucció de la jerarquia de fulls, renderitzat Jinja2 de dues passades, filtres personalitzats, exportació de tornada a `.xlsx`) viu com a **fitxer Python independent i editable normalment** a `src/python/engine.py`, en lloc d'estar incrustada com a text dins d'un fitxer JavaScript.
+
+- `src/composables/useWasmEngines.js` l'importa amb la sintaxi `?raw` pròpia de Vite:
+  ```js
+  import enginePyCode from '../python/engine.py?raw';
+  // ...
+  await _pyodide.runPythonAsync(enginePyCode);
+  ```
+- Aquest import es resol **en temps de compilació**: `vite build` incrusta el contingut del `.py` com una constant de text dins del `dist/index.html` d'un sol fitxer, de manera que el paquet final continua sent 100% autònom i sense dependències externes.
+- Com que ara és un `.py` real, es pot editar amb ressaltat de sintaxi normal, comprovar-ne la validesa amb `python3 -m py_compile src/python/engine.py`, i els tests unitaris (`tests/test_excel_python_engine.py`) l'importen directament com a mòdul en lloc d'extreure'l per substring d'un fitxer JS.
+
 ---
 
 ## ⚙️ Filtres Jinja2 personalitzats
@@ -102,21 +115,33 @@ Per representar estructures aniuades (relacions pare-fill 1 a N o N a M), **elip
 ## 💻 Desenvolupament i compilació local
 
 ```bash
-# Navegar al directori de la font Vue 3
-cd contractes-generator-vue
-
 # Instal·lar dependències
 npm install
 
 # Executar en entorn de desenvolupament local
 npm run dev
 
-# Executar conjunt de proves (Python, Vitest, E2E Puppeteer)
+# Executar tot el conjunt de proves (Python, Vitest, E2E Puppeteer)
 npm run test
 
 # Compilar el bundle de producció (Genera dist/index.html d'un sol fitxer)
 npm run build
 ```
+
+`npm run build` executa sempre `npm run test` abans de generar el bundle: si qualsevol prova falla, no es genera cap `dist/index.html`.
+
+### 🧪 Estratègia de tests
+
+| Script | Motor | Què comprova |
+| :--- | :--- | :--- |
+| `npm run generate:fixtures` | `openpyxl` (Python) + `jszip` (Node) | Genera a `tests/fixtures/` un `.xlsx` i un paquet de projecte `.zip` **sintètics**, autocontinguts al repositori. |
+| `npm run test:python` | `unittest` | Importa `src/python/engine.py` directament i valida el parsing Excel↔JSON, la jerarquia aniuada, la preservació de fórmules complexes i el renderitzat Jinja2, sobre la fixture generada. |
+| `npm run test:js` | Vitest | Tests unitaris del store Pinia i de l'historial de versions. |
+| `npm run test:e2e` | Puppeteer | Genera les fixtures, compila l'app, aixeca un servidor local a `http://localhost:8000` i hi executa 4 escenaris de navegador real (càrrega d'Excel, estructures aniuades/acordió, recuperació de projecte ZIP, canvi entre projectes). |
+
+Cap test depèn de fitxers externs ni de rutes absolutes d'una màquina concreta: la fixture (`tests/fixtures/generate_workbook.py` i `generate_project_zip.mjs`) es genera a l'instant i exercita el model de dades complet descrit en aquest README (fulls KV amb i sense capçalera, jerarquia de 4 nivells amb clau forana explícita, taules amb files buides, cel·les fusionades i fórmules d'enllaç/complexes).
+
+Els tests `test:e2e` necessiten un navegador Chromium/Chrome disponible. Si `puppeteer` no ha pogut baixar el seu propi binari (habitual en entorns amb `npm install` restringit), `tests/run_e2e.mjs` reutilitza automàticament un Chromium ja instal·lat al sistema (o el que indiqueu amb la variable d'entorn `PUPPETEER_EXECUTABLE_PATH`).
 
 ---
 
