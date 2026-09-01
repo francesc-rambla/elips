@@ -31,7 +31,7 @@ const props = defineProps({
 });
 
 const store = useWorkspaceStore();
-const { evaluateComputedFields } = useWasmEngines();
+const { evaluateComputedFields, saveExcelData } = useWasmEngines();
 
 // Base utility helpers
 const isPrimitive = (val) => {
@@ -465,7 +465,7 @@ const selectedLayout = ref('vertical');
 
 const groupLayout = computed(() => {
   if (!store.editorMetadata) return 'vertical';
-  const meta = store.editorMetadata.find(m => m.group === props.arrayKey && m.groupLayout);
+  const meta = store.editorMetadata.find(m => (m.group === fullPath.value || m.group === props.arrayKey) && m.groupLayout);
   return meta ? meta.groupLayout : 'vertical';
 });
 
@@ -489,15 +489,15 @@ const getGroupLabel = (groupName) => {
 // Metadata Schema helpers for custom types
 const getElementMetadata = (elementName) => {
   if (!store.editorMetadata) return null;
-  const gName = props.arrayKey;
-  const shortName = gName ? gName.split('.').pop() : '';
+  const gName = fullPath.value;
+  const shortName = props.arrayKey;
   const cleanGroup = gName ? gName.replace(/^OUT_/, '') : '';
   const cleanShort = shortName ? shortName.replace(/^OUT_/, '') : '';
-  return store.editorMetadata.find(m => 
+  return store.editorMetadata.find(m =>
     m && m.element === elementName && (
-      m.group === gName || 
-      m.group === shortName || 
-      m.group === cleanGroup || 
+      m.group === gName ||
+      m.group === shortName ||
+      m.group === cleanGroup ||
       m.group === cleanShort ||
       m.group === `OUT_${cleanGroup}`
     )
@@ -1209,11 +1209,14 @@ const evaluateItemTitleFormula = (formulaStr, item, groupName, fallback) => {
 };
 
 const handleSaveGroupConfig = (data) => {
-  store.editorMetadata = store.editorMetadata.filter(m => m.group !== props.arrayKey);
-  
+  // Clear both the correct (full dotted path) group entries and any legacy
+  // entries mistakenly saved under the short local key, so re-saving also
+  // heals data written before this was fixed.
+  store.editorMetadata = store.editorMetadata.filter(m => m.group !== fullPath.value && m.group !== props.arrayKey);
+
   // Save group layout, label header & item title formula
   const groupMeta = {
-    group: props.arrayKey,
+    group: fullPath.value,
     element: '_group_label',
     isGroupHeader: true,
     groupLayout: data.selectedLayout,
@@ -1223,11 +1226,11 @@ const handleSaveGroupConfig = (data) => {
     groupMeta.label = data.groupLabel.trim();
   }
   store.editorMetadata.push(groupMeta);
-  
+
   // Save field config items
   data.configList.forEach(item => {
     const meta = {
-      group: props.arrayKey,
+      group: fullPath.value,
       element: item.element,
       type: item.type
     };
@@ -1276,10 +1279,11 @@ const handleSaveGroupConfig = (data) => {
   });
 
   isConfigModalOpen.value = false;
-  store.addLog(`Configuració desada per al grup '${props.arrayKey}'.`, 'success');
-  
+  store.addLog(`Configuració desada per al grup '${fullPath.value}'.`, 'success');
+
   if (store.excelJsonData) {
-    store.excelJsonData.editor_metadata = store.editorMetadata;
+    store.excelJsonData = JSON.parse(JSON.stringify(store.excelJsonData));
+    saveExcelData();
     evaluateComputedFields(store.excelJsonData);
   }
 };
@@ -2082,7 +2086,7 @@ const getItemPath = (idx, fieldKey) => {
   <!-- Group Config Modal -->
   <GroupConfigModal
     v-model="isConfigModalOpen"
-    :groupName="arrayKey"
+    :groupName="fullPath"
     :configList="groupConfigList"
     :groupLabel="groupLabelInput"
     :selectedLayout="selectedLayout"
@@ -2091,10 +2095,10 @@ const getItemPath = (idx, fieldKey) => {
   />
 
     <!-- Visual Grid Layout Editor Modal -->
-    <VisualGridEditorModal 
-      v-model="isVisualGridModalOpen" 
-      :groupName="arrayKey" 
-      :configList="groupConfigList" 
+    <VisualGridEditorModal
+      v-model="isVisualGridModalOpen"
+      :groupName="fullPath"
+      :configList="groupConfigList"
     />
 
     <!-- Cell Text / Markdown + Jinja2 Visual Editor Modal -->

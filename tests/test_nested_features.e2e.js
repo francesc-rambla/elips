@@ -246,8 +246,55 @@ async function testNestedFeatures() {
   }
   console.log("  ✓ Nova ordenació persistida a localStorage correctament!");
 
+  // 5. Regression: field labels configured on a nested group (2+ levels deep,
+  // e.g. pres.parts) must be saved under the FULL dotted group path, not the
+  // short local key, or the app can never find them again (editor_metadata
+  // sheet in Excel/ZIP, formula/select lookups, etc).
+  console.log("➡️ 5. Verificant que les etiquetes de camp d'un grup aniuat es desen amb la ruta completa del grup...");
+
+  await page.evaluate(() => {
+    const btn = document.querySelector('button[title="Configura tipus de dades i disposició per a aquest grup"]');
+    if (btn) btn.click();
+  });
+  await new Promise(r => setTimeout(r, 500));
+
+  const labelInputExists = await page.evaluate(() => !!document.querySelector('.modal-overlay input.data-input[placeholder="Etiqueta visible..."]'));
+  if (!labelInputExists) {
+    throw new Error("No s'ha trobat el modal de configuració del grup aniuat 'pres.parts'");
+  }
+
+  await page.evaluate(() => {
+    const input = document.querySelector('.modal-overlay input.data-input[placeholder="Etiqueta visible..."]');
+    input.value = 'Etiqueta de regressió';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await new Promise(r => setTimeout(r, 200));
+
+  await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('.modal-overlay button'));
+    const saveBtn = btns.find(b => /desa|guardar|save/i.test(b.textContent));
+    if (saveBtn) saveBtn.click();
+  });
+  await new Promise(r => setTimeout(r, 500));
+
+  const groupCheck = await page.evaluate(() => {
+    const meta = window.store.editorMetadata || [];
+    return {
+      hasFullPathEntry: meta.some(m => m.group === 'pres.parts' && m.label === 'Etiqueta de regressió'),
+      hasShortKeyEntry: meta.some(m => m.group === 'parts')
+    };
+  });
+
+  if (!groupCheck.hasFullPathEntry) {
+    throw new Error(`L'etiqueta no s'ha desat sota el grup complet 'pres.parts': ${JSON.stringify(groupCheck)}`);
+  }
+  if (groupCheck.hasShortKeyEntry) {
+    throw new Error(`S'han desat entrades de metadades sota la clau curta 'parts' en lloc de la ruta completa: ${JSON.stringify(groupCheck)}`);
+  }
+  console.log("  ✓ L'etiqueta del grup aniuat s'ha desat correctament sota 'pres.parts'.");
+
   await browser.close();
-  console.log("🎉 TOTES LES PROVES DE TÍTOL PER FÓRMULA, ACORDIÓ I REORDENACIÓ HAN PASSAT AMB ÈXIT!");
+  console.log("🎉 TOTES LES PROVES DE TÍTOL PER FÓRMULA, ACORDIÓ, REORDENACIÓ I ETIQUETES ANIUADES HAN PASSAT AMB ÈXIT!");
 }
 
 testNestedFeatures().catch(err => {
