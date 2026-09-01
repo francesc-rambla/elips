@@ -25,6 +25,7 @@ const selectedCompactSheet = ref('');
 let isEvaluating = false;
 let evalDebounceTimer = null;
 
+// Reprograma un timer per recalcular fórmules i desar mentre l'usuari escriu, evitant recàlculs a cada tecla
 const onCellInput = () => {
   if (evalDebounceTimer) clearTimeout(evalDebounceTimer);
   const delayMs = Math.max(1, (store.config?.autoSaveDebounceSeconds || 5)) * 1000;
@@ -33,6 +34,7 @@ const onCellInput = () => {
   }, delayMs);
 };
 
+// En perdre el focus d'una cel·la, cancel·la el debounce pendent i força l'avaluació/desat immediats
 const onCellBlur = () => {
   if (evalDebounceTimer) {
     clearTimeout(evalDebounceTimer);
@@ -44,6 +46,7 @@ const onCellBlur = () => {
   }
 };
 
+// Recalcula els camps calculats i desa l'Excel; punt únic cridat pels handlers d'edició de cel·la
 const runCellEvaluationAndSave = () => {
   if (!store.excelJsonData) return;
   try {
@@ -58,6 +61,7 @@ const getSheetType = (sheetData) => {
   return Array.isArray(sheetData) ? 'tabular' : 'kv';
 };
 
+// Determina si un nom de full és un full arrel visible a l'acordió (exclou metadades internes i sub-taules amb ruta amb punt)
 const isRootSheet = (name) => {
   if (name === 'editor_metadata' || name === '_hierarchy_schema') return false;
   return !name.includes('.');
@@ -102,6 +106,7 @@ const toggleSheet = (name) => {
   openSheets.value[name] = !openSheets.value[name];
 };
 
+// Retorna només els parells clau/valor primitius d'un full KV, descartant sub-objectes/taules aniuades
 const getKvPrimitiveEntries = (sheetData) => {
   if (!sheetData || typeof sheetData !== 'object' || Array.isArray(sheetData)) return {};
   const res = {};
@@ -111,6 +116,7 @@ const getKvPrimitiveEntries = (sheetData) => {
   return res;
 };
 
+// Agrupa i ordena els camps primitius d'un full KV en files segons la configuració manual (gridRow/gridOrder) per construir el layout de l'acordió
 const getKvRowBlocks = (sheetData, groupName = '') => {
   if (!sheetData || typeof sheetData !== 'object' || Array.isArray(sheetData)) return [];
   const keys = Object.keys(sheetData).filter(k => isPrimitive(sheetData[k]));
@@ -159,6 +165,7 @@ const getKvRowBlocks = (sheetData, groupName = '') => {
   return resultRows;
 };
 
+// Calcula l'estil inline de la targeta d'un camp KV (amplada, layout) segons la configuració del grup i la posició de l'etiqueta
 const getKvFieldCardStyle = (groupName, item) => {
   const meta = item.meta || getElementMetadata(groupName, item.key) || {};
   const isTop = store.config.labelPosition === 'top';
@@ -179,6 +186,7 @@ const getKvFieldCardStyle = (groupName, item) => {
   return baseStyle;
 };
 
+// Converteix un valor intern (fracció) a la representació visual en tant per cent amb coma decimal
 const formatPercentageDisplay = (val) => {
   if (val === undefined || val === null || val === '') return '';
   let strVal = String(val).replace('%', '').replace(',', '.').trim();
@@ -188,6 +196,7 @@ const formatPercentageDisplay = (val) => {
   return String(scaled).replace('.', ',');
 };
 
+// Interpreta l'entrada de l'usuari en un camp de percentatge i la converteix a la fracció interna que es desa
 const updatePercentageValue = (targetObj, key, eventVal) => {
   if (!targetObj) return;
   if (eventVal === undefined || eventVal === null || eventVal === '') {
@@ -208,6 +217,7 @@ const getGroupCleanName = (name) => {
   return name.includes('.') ? name.split('.').pop() : name;
 };
 
+// Determina les columnes visibles d'una taula combinant metadades de l'editor, l'esquema jeràrquic, la informació dels fulls i les dades reals existents
 const getTabularColumns = (groupName, sheetData) => {
   const colsSet = new Set();
   const cleanGroup = getGroupCleanName(groupName);
@@ -268,6 +278,7 @@ const getTabularColumns = (groupName, sheetData) => {
   return result;
 };
 
+// Localitza els esquemes de les sub-taules/grups fills directes d'un full, combinant l'esquema jeràrquic declarat amb claus no primitives presents a les dades
 const getTopLevelChildSchemas = (sheetName, sheetData) => {
   const dict = store.hierarchySchema || {};
   const rootS = universalFindSchema(sheetName, dict);
@@ -321,6 +332,7 @@ const getTopLevelChildSchemas = (sheetName, sheetData) => {
   return res;
 };
 
+// Navega i fa scroll fins al camp indicat per store.targetDataPath, obrint el full corresponent i ressaltant-lo visualment
 const scrollToTargetDataPath = (path) => {
   if (!path || !store.excelJsonData) return;
 
@@ -374,6 +386,7 @@ const getRowsCount = (sheetData) => {
   return Object.keys(getKvPrimitiveEntries(sheetData)).length;
 };
 
+// Afegeix una nova clau sanititzada a un full KV, evitant duplicats, i desa el canvi
 const addKvKey = (sheetName) => {
   const key = prompt("Introdueix el nom de la nova clau (es sanititzarà automàticament):");
   if (!key) return;
@@ -391,6 +404,7 @@ const addKvKey = (sheetName) => {
   store.addLog(`Clau '${cleanKey}' afegida al full '${sheetName}'.`, 'info');
 };
 
+// Elimina una clau d'un full KV després de confirmació de l'usuari i desa el canvi
 const deleteKvKey = (sheetName, key) => {
   if (confirm(`Segur que vols eliminar la clau '${key}'?`)) {
     delete store.excelJsonData[sheetName][key];
@@ -400,6 +414,7 @@ const deleteKvKey = (sheetName, key) => {
   }
 };
 
+// Indica si una fila tabular és efectivament buida (tots els valors primitius a zero/buit), per decidir si es pot amagar/reutilitzar
 const isRowAllZerosOrEmpty = (row) => {
   if (!row || typeof row !== 'object') return false;
   const primitiveValues = Object.entries(row)
@@ -411,6 +426,7 @@ const isRowAllZerosOrEmpty = (row) => {
 
 const visibleRowsCount = ref({});
 
+// Calcula quantes files de cada taula cal mostrar inicialment, amagant les files finals buides generades per l'Excel importat
 const initVisibleRows = () => {
   if (!store.excelJsonData) return;
   Object.keys(store.excelJsonData).forEach(sheetName => {
@@ -433,6 +449,7 @@ watch(() => store.excelJsonData, () => {
   initVisibleRows();
 }, { immediate: true, deep: false });
 
+// Afegeix una fila a una taula: reutilitza una fila buida ja existent si n'hi ha, o en crea una de nova amb totes les columnes conegudes
 const addTabularRow = (sheetName, sheetData) => {
   const currentVisible = visibleRowsCount.value[sheetName] || 0;
   if (currentVisible < sheetData.length) {
@@ -462,6 +479,7 @@ const addTabularRow = (sheetName, sheetData) => {
   }
 };
 
+// Elimina una fila d'una taula després de confirmació i ajusta el comptador de files visibles
 const deleteTabularRow = (sheetName, idx) => {
   if (confirm(`Segur que vols eliminar la fila número ${idx + 1}?`)) {
     store.excelJsonData[sheetName].splice(idx, 1);
@@ -474,6 +492,7 @@ const deleteTabularRow = (sheetName, idx) => {
   }
 };
 
+// Genera i descarrega el fitxer Excel actualitzat amb les dades editades
 const exportExcel = async () => {
   if (!store.excelJsonData) return;
   savingExcel.value = true;
@@ -529,6 +548,7 @@ const isCellModalOpen = ref(false);
 const cellTextValue = ref('');
 const activeCellInfo = ref({ sheet: '', keyOrIdx: '', col: null, isKv: true });
 
+// Obre l'editor visual de cel·la (Markdown+Jinja2) per a un camp de tipus Text, carregant-hi el valor actual
 const openCellEditor = (sheet, keyOrIdx, col, isKv) => {
   const colName = isKv ? keyOrIdx : col;
   if (getElementType(sheet, colName) !== 'Text') {
@@ -543,6 +563,7 @@ const openCellEditor = (sheet, keyOrIdx, col, isKv) => {
   isCellModalOpen.value = true;
 };
 
+// Desa el text editat al modal de cel·la de tornada a la dada corresponent (KV o tabular) i tanca el modal
 const saveCellEditor = () => {
   const { sheet, keyOrIdx, col, isKv } = activeCellInfo.value;
   if (isKv) {
@@ -554,6 +575,7 @@ const saveCellEditor = () => {
   store.addLog("Cel·la actualitzada correctament.", "success");
 };
 
+// Gestiona dreceres de teclat (Escape/Enter) per a tots els modals propis d'aquest component, segons quin estigui obert
 const handleDataInspectorModalsKeydown = (e) => {
   if (isNewSheetModalOpen.value) {
     if (e.key === 'Escape') {
@@ -607,8 +629,10 @@ onUnmounted(() => {
 
 // Metadata Schema helpers for custom types (shared implementation in useGroupMetadata.js)
 const getElementMetadata = (groupName, elementName) => findElementMetadata(store, groupName, elementName);
+// Embolcall sobre isFieldCalculated de useGroupMetadata.js
 const isCalculatedField = (groupName, elementName) => isFieldCalculated(store, groupName, elementName);
 
+// Determina el tipus efectiu d'un camp (Text, Number, Select, Percentage...) a partir de la metadada configurada o, si no n'hi ha, per detecció automàtica pel nom del camp
 const getElementType = (groupName, elementName) => {
   const meta = getElementMetadata(groupName, elementName);
   if (meta && meta.type) {
@@ -635,6 +659,7 @@ const getElementOptions = (groupName, elementName) => {
   return meta ? meta.options || [] : [];
 };
 
+// Resol la llista d'opcions d'un camp Select, ja siguin estàtiques (definides a la metadada) o dinàmiques (extretes d'un altre vector de dades)
 const resolveSelectOptions = (meta) => {
   if (!meta || meta.type !== 'Select') return [];
   if (meta.sourceType === 'dynamic' && meta.vectorPath) {
@@ -670,6 +695,7 @@ const resolveSelectOptions = (meta) => {
   }
 };
 
+// Comprova si una opció concreta està seleccionada en un valor de cel·la que pot ser array o cadena separada per comes
 const isOptionChecked = (cellValue, optionValue) => {
   if (cellValue === undefined || cellValue === null || cellValue === '') return false;
   if (Array.isArray(cellValue)) {
@@ -679,6 +705,7 @@ const isOptionChecked = (cellValue, optionValue) => {
   return parts.includes(String(optionValue));
 };
 
+// Afegeix o treu una opció del valor d'una cel·la multi-selecció, mantenint el mateix format (array o cadena) que ja tenia
 const toggleOptionValue = (sheetName, isKv, rowIdxOrKey, colKey, optionValue, isChecked) => {
   let currentVal = isKv 
     ? store.excelJsonData[sheetName][rowIdxOrKey] 
@@ -734,6 +761,7 @@ const toggleOptionValueForActive = (optValue, isChecked) => {
   toggleOptionValue(sheetName, isKv, rowIdxOrKey, colKey, optValue, isChecked);
 };
 
+// Converteix el valor cru d'una cel·la multi-selecció en la llista d'etiquetes (pills) a mostrar, resolent els labels contra les opcions disponibles
 const getSelectedPills = (cellValue, meta) => {
   if (cellValue === undefined || cellValue === null || cellValue === '') return [];
   let currentList = [];
@@ -753,6 +781,7 @@ const getSelectedPills = (cellValue, meta) => {
   });
 };
 
+// Llista els noms de fulls tabulars amb dades, per oferir-los com a possible font d'un Select dinàmic
 const getAvailableTables = () => {
   return Object.keys(store.excelJsonData || {}).filter(name => {
     if (name === 'editor_metadata') return false;
@@ -761,6 +790,7 @@ const getAvailableTables = () => {
   });
 };
 
+// Retorna els noms de columna d'un full tabular, usats per configurar el camp mostrat/valor d'un Select dinàmic
 const getTableColumns = (sheetName) => {
   if (!sheetName || !store.excelJsonData || !store.excelJsonData[sheetName]) return [];
   const data = store.excelJsonData[sheetName];
@@ -770,6 +800,7 @@ const getTableColumns = (sheetName) => {
   return [];
 };
 
+// En canviar el vector font d'un Select dinàmic, reinicialitza els camps de visualització i valor a la primera columna disponible
 const onVectorPathChange = (item) => {
   const cols = getTableColumns(item.vectorPath);
   if (cols.length > 0) {
@@ -791,6 +822,7 @@ const getColumnWidthStyle = (groupName, colName) => {
   return pct ? { width: `${pct}%`, minWidth: `${pct}%` } : {};
 };
 
+// Afegeix una nova columna a la taula activa (dades i configuració), sanititzant el nom i evitant duplicats
 const addTabularColumn = () => {
   const colName = prompt("Introdueix el nom de la nova columna (només lletres i números):");
   if (!colName) return;
@@ -829,6 +861,7 @@ const addTabularColumn = () => {
   store.addLog(`Columna '${cleanColName}' afegida correctament al grup '${groupName}'.`, 'info');
 };
 
+// Elimina una columna de la taula activa, tant de les dades de totes les files com de la seva configuració
 const deleteTabularColumn = (colName) => {
   if (!confirm(`Segur que vols eliminar la columna '${colName}' de la taula? S'esborraran tots els valors d'aquesta columna a totes les files.`)) {
     return;
@@ -852,9 +885,12 @@ const activeConfigGroup = ref('');
 const groupConfigList = ref([]);
 const groupLabelInput = ref('');
 
+// Embolcall sobre groupLabel de useGroupMetadata.js
 const getGroupLabel = (groupName) => groupLabel(store, groupName);
+// Embolcall sobre fieldLabel de useGroupMetadata.js
 const getFieldLabel = (groupName, elementName) => fieldLabel(store, groupName, elementName);
 
+// Cerca, dins les dades d'un grup (i si cal a tot l'arbre), quins vectors (arrays) fills hi ha disponibles per configurar-los com a font d'un Select dinàmic
 const getAvailableChildVectorsForGroup = (groupName) => {
   if (!store.excelJsonData) return [];
   const result = new Set();
@@ -917,6 +953,7 @@ const getAvailableChildVectorsForGroup = (groupName) => {
   return Array.from(result);
 };
 
+// Cerca a les dades reals les columnes primitives disponibles d'un vector concret, per poder-les oferir com a camp de visualització/valor d'un Select dinàmic
 const getChildTableColumns = (groupName, vectorName) => {
   if (!vectorName || !store.excelJsonData) return [];
   const cols = new Set();
@@ -992,6 +1029,7 @@ const {
   store,
 });
 
+// Obre el modal de configuració d'un grup, construint la llista editable de metadades (tipus, opcions, format...) de cada element existent
 const openGroupConfig = (groupName, sheetData) => {
   activeConfigGroup.value = groupName;
   const currentGroupLabel = getGroupLabel(groupName);
@@ -1026,6 +1064,7 @@ const openGroupConfig = (groupName, sheetData) => {
   isConfigModalOpen.value = true;
 };
 
+// Afegeix un nou camp/clau al grup en configuració, tant a les dades com a la llista de configuració que s'edita al modal
 const addNewFieldToConfig = () => {
   const key = prompt("Introdueix el nom de la nova clau/camp (es sanititzarà automàticament):");
   if (!key) return;
@@ -1066,6 +1105,7 @@ const addNewFieldToConfig = () => {
   }
 };
 
+// Recupera la fórmula de títol d'ítem configurada per a un grup, cercant-la a la metadada de capçalera del grup corresponent
 const getItemTitleFormula = (groupName) => {
   const metaList = (store.editorMetadata && store.editorMetadata.length > 0) 
     ? store.editorMetadata 
@@ -1081,6 +1121,7 @@ const getItemTitleFormula = (groupName) => {
   return meta ? meta.itemTitleFormula : '';
 };
 
+// Desplaça una fila d'una taula una posició amunt i força l'avaluació/desat
 const moveTabularRowUp = (name, idx) => {
   if (idx <= 0 || !store.excelJsonData?.[name]) return;
   const list = store.excelJsonData[name];
@@ -1090,6 +1131,7 @@ const moveTabularRowUp = (name, idx) => {
   onCellBlur();
 };
 
+// Desplaça una fila d'una taula una posició avall i força l'avaluació/desat
 const moveTabularRowDown = (name, idx) => {
   if (!store.excelJsonData?.[name]) return;
   const list = store.excelJsonData[name];
@@ -1099,6 +1141,7 @@ const moveTabularRowDown = (name, idx) => {
   onCellBlur();
 };
 
+// Embolcall sobre saveGroupConfigShared de useGroupMetadata.js amb el grup actualment en edició
 const handleSaveGroupConfig = (data) => {
   saveGroupConfigShared(store, {
     groupPath: activeConfigGroup.value,
@@ -1110,6 +1153,7 @@ const handleSaveGroupConfig = (data) => {
   isConfigModalOpen.value = false;
 };
 
+// Garanteix que una sub-taula aniuada tingui entrada a sheetInfo i que la clau corresponent existeixi (com a array buit) a les dades del pare
 const ensureSubTableSheetExists = (parentGroup, keyName) => {
   const subPath = `${parentGroup}.${keyName}`;
   const rawSheetName = `OUT_${subPath}`;
@@ -1185,6 +1229,7 @@ const openNewSheetModal = () => {
   isNewSheetModalOpen.value = true;
 };
 
+// Crea un nou full o grup de dades (arrel o sub-taula aniuada) amb la seva entrada a sheetInfo i metadada de capçalera de grup
 const createNewSheet = () => {
   const rawName = newSheetNameInput.value.trim();
   if (!rawName) {
@@ -1249,6 +1294,7 @@ const createNewSheet = () => {
   store.addLog(`Full/Grup de dades '${fullPath}' (${newSheetKindInput.value}) creat correctament.`, 'success');
 };
 
+// Assegura l'existència d'una sub-taula i hi navega, obrint-la juntament amb el seu grup pare
 const openOrNavigateToSubTable = (parentGroup, keyName) => {
   const subPath = `${parentGroup}.${keyName}`;
   ensureSubTableSheetExists(parentGroup, keyName);
@@ -1262,6 +1308,7 @@ const isPasteModalOpen = ref(false);
 const pasteBufferText = ref('');
 const pasteTargetGroup = ref(null);
 
+// Copia al portaretalls, en format JSON, la configuració de metadades d'un grup concret
 const copyGroupConfig = async (groupName) => {
   if (!store.editorMetadata) store.editorMetadata = [];
   const groupMetadata = store.editorMetadata.filter(m => m.group === groupName);
@@ -1288,6 +1335,7 @@ const copyGroupConfig = async (groupName) => {
   }
 };
 
+// Llegeix la configuració d'un grup des del portaretalls i l'aplica; si l'accés al portaretalls falla, obre un modal per enganxar-la manualment
 const pasteGroupConfig = async (targetGroupName) => {
   let text = '';
   try {
@@ -1308,6 +1356,7 @@ const pasteGroupConfig = async (targetGroupName) => {
   }
 };
 
+// Interpreta un JSON de configuració de grup i el substitueix a la metadada de l'editor per al grup indicat
 const applyGroupConfigJson = (jsonStr, targetGroupName) => {
   try {
     const data = JSON.parse(jsonStr.trim());
@@ -1353,6 +1402,7 @@ const applyGroupConfigJson = (jsonStr, targetGroupName) => {
   }
 };
 
+// Copia al portaretalls, en format JSON, tota la configuració de metadades del projecte
 const copyGlobalConfig = async () => {
   if (!store.editorMetadata || store.editorMetadata.length === 0) {
     alert("El projecte no té cap configuració de grups o camps per exportar.");
@@ -1375,6 +1425,7 @@ const copyGlobalConfig = async () => {
   }
 };
 
+// Llegeix la configuració global des del portaretalls i l'aplica; si l'accés al portaretalls falla, obre un modal per enganxar-la manualment
 const pasteGlobalConfig = async () => {
   let text = '';
   try {
@@ -1395,6 +1446,7 @@ const pasteGlobalConfig = async () => {
   }
 };
 
+// Interpreta un JSON de configuració global i substitueix tota la metadada de l'editor del projecte
 const applyGlobalConfigJson = (jsonStr) => {
   try {
     const data = JSON.parse(jsonStr.trim());
@@ -1424,6 +1476,7 @@ const applyGlobalConfigJson = (jsonStr) => {
   }
 };
 
+// Processa el text enganxat manualment al modal, aplicant-lo com a configuració de grup o global segons el destí
 const processPasteModalSubmit = () => {
   if (!pasteBufferText.value.trim()) return;
   if (pasteTargetGroup.value) {
@@ -1433,6 +1486,7 @@ const processPasteModalSubmit = () => {
   }
 };
 
+// Gestiona Escape/Ctrl+Enter dins el modal d'edició de cel·la (tancar o desar)
 const handleCellKeyDown = (e) => {
   if (!isCellModalOpen.value) return;
   if (e.key === 'Escape') {
@@ -1459,6 +1513,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleCellKeyDown);
 });
+// Carrega un conjunt de dades i esquema d'exemple (mock) per a proves/demo del component sense necessitat d'importar un Excel
 const loadMockData = () => {
   const mockTreeSchema = {
     "pres": {

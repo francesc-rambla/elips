@@ -39,6 +39,7 @@ const isTerminalOpen = ref(false);
 const isSidebarAutoHidden = ref(localStorage.getItem('sidebarAutoHidden') === 'true');
 const isSidebarHovered = ref(false);
 
+// Alterna el mode auto-amagat del tauler de control lateral i persisteix la preferència de l'usuari
 const toggleSidebarAutoHide = () => {
   isSidebarAutoHidden.value = !isSidebarAutoHidden.value;
   localStorage.setItem('sidebarAutoHidden', String(isSidebarAutoHidden.value));
@@ -59,6 +60,7 @@ if (isThemeDark.value) {
   document.documentElement.setAttribute('data-theme', 'dark');
 }
 
+// Commuta entre tema clar i fosc, aplicant les classes/atributs al DOM i desant la preferència
 const toggleTheme = () => {
   isThemeDark.value = !isThemeDark.value;
   if (isThemeDark.value) {
@@ -156,6 +158,7 @@ const documentOutline = computed(() => {
   return outline;
 });
 
+// Desplaça la vista fins a un títol de l'esquema del document, adaptant-se si estem en mode plantilla o previsualització
 const scrollToHeading = (item) => {
   if (item.isTemplate || store.activeTab === 'template') {
     // Mode Plantilla: Desplaça el cursor directament a l'editor Monaco / Codi
@@ -194,11 +197,13 @@ const scrollToHeading = (item) => {
   }
 };
 
+// Refresca la llista de projectes desats des de localStorage abans d'obrir el modal de gestió
 const openProjectsModal = () => {
   savedProjectsList.value = JSON.parse(localStorage.getItem('savedProjectsList') || '["Default"]');
   isProjectsModalOpen.value = true;
 };
 
+// Crea un projecte nou en blanc: desa l'estat actual, neteja l'store i inicialitza la persistència del projecte nou
 const createNewProject = () => {
   const name = prompt("Introdueix el nom del nou projecte:");
   if (!name) return;
@@ -259,6 +264,7 @@ const createNewProject = () => {
   store.addLog(`Projecte '${cleanName}' creat i seleccionat correctament.`, 'success');
 };
 
+// Canvia de projecte actiu: desa l'estat del projecte anterior i restaura documents, dades Excel i fitxers binaris del nou
 const loadProject = async (name) => {
   if (name === currentProjectName.value) {
     isProjectsModalOpen.value = false;
@@ -367,6 +373,7 @@ const loadProject = async (name) => {
   isProjectsModalOpen.value = false;
 };
 
+// Elimina un projecte i totes les seves dades persistides (localStorage i IndexedDB), excepte 'Default'
 const deleteProject = (name) => {
   if (name === 'Default') {
     alert("No es pot eliminar el projecte 'Default'.");
@@ -417,6 +424,7 @@ const deleteProject = (name) => {
 
 const lastSavedStateCache = new Map();
 
+// Escriu a localStorage només si el valor ha canviat respecte a l'últim desat, per evitar escriptures redundants
 const setItemIfChanged = (key, value) => {
   const strVal = value !== null && value !== undefined ? String(value) : '';
   if (lastSavedStateCache.get(key) !== strVal) {
@@ -425,6 +433,7 @@ const setItemIfChanged = (key, value) => {
   }
 };
 
+// Esborra una clau de localStorage (i de la cau) només si realment hi existeix, evitant operacions innecessàries
 const removeItemIfExist = (key) => {
   if (localStorage.getItem(key) !== null || lastSavedStateCache.has(key)) {
     localStorage.removeItem(key);
@@ -432,6 +441,7 @@ const removeItemIfExist = (key) => {
   }
 };
 
+// Persisteix a localStorage l'estat compartit del projecte actiu (dades Excel, metadades i esquema de jerarquia)
 const saveCurrentProject = () => {
   const name = currentProjectName.value || localStorage.getItem('currentProjectName') || 'Default';
   if (!name) return;
@@ -449,6 +459,7 @@ const saveCurrentProject = () => {
   localStorage.setItem(`${name}:hierarchySchema`, JSON.stringify(store.hierarchySchema || {}));
 };
 
+// Carrega a l'store la configuració d'un document concret (plantilla, document de referència i noms de sortida)
 const loadDocumentConfig = (pName, dName) => {
   const templateText = localStorage.getItem(`${pName}:doc:${dName}:templateText`) || '';
   const templateFileName = localStorage.getItem(`${pName}:doc:${dName}:templateFileName`) || '';
@@ -486,6 +497,7 @@ const loadDocumentConfig = (pName, dName) => {
   store.renderedMarkdown = '';
 };
 
+// Canvia el document actiu dins del projecte, desant primer l'estat del document anterior
 const switchActiveDocument = (newDocName) => {
   const pName = currentProjectName.value;
   const oldDocName = activeDocName.value;
@@ -503,6 +515,7 @@ const switchActiveDocument = (newDocName) => {
   store.addLog(`S'ha canviat al document '${newDocName}'.`, 'info');
 };
 
+// Persisteix l'estat del document actiu (plantilla, noms de sortida i binari de referència a IndexedDB)
 const saveCurrentDocumentState = (pName, dName) => {
   if (!pName || !dName) return;
   
@@ -526,6 +539,7 @@ const saveCurrentDocumentState = (pName, dName) => {
   }
 };
 
+// Crea un document nou en blanc dins del projecte actiu i el converteix en el document actiu
 const createNewDocument = () => {
   const name = prompt("Introdueix el nom del nou document (ex: Plec de Clàusules):");
   if (!name) return;
@@ -566,6 +580,7 @@ const createNewDocument = () => {
   store.addLog(`Document '${cleanName}' creat correctament.`, 'success');
 };
 
+// Elimina un document del projecte actiu i els seus fitxers associats, excepte el 'Document Principal'
 const deleteDocument = (dName) => {
   if (dName === 'Document Principal') {
     alert("No es pot eliminar el 'Document Principal'.");
@@ -605,6 +620,7 @@ const deleteDocument = (dName) => {
 const saveStatus = ref('saved'); // 'saved', 'modified', 'saving'
 let autoSaveTimer = null;
 
+// Executa el desat efectiu (projecte + document actiu) i actualitza l'indicador visual d'estat de desat
 const executeSave = () => {
   const pName = currentProjectName.value;
   const dName = activeDocName.value;
@@ -623,6 +639,7 @@ const executeSave = () => {
   }, 250);
 };
 
+// Força un desat immediat (Ctrl+S o botó), cancel·lant el temporitzador d'autodesat pendent
 const manualSave = () => {
   if (autoSaveTimer) clearTimeout(autoSaveTimer);
   executeSave();
@@ -1118,6 +1135,7 @@ onMounted(async () => {
   }
 });
 
+// Torna a processar l'Excel ja desat del projecte amb el motor WASM, per resincronitzar el model de dades sense re-pujar el fitxer
 const reprocessExcelFile = async () => {
   const pName = currentProjectName.value || localStorage.getItem('currentProjectName') || 'Default';
   const excelBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
@@ -1161,6 +1179,7 @@ const closeWarning = () => {
   pendingFile.value = null;
 };
 
+// Confirma la substitució de les dades Excel existents (des del modal d'avís) i processa el fitxer pendent
 const confirmOverwrite = async () => {
   if (pendingFile.value) {
     await processExcelFile(pendingFile.value);
@@ -1183,6 +1202,7 @@ const downloadBackupJson = () => {
   store.addLog("Còpia de seguretat en format JSON descarregada correctament.", "success");
 };
 
+// Genera i descarrega una còpia de seguretat en format Excel de les dades actuals del model, independent del pipeline de generació
 const downloadBackupExcel = async () => {
   if (isDownloadingExcel.value) return;
   isDownloadingExcel.value = true;
@@ -1206,6 +1226,7 @@ const downloadBackupExcel = async () => {
   }
 };
 
+// Vincula un fitxer Excel només com a plantilla de referència (per exemple, per a fórmules), sense sobreescriure les dades del projecte
 const bindExcelAsTemplateOnly = async (file) => {
   if (!file) return;
   store.setExcelFile(file);
@@ -1233,6 +1254,7 @@ const isHierarchyModalOpen = ref(false);
 const hierarchyRows = ref([]);
 const savingHierarchy = ref(false);
 
+// Obté les capçaleres (columnes) d'una fila de l'esquema de jerarquia, deduint-les de les dades Excel si no estan explícites
 const getRowHeaders = (row) => {
   if (row.headers && row.headers.length > 0) return row.headers;
   if (!store.excelJsonData) return [];
@@ -1246,6 +1268,7 @@ const getRowHeaders = (row) => {
   return [];
 };
 
+// Localitza la fila pare d'una entrada de la jerarquia i en retorna les seves capçaleres
 const getParentHeadersFor = (row) => {
   if (!row.parent_path) return [];
   const parentRow = hierarchyRows.value.find(p => {
@@ -1255,6 +1278,7 @@ const getParentHeadersFor = (row) => {
   return parentRow ? getRowHeaders(parentRow) : [];
 };
 
+// Construeix les files editables del modal de jerarquia a partir de l'esquema Excel i autodetecta claus pare-fill per defecte
 const openHierarchyModal = () => {
   if (!store.excelJsonData) {
     alert("Primer heu de carregar un fitxer Excel.");
@@ -1322,6 +1346,7 @@ const openHierarchyModal = () => {
   isHierarchyModalOpen.value = true;
 };
 
+// Genera la llista d'opcions de "pare" disponibles per al selector del modal de jerarquia, excloent la fila actual
 const getAvailableParents = (currentRawName) => {
   return hierarchyRows.value
     .filter(row => row.raw_name !== currentRawName)
@@ -1339,6 +1364,7 @@ const computeJinjaPath = (row) => {
   return row.parent_path ? `${row.parent_path}.${row.clean_name}` : row.clean_name;
 };
 
+// Aplica els canvis del modal de jerarquia (renombraments i claus pare-fill) i els desa directament a l'Excel
 const applyHierarchyChanges = async () => {
   savingHierarchy.value = true;
   try {
@@ -1377,6 +1403,7 @@ const applyHierarchyChanges = async () => {
   }
 };
 
+// Processa un fitxer Excel nou: el persisteix a IndexedDB i l'analitza amb el motor WASM per generar el model de dades
 const processExcelFile = async (file) => {
   store.setExcelFile(file);
   const buffer = await file.arrayBuffer();
@@ -1422,6 +1449,7 @@ const onExcelLoaded = async (file) => {
   }
 };
 
+// Llegeix el fitxer de plantilla pujat com a text i el registra a l'store
 const onTemplateLoaded = async (file) => {
   const reader = new FileReader();
   reader.onload = (e) => {
@@ -1430,6 +1458,7 @@ const onTemplateLoaded = async (file) => {
   reader.readAsText(file);
 };
 
+// Registra el document Word de referència pujat i el persisteix a IndexedDB per al document actiu
 const onRefDocLoaded = async (file) => {
   store.setRefDocFile(file);
   const buffer = await file.arrayBuffer();
@@ -1495,6 +1524,7 @@ const isGenerateReady = computed(() => {
 });
 
 const errorCopied = ref(false);
+// Formata l'últim error de conversió Jinja2 en text llegible i el copia al porta-retalls per facilitar el suport/depuració
 const copyErrorToClipboard = async () => {
   if (!store.lastConversionError) return;
   const err = store.lastConversionError;
@@ -1510,6 +1540,7 @@ const copyErrorToClipboard = async () => {
   }
 };
 
+// Orquestra el pipeline complet de generació: renderitza la plantilla Jinja2, compila el DOCX via Pandoc i prepara els enllaços de descàrrega
 const generateDocuments = async () => {
   store.generating = true;
   store.clearLogs();
