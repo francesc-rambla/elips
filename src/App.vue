@@ -336,13 +336,13 @@ const loadProject = async (name) => {
       }
     } else {
       store.excelFile = null;
-      if (store.enginesReady && _pyodide) {
+      if (store.enginesReady && window._pyodide) {
         try {
-          if (_pyodide.FS.analyzePath('/work/in.xlsx').exists) {
-            _pyodide.FS.unlink('/work/in.xlsx');
+          if (window._pyodide.FS.analyzePath('/work/in.xlsx').exists) {
+            window._pyodide.FS.unlink('/work/in.xlsx');
           }
-          if (_pyodide.FS.analyzePath('/work/in.json').exists) {
-            _pyodide.FS.unlink('/work/in.json');
+          if (window._pyodide.FS.analyzePath('/work/in.json').exists) {
+            window._pyodide.FS.unlink('/work/in.json');
           }
         } catch (_) {}
       }
@@ -387,10 +387,11 @@ const deleteProject = (name) => {
     localStorage.removeItem(`${name}:doc:${dName}:refDocFileBase64`);
     localStorage.removeItem(`${name}:doc:${dName}:outNameDocx`);
     localStorage.removeItem(`${name}:doc:${dName}:outNameMd`);
+    deleteBinaryFile(`${name}:doc:${dName}:refDocBuffer`);
   });
   localStorage.removeItem(`${name}:documentsList`);
   localStorage.removeItem(`${name}:activeDocName`);
-  
+
   localStorage.removeItem(`${name}:excelJsonData`);
   localStorage.removeItem(`${name}:excelFileName`);
   localStorage.removeItem(`${name}:excelFileSize`);
@@ -399,6 +400,7 @@ const deleteProject = (name) => {
   localStorage.removeItem(`${name}:sheetInfo`);
   localStorage.removeItem(`${name}:hierarchySchema`);
   localStorage.removeItem(`${name}:version_history_v1`);
+  deleteBinaryFile(`${name}:excelFileBuffer`);
   
   // Remove from list
   const newList = savedProjectsList.value.filter(x => x !== name);
@@ -454,8 +456,7 @@ const loadDocumentConfig = (pName, dName) => {
   
   const refDocFileName = localStorage.getItem(`${pName}:doc:${dName}:refDocFileName`) || '';
   const refDocFileSize = parseInt(localStorage.getItem(`${pName}:doc:${dName}:refDocFileSize`) || '0', 10);
-  const refB64 = localStorage.getItem(`${pName}:doc:${dName}:refDocFileBase64`);
-  
+
   const outNameDocx = localStorage.getItem(`${pName}:doc:${dName}:outNameDocx`) || 'memoria_justificativa.docx';
   const outNameMd = localStorage.getItem(`${pName}:doc:${dName}:outNameMd`) || 'memoria_justificativa.md';
   
@@ -471,15 +472,7 @@ const loadDocumentConfig = (pName, dName) => {
   
   store.refDocFileName = refDocFileName;
   store.refDocFileSize = refDocFileSize;
-  if (refB64) {
-    try {
-      store.refDocFile = dataURLtoFile(refB64, refDocFileName);
-    } catch (_) {
-      store.refDocFile = null;
-    }
-  } else {
-    store.refDocFile = null;
-  }
+  store.refDocFile = null;
 
   // Asynchronously attempt IndexedDB binary restore for refDocFile
   getBinaryFile(`${pName}:doc:${dName}:refDocBuffer`).then((buf) => {
@@ -710,19 +703,6 @@ watch(() => store.hierarchySchema, (newSchema) => {
   }
 }, { immediate: true, deep: true });
 
-// Convert Base64 data URL back to a File object
-const dataURLtoFile = (dataurl, filename) => {
-  const arr = dataurl.split(',');
-  const mime = arr[0].match(/:(.*?);/)[1];
-  const bstr = atob(arr[1]);
-  let n = bstr.length;
-  const u8arr = new Uint8Array(n);
-  while (n--) {
-    u8arr[n] = bstr.charCodeAt(n);
-  }
-  return new File([u8arr], filename, { type: mime });
-};
-
 const triggerDownload = (url, filename) => {
   const a = document.createElement('a');
   a.href = url;
@@ -831,26 +811,14 @@ const downloadAllProjectFiles = async () => {
       const tText = localStorage.getItem(`${pName}:doc:${docName}:templateText`);
       const tFileName = localStorage.getItem(`${pName}:doc:${docName}:templateFileName`) || `${cleanDocName}.md.j2`;
       const rFileName = localStorage.getItem(`${pName}:doc:${docName}:refDocFileName`);
-      const rB64 = localStorage.getItem(`${pName}:doc:${docName}:refDocFileBase64`);
 
       if (tText !== null && tText !== undefined) {
         docsFolder.file(tFileName, tText);
       }
 
-      if (rB64 && rFileName) {
-        const arr = rB64.split(',');
-        const bstr = atob(arr[1] || arr[0]);
-        let n = bstr.length;
-        const u8arr = new Uint8Array(n);
-        while (n--) {
-          u8arr[n] = bstr.charCodeAt(n);
-        }
-        docsFolder.file(rFileName, u8arr);
-      } else {
-        const rBuf = await getBinaryFile(`${pName}:doc:${docName}:refDocBuffer`);
-        if (rBuf && rFileName) {
-          docsFolder.file(rFileName, rBuf);
-        }
+      const rBuf = await getBinaryFile(`${pName}:doc:${docName}:refDocBuffer`);
+      if (rBuf && rFileName) {
+        docsFolder.file(rFileName, rBuf);
       }
     }
 

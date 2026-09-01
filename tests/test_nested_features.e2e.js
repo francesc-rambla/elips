@@ -20,6 +20,10 @@ async function testNestedFeatures() {
     }
   });
 
+  page.on('dialog', async dialog => {
+    await dialog.accept();
+  });
+
   // Navigate to app and clear session for clean test
   await page.goto('http://localhost:8000/index.html', { waitUntil: 'networkidle2' });
   await page.evaluate(() => localStorage.clear());
@@ -120,20 +124,43 @@ async function testNestedFeatures() {
   }
   console.log("  ✓ Element 1 col·lapsat correctament!");
 
-  // Click "Desplega tot"
+  // Click "Desplega tot" and verify every card is actually expanded
   await page.evaluate(() => {
     const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Desplega tot'));
     if (btn) btn.click();
   });
   await new Promise(r => setTimeout(r, 300));
 
-  // Click "Col·lapsa tot"
+  const allExpanded = await page.evaluate(() => {
+    const bodies = Array.from(document.querySelectorAll('.nested-card-item > div[style*="padding-top"]'));
+    return bodies.length > 0 && bodies.every(b => b.style.display !== 'none');
+  });
+  if (!allExpanded) {
+    throw new Error("'Desplega tot' hauria d'expandir totes les targetes");
+  }
+
+  // Click "Col·lapsa tot" and verify every card is actually collapsed
   await page.evaluate(() => {
     const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Col·lapsa tot'));
     if (btn) btn.click();
   });
   await new Promise(r => setTimeout(r, 300));
-  console.log("  ✓ Botons 'Desplega tot' i 'Col·lapsa tot' executats amb èxit.");
+
+  const allCollapsed = await page.evaluate(() => {
+    const bodies = Array.from(document.querySelectorAll('.nested-card-item > div[style*="padding-top"]'));
+    return bodies.length > 0 && bodies.every(b => b.style.display === 'none');
+  });
+  if (!allCollapsed) {
+    throw new Error("'Col·lapsa tot' hauria de col·lapsar totes les targetes");
+  }
+  console.log("  ✓ 'Desplega tot' i 'Col·lapsa tot' commuten realment la visibilitat de totes les targetes.");
+
+  // Expand again before the reordering step below
+  await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Desplega tot'));
+    if (btn) btn.click();
+  });
+  await new Promise(r => setTimeout(r, 300));
 
   // 3. Verify Reordering (Move Down on Item 1)
   console.log("➡️ 3. Verificant Reordenació (Desplaça avall de l'element 1)...");
@@ -155,6 +182,57 @@ async function testNestedFeatures() {
     throw new Error(`L'ordre dels elements no s'ha invertit correctament! Trobats: ${JSON.stringify(reorderedHeadersText)}`);
   }
   console.log("  ✓ Reordenació verificada: Part B ha passat a la posició 1 i Part A a la posició 2!");
+
+  // 4. Regression: collapse state must stay attached to the right card
+  // across duplicate/delete, not drift to whatever ends up at that index.
+  console.log("➡️ 4. Verificant que l'estat de col·lapse no es desalinea en duplicar/eliminar...");
+
+  // Order is now [Part B, Part A]. Collapse card 0 (Part B).
+  await page.evaluate(() => {
+    const header = document.querySelector('.nested-card-header');
+    if (header) header.click();
+  });
+  await new Promise(r => setTimeout(r, 300));
+
+  // Duplicate card 1 (Part A) -> [Part B(collapsed), Part A, Part A_copia]
+  await page.evaluate(() => {
+    const cards = Array.from(document.querySelectorAll('.nested-card-item'));
+    const dupBtn = cards[1]?.querySelector('button[title="Duplica aquest element i totes les branques aniuades"]');
+    if (dupBtn) dupBtn.click();
+  });
+  await new Promise(r => setTimeout(r, 500));
+
+  let states = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('.nested-card-item')).map(card => {
+      const body = card.querySelector('div[style*="padding-top"]');
+      const title = card.querySelector('.nested-card-header strong')?.textContent.trim() || '';
+      return { title, collapsed: body ? body.style.display === 'none' : false };
+    });
+  });
+  if (states.length !== 3 || !states[0].collapsed || states[1].collapsed || states[2].collapsed) {
+    throw new Error(`Estat de col·lapse incorrecte després de duplicar: ${JSON.stringify(states)}`);
+  }
+  console.log("  ✓ Després de duplicar, només la targeta 0 (Part B) segueix col·lapsada:", states.map(s => s.title));
+
+  // Delete card 1 (the original, un-collapsed "Part A") -> [Part B(collapsed), Part A_copia]
+  await page.evaluate(() => {
+    const cards = Array.from(document.querySelectorAll('.nested-card-item'));
+    const delBtn = cards[1]?.querySelector('button[title="Elimina element"]');
+    if (delBtn) delBtn.click();
+  });
+  await new Promise(r => setTimeout(r, 500));
+
+  states = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('.nested-card-item')).map(card => {
+      const body = card.querySelector('div[style*="padding-top"]');
+      const title = card.querySelector('.nested-card-header strong')?.textContent.trim() || '';
+      return { title, collapsed: body ? body.style.display === 'none' : false };
+    });
+  });
+  if (states.length !== 2 || !states[0].collapsed || states[1].collapsed) {
+    throw new Error(`Estat de col·lapse incorrecte després d'eliminar: ${JSON.stringify(states)}`);
+  }
+  console.log("  ✓ Després d'eliminar, la targeta 0 (Part B) segueix sent l'única col·lapsada:", states.map(s => s.title));
 
   // Verify persistence in localStorage
   const savedExcelData = await page.evaluate(() => {

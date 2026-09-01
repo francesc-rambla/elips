@@ -109,7 +109,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     config: {
       pyIndex: 'https://cdn.jsdelivr.net/pyodide/v0.29.4/full/',
       pandocUrl: 'https://cdn.jsdelivr.net/npm/pandoc-wasm@1.0.1/pandoc.js',
-      pandocWasmUrl: 'https://cdn.jsdelivr.net/npm/pandoc-wasm@1.0.1/pandoc.wasm',
+      pandocWasmUrl: './pandoc.wasm',
       dateFormat: 'iso',
       strictMode: false,
       useDefaultRef: true,

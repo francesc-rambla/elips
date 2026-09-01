@@ -1,7 +1,15 @@
 import puppeteer from 'puppeteer';
+import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const FIXTURE_FILE = path.join(__dirname, 'fixtures', 'elips_test_fixture.xlsx');
 
 async function testProjectWorkflow() {
+  if (!fs.existsSync(FIXTURE_FILE)) {
+    throw new Error(`Fixture no trobada a ${FIXTURE_FILE}. Executa primer: python3 tests/fixtures/generate_workbook.py`);
+  }
   const browser = await puppeteer.launch({ 
     headless: 'new', 
     args: ['--no-sandbox', '--disable-setuid-sandbox'] 
@@ -44,11 +52,10 @@ async function testProjectWorkflow() {
   });
   await new Promise(r => setTimeout(r, 1000));
   
-  // 2. Upload _plantilla_licitacio_elips.xlsx
-  console.log('➡️ 2. Carregant _plantilla_licitacio_elips.xlsx al projecte ProjecteLicitacio...');
+  // 2. Upload the generated fixture workbook
+  console.log('➡️ 2. Carregant la fixture generada elips_test_fixture.xlsx al projecte ProjecteLicitacio...');
   const fileInput = await page.$('input[accept*=".xlsx"]');
-  const licitacioFile = '/home/francesc/documents/md/_plantilla_licitacio_elips.xlsx';
-  await fileInput.uploadFile(licitacioFile);
+  await fileInput.uploadFile(FIXTURE_FILE);
   await new Promise(r => setTimeout(r, 5000));
   
   // 3. Switch to "Dades" tab
@@ -131,7 +138,7 @@ async function testProjectWorkflow() {
     };
   });
   console.log('  ✓ Dades després de canviar i recarregar projecte:', switchedData);
-  if (switchedData.nom_responsable !== 'Mónica Acebo Pérez') {
+  if (switchedData.nom_responsable !== 'Anna Puig Soler') {
     throw new Error("ERROR: Les dades s'han perdut en canviar de projecte!");
   }
 
@@ -151,7 +158,7 @@ async function testProjectWorkflow() {
     };
   });
   console.log('  ✓ Dades després de recarregar el navegador:', reloadedData);
-  if (reloadedData.nom_responsable !== 'Mónica Acebo Pérez') {
+  if (reloadedData.nom_responsable !== 'Anna Puig Soler') {
     throw new Error("ERROR: Les dades s'han perdut després del reload!");
   }
 

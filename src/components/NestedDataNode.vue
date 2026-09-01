@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onMounted, onUnmounted } from 'vue';
+import { computed, ref, onMounted, onUnmounted, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 
 import { useWasmEngines } from '../composables/useWasmEngines';
@@ -1309,6 +1309,23 @@ const expandAllItems = () => {
   collapsedItems.value.clear();
 };
 
+// Reindexes the collapse-state Set after an item is removed (delta -1, fromIdx = removed index)
+// or inserted (delta +1, fromIdx = index of the new item), so collapse state stays attached
+// to the same logical item instead of drifting to whatever ends up at that position.
+const shiftCollapsedIndices = (fromIdx, delta) => {
+  const newSet = new Set();
+  collapsedItems.value.forEach((k) => {
+    if (k < fromIdx) {
+      newSet.add(k);
+    } else if (delta < 0 && k === fromIdx) {
+      // the removed item's own collapse state is discarded
+    } else {
+      newSet.add(k + delta);
+    }
+  });
+  collapsedItems.value = newSet;
+};
+
 const moveItemUp = (idx) => {
   if (idx <= 0) return;
   const list = props.parentObj[props.arrayKey];
@@ -1385,6 +1402,7 @@ const addNestedItem = () => {
 const deleteNestedItem = (idx) => {
   if (confirm(`Segur que vols eliminar aquest element (${props.arrayKey} #${idx + 1})?`)) {
     props.parentObj[props.arrayKey].splice(idx, 1);
+    shiftCollapsedIndices(idx, -1);
   }
 };
 
@@ -1401,6 +1419,7 @@ const duplicateNestedItem = (idx) => {
   }
   
   props.parentObj[props.arrayKey].splice(idx + 1, 0, clone);
+  shiftCollapsedIndices(idx + 1, 1);
 };
 
 const isMoveModalOpen = ref(false);

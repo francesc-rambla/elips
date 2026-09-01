@@ -38,10 +38,6 @@ import {
 
 const args = ["pandoc.wasm", "+RTS", "-H64m", "-RTS"];
 const env = [];
-const in_file = new File(new Uint8Array(), { readonly: true });
-const out_file = new File(new Uint8Array(), { readonly: false });
-const err_file = new File(new Uint8Array(), { readonly: false });
-const warnings_file = new File(new Uint8Array(), { readonly: false });
 const fileSystem = new Map();
 const fds = [
   new OpenFile(new File(new Uint8Array(), { readonly: true })),
@@ -49,59 +45,93 @@ const fds = [
   ConsoleStdout.lineBuffered((msg) => console.warn(`[WASI stderr] ${msg}`)),
   new PreopenDirectory("/", fileSystem),
 ];
-const options = { debug: false };
-const wasi = new WASI(args, env, fds, options);
+const wasiOptions = { debug: false };
 
-let wasmUrl = "./pandoc.wasm";
-let wasmResponse;
+const DEFAULT_LOCAL_URL = "./pandoc.wasm";
+const DEFAULT_CDN_URL = "https://cdn.jsdelivr.net/npm/pandoc-wasm@1.0.1/pandoc.wasm";
 
-try {
-  const check = await fetch(wasmUrl, { method: "GET" });
-  const contentType = check.headers.get("content-type") || "";
-  if (check.ok && !contentType.includes("text/html")) {
-    wasmResponse = check;
-  } else {
-    wasmUrl = "https://cdn.jsdelivr.net/npm/pandoc-wasm@1.0.1/pandoc.wasm";
-    wasmResponse = await fetch(wasmUrl);
-  }
-} catch (_) {
-  wasmUrl = "https://cdn.jsdelivr.net/npm/pandoc-wasm@1.0.1/pandoc.wasm";
-  wasmResponse = await fetch(wasmUrl);
-}
+let instance = null;
+let initPromise = null;
 
-const { instance } = await WebAssembly.instantiateStreaming(
-  wasmResponse,
-  {
-    wasi_snapshot_preview1: wasi.wasiImport,
-  }
-);
-
-wasi.initialize(instance);
-instance.exports.__wasm_call_ctors();
-
-function memory_data_view() {
-  return new DataView(instance.exports.memory.buffer);
-}
-
-const argc_ptr = instance.exports.malloc(4);
-memory_data_view().setUint32(argc_ptr, args.length, true);
-const argv = instance.exports.malloc(4 * (args.length + 1));
-for (let i = 0; i < args.length; ++i) {
-  const arg = instance.exports.malloc(args[i].length + 1);
-  new TextEncoder().encodeInto(
-    args[i],
-    new Uint8Array(instance.exports.memory.buffer, arg, args[i].length)
+async function fetchWasm(preferredUrl) {
+  // Try the user/app-configured URL first (if any), then the bundled local
+  // copy, then a public CDN mirror as a last resort. Deduplicated so the
+  // same URL is never fetched twice.
+  const candidates = [preferredUrl, DEFAULT_LOCAL_URL, DEFAULT_CDN_URL].filter(
+    (url, idx, arr) => url && arr.indexOf(url) === idx
   );
-  memory_data_view().setUint8(arg + args[i].length, 0);
-  memory_data_view().setUint32(argv + 4 * i, arg, true);
-}
-memory_data_view().setUint32(argv + 4 * args.length, 0, true);
-const argv_ptr = instance.exports.malloc(4);
-memory_data_view().setUint32(argv_ptr, argv, true);
 
-instance.exports.hs_init_with_rtsopts(argc_ptr, argv_ptr);
+  let lastError = null;
+  for (const url of candidates) {
+    try {
+      const check = await fetch(url, { method: "GET" });
+      const contentType = check.headers.get("content-type") || "";
+      if (check.ok && !contentType.includes("text/html")) {
+        return check;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("No s'ha pogut carregar pandoc.wasm des de cap font disponible.");
+}
+
+// Initializes the Pandoc WASM runtime. Safe to call multiple times: only the
+// first call actually loads/instantiates the module, later calls resolve
+// once that initialization has completed. `preferredUrl` lets the app pass
+// a user-configured pandoc.wasm location (e.g. store.config.pandocWasmUrl).
+export async function init(preferredUrl) {
+  if (instance) return;
+  if (initPromise) return initPromise;
+
+  initPromise = (async () => {
+    const wasi = new WASI(args, env, fds, wasiOptions);
+    const wasmResponse = await fetchWasm(preferredUrl);
+
+    const { instance: wasmInstance } = await WebAssembly.instantiateStreaming(
+      wasmResponse,
+      {
+        wasi_snapshot_preview1: wasi.wasiImport,
+      }
+    );
+
+    wasi.initialize(wasmInstance);
+    wasmInstance.exports.__wasm_call_ctors();
+
+    const memory_data_view = () => new DataView(wasmInstance.exports.memory.buffer);
+
+    const argc_ptr = wasmInstance.exports.malloc(4);
+    memory_data_view().setUint32(argc_ptr, args.length, true);
+    const argv = wasmInstance.exports.malloc(4 * (args.length + 1));
+    for (let i = 0; i < args.length; ++i) {
+      const arg = wasmInstance.exports.malloc(args[i].length + 1);
+      new TextEncoder().encodeInto(
+        args[i],
+        new Uint8Array(wasmInstance.exports.memory.buffer, arg, args[i].length)
+      );
+      memory_data_view().setUint8(arg + args[i].length, 0);
+      memory_data_view().setUint32(argv + 4 * i, arg, true);
+    }
+    memory_data_view().setUint32(argv + 4 * args.length, 0, true);
+    const argv_ptr = wasmInstance.exports.malloc(4);
+    memory_data_view().setUint32(argv_ptr, argv, true);
+
+    wasmInstance.exports.hs_init_with_rtsopts(argc_ptr, argv_ptr);
+
+    instance = wasmInstance;
+  })();
+
+  return initPromise;
+}
+
+function ensureInitialized() {
+  if (!instance) {
+    throw new Error("Pandoc WASM no s'ha inicialitzat: crida a init() abans de query()/convert().");
+  }
+}
 
 export async function query(options) {
+  ensureInitialized();
   const opts_str = JSON.stringify(options);
   const opts_bytes = new TextEncoder().encode(opts_str);
   const opts_ptr = instance.exports.malloc(opts_bytes.length);
@@ -123,6 +153,7 @@ export async function query(options) {
 
 
 export async function convert(options, stdin, files) {
+  ensureInitialized();
   const opts_str = JSON.stringify(options);
   const opts_bytes = new TextEncoder().encode(opts_str);
   const opts_ptr = instance.exports.malloc(opts_bytes.length);

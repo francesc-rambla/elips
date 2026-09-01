@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "generate:fixtures": "python3 tests/fixtures/generate_workbook.py && node tests/fixtures/generate_project_zip.mjs",
     "test:python": "python3 tests/test_excel_python_engine.py",
     "test:js": "vitest run",
-    "test:e2e": "node tests/e2e_browser.e2e.js && node tests/test_nested_features.e2e.js && node tests/test_zip_recovery.e2e.js",
+    "test:e2e": "npm run generate:fixtures && node tests/run_e2e.mjs",
     "test": "npm run test:python && npm run test:js && npm run test:e2e",
     "build": "npm run test && vite build",
     "preview": "vite preview"

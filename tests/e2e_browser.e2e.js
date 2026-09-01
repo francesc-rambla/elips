@@ -50,7 +50,7 @@ async function runE2ETests() {
     // Wait for WASM engines to initialize
     console.log("➡️ 2. Esperant inicialització de motors WASM (Pyodide + Pandoc)...");
     await page.waitForFunction(() => {
-      return document.body.innerText.includes('Motors Inicialitzats') || (window.__pyodideReady === true);
+      return document.body.innerText.includes('Motors Inicialitzats') || (window.store?.enginesReady === true);
     }, { timeout: 45000 }).catch(() => {
       console.log("  ℹ️ Continuant (comprovació DOM badge)...");
     });
@@ -157,65 +157,70 @@ async function runE2ETests() {
     }
     console.log("  ✓ Persistència després de recarregar confirmada:", reloadedState.metadades_expedient);
 
-    // 4. Test uploading _plantilla_licitacio_elips.xlsx
-    const licitacioFile = path.resolve(__dirname, '../../_plantilla_licitacio_elips.xlsx');
-    if (fs.existsSync(licitacioFile)) {
-      console.log("➡️ 5. Provant càrrega de _plantilla_licitacio_elips.xlsx a l'aplicació...");
-      
-      // Go to Upload tab
-      await page.evaluate(() => {
-        const buttons = Array.from(document.querySelectorAll('button.tab-btn'));
-        const uploadBtn = buttons.find(b => b.textContent.includes('Fitxers') || b.textContent.includes('Carregar'));
-        if (uploadBtn) uploadBtn.click();
-      });
-      await new Promise(r => setTimeout(r, 600));
+    // 4. Test uploading the generated fixture workbook (tests/fixtures/elips_test_fixture.xlsx,
+    // produced by generate_workbook.py before this suite runs)
+    const fixtureFile = path.resolve(__dirname, 'fixtures', 'elips_test_fixture.xlsx');
+    if (!fs.existsSync(fixtureFile)) {
+      throw new Error(`Fixture no trobada a ${fixtureFile}. Executa primer: python3 tests/fixtures/generate_workbook.py`);
+    }
+    console.log("➡️ 5. Provant càrrega de la fixture generada elips_test_fixture.xlsx a l'aplicació...");
 
-      const fileInput = await page.$('input[type="file"][accept*=".xlsx"]');
-      if (fileInput) {
-        await fileInput.uploadFile(licitacioFile);
-        console.log("  • Fitxer enviat a l'input file...");
-        await new Promise(r => setTimeout(r, 1000));
+    // Go to Upload tab
+    await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button.tab-btn'));
+      const uploadBtn = buttons.find(b => b.textContent.includes('Fitxers') || b.textContent.includes('Carregar'));
+      if (uploadBtn) uploadBtn.click();
+    });
+    await new Promise(r => setTimeout(r, 600));
 
-        // If warning modal appeared, confirm overwrite (Option B)
-        await page.evaluate(() => {
-          const btns = Array.from(document.querySelectorAll('.modal-overlay button'));
-          const overwriteBtn = btns.find(b => b.innerText.includes('Opció B') || b.innerText.includes('sobreescriure'));
-          if (overwriteBtn) {
-            overwriteBtn.click();
-          }
-        });
-        await new Promise(r => setTimeout(r, 4500));
+    const fileInput = await page.$('input[type="file"][accept*=".xlsx"]');
+    if (!fileInput) {
+      throw new Error("No s'ha trobat l'input de càrrega d'Excel (.xlsx)");
+    }
+    await fileInput.uploadFile(fixtureFile);
+    console.log("  • Fitxer enviat a l'input file...");
+    await new Promise(r => setTimeout(r, 1000));
 
-        // Switch to Data tab to inspect
-        await page.evaluate(() => {
-          const buttons = Array.from(document.querySelectorAll('button.tab-btn'));
-          const dataBtn = buttons.find(b => b.textContent.includes('Dades'));
-          if (dataBtn) dataBtn.click();
-        });
-        await new Promise(r => setTimeout(r, 1200));
-
-        const generalData = await page.evaluate(() => {
-          const pName = localStorage.getItem('currentProjectName') || 'Default';
-          const raw = localStorage.getItem(`${pName}:excelJsonData`);
-          return raw ? JSON.parse(raw) : null;
-        });
-
-        if (generalData && generalData.General) {
-          console.log("  ✓ General.nom_responsable:", JSON.stringify(generalData.General.nom_responsable));
-          console.log("  ✓ General.modalitat:", JSON.stringify(generalData.General.modalitat));
-          console.log("  ✓ General.unitat_promotora:", JSON.stringify(generalData.General.unitat_promotora));
-          
-          if (generalData.General.nom_responsable !== 'Mónica Acebo Pérez') {
-            throw new Error(`General.nom_responsable no és 'Mónica Acebo Pérez', és '${generalData.General.nom_responsable}'`);
-          }
-          if (generalData.General.modalitat !== 'Contracte Públic') {
-            throw new Error(`General.modalitat no és 'Contracte Públic', és '${generalData.General.modalitat}'`);
-          }
-          console.log("  ✓ Dades de General carregades i verificades amb èxit!");
-        } else {
-          throw new Error("No s'ha trobat la pestanya General després de carregar _plantilla_licitacio_elips.xlsx");
-        }
+    // If warning modal appeared, confirm overwrite (Option B)
+    await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('.modal-overlay button'));
+      const overwriteBtn = btns.find(b => b.innerText.includes('Opció B') || b.innerText.includes('sobreescriure'));
+      if (overwriteBtn) {
+        overwriteBtn.click();
       }
+    });
+    await new Promise(r => setTimeout(r, 4500));
+
+    // Switch to Data tab to inspect
+    await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button.tab-btn'));
+      const dataBtn = buttons.find(b => b.textContent.includes('Dades'));
+      if (dataBtn) dataBtn.click();
+    });
+    await new Promise(r => setTimeout(r, 1200));
+
+    const generalData = await page.evaluate(() => {
+      const pName = localStorage.getItem('currentProjectName') || 'Default';
+      const raw = localStorage.getItem(`${pName}:excelJsonData`);
+      return raw ? JSON.parse(raw) : null;
+    });
+
+    if (generalData && generalData.General) {
+      console.log("  ✓ General.nom_responsable:", JSON.stringify(generalData.General.nom_responsable));
+      console.log("  ✓ General.modalitat:", JSON.stringify(generalData.General.modalitat));
+
+      if (generalData.General.nom_responsable !== 'Anna Puig Soler') {
+        throw new Error(`General.nom_responsable no és 'Anna Puig Soler', és '${generalData.General.nom_responsable}'`);
+      }
+      if (generalData.General.modalitat !== 'Contracte Públic') {
+        throw new Error(`General.modalitat no és 'Contracte Públic', és '${generalData.General.modalitat}'`);
+      }
+      if (!generalData.pres || generalData.pres.parts?.length !== 2) {
+        throw new Error(`pres.parts hauria de tenir 2 elements, en té ${generalData.pres?.parts?.length}`);
+      }
+      console.log("  ✓ Dades de General i pres.parts carregades i verificades amb èxit!");
+    } else {
+      throw new Error("No s'ha trobat la pestanya General després de carregar la fixture generada");
     }
 
     console.log("\n🎉 TOTES LES PROVES END-TO-END HAN PASSAT AMB ÈXIT EN NAVEGADOR HEADLESS!");

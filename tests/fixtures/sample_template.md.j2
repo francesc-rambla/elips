@@ -1,0 +1,26 @@
+# {{ General.titol_contracte }}
+
+Modalitat: {{ General.modalitat }}. Responsable: {{ General.nom_responsable }}.
+
+Pressupost base: {{ General.pressupost_base | coin }} (IVA {{ General.percentatge_iva | percent }}).
+
+## Partides del pressupost
+
+{% for part in pres.parts %}
+- {{ part.nom_partida }}: {{ part.import | coin }}
+{% for act in part.activitats %}
+  - {{ act.nom_activitat }} ({{ act.hores | number }} hores)
+{% endfor %}
+{% endfor %}
+
+Import total en lletres de la primera partida: {{ pres.parts[0].import | words }}.
+
+## Mesa de contractació
+
+{% for membre in Mesa %}
+- {{ membre.nom }}, {{ membre.carrec | prefix('com a ', 'com a ') }}
+{% endfor %}
+
+## Camp no definit
+
+{{ aquest_camp_no_existeix }}
