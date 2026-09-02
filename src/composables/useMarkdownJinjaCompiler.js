@@ -44,7 +44,14 @@ const jinjaBlockToMarkdown = (td, node) => {
   // .j-content, then for each elif/else a .j-branch (tag only) followed by its
   // own sibling .j-content. Walking childNodes in order and emitting each as we
   // go naturally interleaves tag/body correctly without needing to pair them up.
-  let out = `{% ${type} ${node.getAttribute('data-cond') || ''} %}\n`;
+  //
+  // The condition itself is read from the .j-head's .j-cond-text span, not
+  // from this node's own data-cond: the visual editor (openBlockModal/
+  // onBlockApply in TemplateEditor.vue) only ever keeps .j-cond-text's
+  // data-cond up to date (on both initial creation and edits), the same way
+  // the elif branch condition below is read from its own .j-cond-text.
+  const headCond = node.querySelector(':scope > .j-head .j-cond-text')?.getAttribute('data-cond');
+  let out = `{% ${type} ${headCond ?? node.getAttribute('data-cond') ?? ''} %}\n`;
   node.childNodes.forEach((child) => {
     if (child.nodeType !== Node.ELEMENT_NODE) return;
     if (child.classList.contains('j-content')) {

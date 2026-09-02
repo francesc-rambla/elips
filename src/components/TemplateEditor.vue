@@ -7,6 +7,10 @@ import { useMarkdownJinjaCompiler, htmlToMarkdown } from '../composables/useMark
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
 import SpecialCharPickerModal from './template-editor/SpecialCharPickerModal.vue';
+import MetadataModal from './template-editor/MetadataModal.vue';
+import MathModal from './template-editor/MathModal.vue';
+import TableModal from './template-editor/TableModal.vue';
+import BlockModal from './template-editor/BlockModal.vue';
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -116,7 +120,9 @@ const restoreBackupTemplate = () => {
 // DOM refs
 const canvasRef = ref(null);
 const textareaRef = ref(null);
-const blockExprInputRef = ref(null); // Ref to conditional input in modal
+const mathModalRef = ref(null); // Extracted-modal component refs (for the global Ctrl+Enter apply shortcut)
+const tableModalRef = ref(null);
+const blockModalRef = ref(null);
 
 // Modals state
 const isVarModalOpen = ref(false);
@@ -171,24 +177,26 @@ const computedModalFilter = computed(() => {
   return t;
 });
 
-// FOR loop separate inputs
-const forItemVar = ref('item');
-const forArrayVar = ref('');
+// Block modal: form state (expr/forItemVar/forArrayVar) lives in
+// BlockModal.vue; only the initial values used to populate it on open stay
+// here, since they come from parsing the canvas node being edited.
+const blockModalInitialExpr = ref('');
+const blockModalInitialForItemVar = ref('item');
+const blockModalInitialForArrayVar = ref('');
 
-// Math state
-const mathExpr = ref('');
-const mathType = ref('inline'); // 'inline' or 'display'
-const activeMathCategory = ref(latexSymbols.categorias[0]?.id || 'basico');
+// Math modal: form state (expr/type/category/caret) lives in MathModal.vue;
+// only the "which canvas node am I editing" pointer stays here, since it's
+// about DOM insertion, a canvas-level concern.
+const mathModalInitialExpr = ref('');
+const mathModalInitialType = ref('inline');
 let activeMathNode = null;
 
 // Table Configuration Modal State
-const tableMode = ref('dynamic'); // 'dynamic', 'transposed', 'manual'
-const manualRows = ref(3);
-const manualCols = ref(3);
-const selectedArray = ref('');
-const iteratorVar = ref('item');
-const selectedColHeaderKey = ref('');
-const tableColumns = ref([]); // Array of { key, header, align, selected }
+// Table modal: form state (mode/columns/array/iterator) lives in
+// TableModal.vue; only the "which canvas node am I editing" pointer and the
+// config used to initialize the modal's form on open stay here.
+const tableModalInitialConfig = ref({});
+const tableModalIsEditing = ref(false);
 let activeEditTableNode = null;
 
 // Cursor Selection Management
@@ -494,19 +502,6 @@ const sidebarTree = computed(() => {
   return result;
 });
 
-// Detect numeric column in Excel to set default alignment
-const isNumericColumn = (arrayName, colKey) => {
-  const arr = resolvePath(store.excelJsonData, arrayName);
-  if (arr && Array.isArray(arr) && arr.length > 0) {
-    for (const item of arr.slice(0, 5)) {
-      const val = item[colKey];
-      if (typeof val === 'number') return true;
-      if (typeof val === 'string' && !isNaN(val) && val.trim() !== '') return true;
-    }
-  }
-  return false;
-};
-
 // Save cursor range inside the visual canvas
 const saveSelection = () => {
   const sel = window.getSelection();
@@ -707,28 +702,28 @@ const openBlockModal = (type, node = null) => {
   
   if (type === 'elif' && !node) {
     activeEditNode = null;
-    modalExpr.value = '';
+    blockModalInitialExpr.value = '';
     modalTitle.value = "Afegir branca O SI (ELIF)";
   } else if (node && (node.tagName === 'SPAN' || node.classList?.contains('j-cond-text'))) {
     activeEditNode = node;
     const raw = node.getAttribute('data-cond') || '';
     if (type === 'for') {
       const parts = raw.split(/\s+in\s+/);
-      forItemVar.value = parts[0] ? parts[0].trim() : 'item';
-      forArrayVar.value = parts[1] ? parts[1].trim() : '';
-      modalExpr.value = raw;
+      blockModalInitialForItemVar.value = parts[0] ? parts[0].trim() : 'item';
+      blockModalInitialForArrayVar.value = parts[1] ? parts[1].trim() : '';
+      blockModalInitialExpr.value = raw;
     } else {
-      modalExpr.value = raw;
+      blockModalInitialExpr.value = raw;
     }
     modalTitle.value = type === 'for' ? "Editar Bucle (FOR)" : (type === 'elif' ? "Editar branca O SI (ELIF)" : "Editar Condició (IF)");
   } else {
     activeEditNode = null;
     if (type === 'for') {
-      forItemVar.value = 'item';
-      forArrayVar.value = '';
-      modalExpr.value = 'item in ';
+      blockModalInitialForItemVar.value = 'item';
+      blockModalInitialForArrayVar.value = '';
+      blockModalInitialExpr.value = 'item in ';
     } else {
-      modalExpr.value = '';
+      blockModalInitialExpr.value = '';
     }
     modalTitle.value = type === 'for' ? "Nou Bucle (FOR)" : "Nova Condició (IF)";
   }
@@ -740,111 +735,29 @@ const openMathModal = (node = null) => {
   saveSelection();
   if (node && (node.tagName === 'SPAN' || node.tagName === 'DIV' || node.classList.contains('latex-chip'))) {
     activeMathNode = node;
-    mathExpr.value = node.getAttribute('data-expr') || '';
-    mathType.value = node.getAttribute('data-type') || 'inline';
+    mathModalInitialExpr.value = node.getAttribute('data-expr') || '';
+    mathModalInitialType.value = node.getAttribute('data-type') || 'inline';
   } else {
     activeMathNode = null;
-    mathExpr.value = '';
-    mathType.value = 'inline';
+    mathModalInitialExpr.value = '';
+    mathModalInitialType.value = 'inline';
   }
   isMathModalOpen.value = true;
 };
 
-const getCategoryNameInCatalan = (name) => {
-  const translations = {
-    'Basic': 'Bàsic',
-    'Delimiters': 'Delimitadors',
-    'Grouping': 'Agrupació',
-    'Operators and relations': 'Operadors i relacions',
-    'Sets': 'Conjunts',
-    'Logic': 'Lògica',
-    'Functions': 'Funcions',
-    'Calculus': 'Càlcul',
-    'Arrows': 'Fletxes',
-    'Matrices': 'Matrius',
-    'Systems': 'Sistemes',
-    'Decorations': 'Decoracions',
-    'Annotations': 'Anotacions',
-    'Text formatting': 'Format de text',
-    'Greek': 'Lletres gregues'
-  };
-  return translations[name] || name;
-};
-
-const renderSymbolHtml = (el) => {
-  const expr = el.display || el.latex;
-  try {
-    return katex.renderToString(expr, { throwOnError: false, displayMode: false });
-  } catch (_) {
-    return expr;
-  }
-};
-
-const mathCaretStart = ref(0);
-const mathCaretEnd = ref(0);
-
-const saveMathCaret = (e) => {
-  const input = e.target;
-  mathCaretStart.value = input.selectionStart;
-  mathCaretEnd.value = input.selectionEnd;
-};
-
-const insertLatexAtCursor = (latexCode) => {
-  const input = document.getElementById('mathExprInput');
-  const start = mathCaretStart.value;
-  const end = mathCaretEnd.value;
-  const val = mathExpr.value || '';
-  
-  mathExpr.value = val.substring(0, start) + latexCode + val.substring(end);
-  
-  mathCaretStart.value = start + latexCode.length;
-  mathCaretEnd.value = start + latexCode.length;
-  
-  nextTick(() => {
-    if (input) {
-      input.focus();
-      let newCursorPos = start + latexCode.length;
-      const braceIndex = latexCode.indexOf('{}');
-      if (braceIndex !== -1) {
-        newCursorPos = start + braceIndex + 1;
-        mathCaretStart.value = newCursorPos;
-        mathCaretEnd.value = newCursorPos;
-      }
-      input.setSelectionRange(newCursorPos, newCursorPos);
-    }
-  });
-};
-
-const currentMathPreview = computed(() => {
-  let expr = mathExpr.value.trim();
-  if (!expr) return '<span style="color:var(--text-muted); font-style:italic;">La previsualització de la fórmula es mostrarà aquí...</span>';
-  
-  // Replace Jinja2 placeholders for KaTeX rendering
-  const cleanExpr = expr.replace(/\{\{\s*([^}]+)\s*\}\}/g, (match, p1) => {
-    const escaped = p1.trim().replace(/_/g, '\\_');
-    return `\\text{[${escaped}]}`;
-  });
-  
-  try {
-    return katex.renderToString(cleanExpr, { displayMode: mathType.value === 'display', throwOnError: false });
-  } catch (err) {
-    return `<span style="color:var(--color-danger);">${err.message}</span>`;
-  }
-});
-
-// Apply Math Chip to canvas or textarea
-const applyMath = () => {
-  const expr = mathExpr.value.trim();
-  const type = mathType.value;
+// MathModal.vue owns the expr/type form state and reports the final values on
+// apply; inserting/updating the .latex-chip in the canvas (or wrapping the
+// expression in $.../$$...$$ in Code mode) stays here since it needs
+// activeMathNode/savedRange/canvasRef — canvas-level state.
+const onMathApply = ({ expr, type }) => {
   if (!expr) {
     if (activeMathNode) {
       activeMathNode.remove();
       syncVisualToCode();
     }
-    isMathModalOpen.value = false;
     return;
   }
-  
+
   let render = '';
   try {
     // Replace Jinja2 placeholders with a clean LaTeX representation for editor preview
@@ -856,13 +769,13 @@ const applyMath = () => {
   } catch (_) {
     render = expr;
   }
-  
+
   if (activeEditorTab.value === 'visual') {
     restoreSelection();
-    
+
     const tagName = type === 'display' ? 'div' : 'span';
     const typeChanged = activeMathNode && activeMathNode.tagName.toLowerCase() !== tagName;
-    
+
     if (activeMathNode && !typeChanged) {
       activeMathNode.setAttribute('data-expr', expr);
       activeMathNode.setAttribute('data-type', type);
@@ -875,12 +788,12 @@ const applyMath = () => {
       el.setAttribute('data-expr', expr);
       el.setAttribute('data-type', type);
       el.innerHTML = render;
-      
+
       el.ondblclick = (e) => {
         e.stopPropagation();
         openMathModal(el);
       };
-      
+
       if (activeMathNode && typeChanged) {
         activeMathNode.parentNode.replaceChild(el, activeMathNode);
       } else {
@@ -906,42 +819,36 @@ const applyMath = () => {
       }
     }
     syncVisualToCode();
-  } else {
-    if (textareaRef.value) {
-      const txt = textareaRef.value;
-      const start = txt.selectionStart;
-      const end = txt.selectionEnd;
-      const wrapExpr = type === 'display' ? `$$\n${expr}\n$$` : `$${expr}$`;
-      editorText.value = editorText.value.substring(0, start) + wrapExpr + editorText.value.substring(end);
-    }
+  } else if (textareaRef.value) {
+    const txt = textareaRef.value;
+    const start = txt.selectionStart;
+    const end = txt.selectionEnd;
+    const wrapExpr = type === 'display' ? `$$\n${expr}\n$$` : `$${expr}$`;
+    editorText.value = editorText.value.substring(0, start) + wrapExpr + editorText.value.substring(end);
   }
-  isMathModalOpen.value = false;
 };
+
 
 // Advanced Table Modal Trigger
 const openTableModal = (table = null) => {
   saveSelection();
   activeEditTableNode = table;
-  
+  tableModalIsEditing.value = !!table;
+
   if (table) {
     const rowLoop = table.querySelector('.j-row-loop');
     const colLoopCell = table.querySelector('[data-jinja-col-loop]');
-    
+
     if (rowLoop) {
-      tableMode.value = 'dynamic';
       const loopExpr = rowLoop.getAttribute('data-jinja-for') || '';
       const match = loopExpr.match(/^(\w+)\s+in\s+([\w\.\_]+)/);
       if (match) {
-        iteratorVar.value = match[1].trim();
-        selectedArray.value = match[2].trim();
-        
+        const iteratorVar = match[1].trim();
+        const selectedArray = match[2].trim();
         const headers = Array.from(table.querySelectorAll('th'));
         const cells = Array.from(rowLoop.querySelectorAll('td'));
-        
-        const arr = resolvePath(store.excelJsonData, selectedArray.value);
-        const fields = arr && Array.isArray(arr) && arr.length > 0 ? Object.keys(arr[0]) : [];
-        
-        tableColumns.value = cells.map((cell, idx) => {
+
+        const columns = cells.map((cell, idx) => {
           const varChip = cell.querySelector('.j-var-chip');
           const rawPath = varChip ? varChip.getAttribute('data-raw') : '';
           const parts = rawPath.split('|');
@@ -957,24 +864,25 @@ const openTableModal = (table = null) => {
             filter
           };
         });
+        tableModalInitialConfig.value = { mode: 'dynamic', iteratorVar, selectedArray, columns };
       }
     } else if (colLoopCell) {
-      tableMode.value = 'transposed';
       const loopExpr = colLoopCell.getAttribute('data-jinja-col-loop') || '';
       const match = loopExpr.match(/^(\w+)\s+in\s+([\w\.\_]+)/);
       if (match) {
-        iteratorVar.value = match[1].trim();
-        selectedArray.value = match[2].trim();
-        
+        const iteratorVar = match[1].trim();
+        const selectedArray = match[2].trim();
+        let selectedColHeaderKey = '';
+
         const thLoop = table.querySelector('th[data-jinja-col-loop]');
         const thChip = thLoop ? thLoop.querySelector('.j-var-chip') : null;
         if (thChip) {
           const headRaw = thChip.getAttribute('data-raw') || '';
-          selectedColHeaderKey.value = headRaw.split('|')[0].trim().split('.').pop();
+          selectedColHeaderKey = headRaw.split('|')[0].trim().split('.').pop();
         }
-        
+
         const rows = Array.from(table.querySelectorAll('tbody tr'));
-        tableColumns.value = rows.map(r => {
+        const columns = rows.map(r => {
           const td1 = r.querySelector('td:first-child');
           const td2 = r.querySelector('td[data-jinja-col-loop]');
           const chip = td2 ? td2.querySelector('.j-var-chip') : null;
@@ -991,161 +899,60 @@ const openTableModal = (table = null) => {
             filter
           };
         });
+        tableModalInitialConfig.value = { mode: 'transposed', iteratorVar, selectedArray, selectedColHeaderKey, columns };
       }
     } else {
-      tableMode.value = 'manual';
-      manualRows.value = table.querySelectorAll('tr').length;
-      manualCols.value = table.querySelector('tr') ? table.querySelector('tr').children.length : 3;
+      tableModalInitialConfig.value = {
+        mode: 'manual',
+        manualRows: table.querySelectorAll('tr').length,
+        manualCols: table.querySelector('tr') ? table.querySelector('tr').children.length : 3,
+      };
     }
   } else {
-    tableMode.value = 'dynamic';
-    selectedArray.value = availableArrays.value[0] || '';
-    onArraySelected();
+    tableModalInitialConfig.value = { mode: 'dynamic', selectedArray: availableArrays.value[0] || '', columns: [] };
   }
   isTableModalOpen.value = true;
 };
 
-const onArraySelected = () => {
-  if (!selectedArray.value) {
-    tableColumns.value = [];
-    return;
-  }
-  const arr = resolvePath(store.excelJsonData, selectedArray.value);
-  if (arr && Array.isArray(arr) && arr.length > 0) {
-    const fields = Object.keys(arr[0]).filter(k => k !== selectedArray.value.split('.').pop());
-    tableColumns.value = fields.map(f => {
-      const isNum = isNumericColumn(selectedArray.value, f);
-      let defaultFilter = '';
-      const fLower = f.toLowerCase();
-      if (fLower.includes('preu') || fLower.includes('import') || fLower.includes('cost') || fLower.includes('sou') || fLower.includes('pressupost') || fLower.includes('iva') || fLower.includes('base') || fLower.includes('total') || fLower.includes('valor')) {
-        defaultFilter = 'coin';
-      } else if (isNum) {
-        defaultFilter = 'number';
-      }
-      return {
-        key: f,
-        header: f.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()),
-        align: (defaultFilter || isNum) ? 'right' : 'left',
-        selected: true,
-        filter: defaultFilter
-      };
+// TableModal.vue owns the mode/columns/array/iterator form state and
+// computes the <table> HTML on apply; inserting it into (or replacing a node
+// in) the canvas, and re-wiring the resulting th click / dblclick handlers,
+// stays here since it needs activeEditTableNode/canvasRef — canvas-level state.
+const onTableApply = (html) => {
+  if (activeEditorTab.value !== 'visual') return;
+  restoreSelection();
+  if (activeEditTableNode) {
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    const newTable = div.querySelector('table');
+
+    newTable.querySelectorAll('th').forEach(th => {
+      th.onclick = () => toggleTableAlignment(th);
     });
-    
-    iteratorVar.value = selectedArray.value.split('.').pop().toLowerCase().replace(/s$/, '') || 'item';
-    selectedColHeaderKey.value = fields[0] || '';
+
+    newTable.ondblclick = (e) => {
+      e.stopPropagation();
+      openTableModal(newTable);
+    };
+
+    activeEditTableNode.parentNode.replaceChild(newTable, activeEditTableNode);
+  } else {
+    document.execCommand('insertHTML', false, html);
+    nextTick(() => {
+      canvasRef.value.querySelectorAll('table').forEach(table => {
+        table.querySelectorAll('th').forEach(th => {
+          th.onclick = () => toggleTableAlignment(th);
+        });
+        table.ondblclick = (e) => {
+          e.stopPropagation();
+          openTableModal(table);
+        };
+      });
+    });
   }
+  syncVisualToCode();
 };
 
-// Apply Table changes
-const applyTableModal = () => {
-  let html = '';
-  const isFor = tableMode.value === 'dynamic';
-  const isTrans = tableMode.value === 'transposed';
-  
-  if (isFor) {
-    if (!selectedArray.value || !iteratorVar.value) {
-      alert("Si us plau, selecciona un array de dades i un iterador vàlids.");
-      return;
-    }
-    const loopExpr = `${iteratorVar.value.trim()} in ${selectedArray.value.trim()}`;
-    const activeCols = tableColumns.value.filter(c => c.selected && c.key);
-    if (activeCols.length === 0) {
-      alert("Has de seleccionar almenys un camp.");
-      return;
-    }
-    
-    html += '<table><thead><tr>';
-    activeCols.forEach(c => {
-      html += `<th data-align="${c.align}" style="text-align: ${c.align};">${c.header}</th>`;
-    });
-    html += '</tr></thead><tbody>';
-    
-    html += `<tr class="j-row-loop" data-jinja-for="${loopExpr}">`;
-    activeCols.forEach(c => {
-      const filterPart = c.filter ? ` | ${c.filter.trim().replace(/^\|\s*/, '')}` : '';
-      const chipRaw = `${iteratorVar.value.trim()}.${c.key}${filterPart}`;
-      html += `<td style="text-align: ${c.align};"><span class="j-var-chip" contenteditable="false" data-raw="${chipRaw}">${resolveFieldLabel(chipRaw)}</span></td>`;
-    });
-    html += '</tr></tbody></table><p><br></p>';
-  } else if (isTrans) {
-    if (!selectedArray.value || !iteratorVar.value) {
-      alert("Si us plau, selecciona un array de dades i un iterador vàlids.");
-      return;
-    }
-    const colHeaderKey = selectedColHeaderKey.value.trim();
-    const loopExpr = `${iteratorVar.value.trim()} in ${selectedArray.value.trim()}${colHeaderKey ? ` if ${iteratorVar.value.trim()}.${colHeaderKey}` : ''}`;
-    const activeCols = tableColumns.value.filter(c => c.selected && c.key && c.key !== colHeaderKey);
-    if (activeCols.length === 0) {
-      alert("Has de seleccionar almenys una fila de dades.");
-      return;
-    }
-    
-    html += '<table><thead><tr>';
-    html += '<th data-align="left">Dada</th>';
-    const headChipRaw = `${iteratorVar.value.trim()}.${colHeaderKey}`;
-    html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">${resolveFieldLabel(headChipRaw)}</span></th>`;
-    html += '</tr></thead><tbody>';
-    
-    activeCols.forEach(c => {
-      html += '<tr>';
-      html += `<td>${c.header}</td>`;
-      const filterPart = c.filter ? ` | ${c.filter.trim().replace(/^\|\s*/, '')}` : '';
-      const cellChipRaw = `${iteratorVar.value.trim()}.${c.key}${filterPart}`;
-      html += `<td style="text-align: ${c.align};" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${cellChipRaw}">${resolveFieldLabel(cellChipRaw)}</span></td>`;
-      html += '</tr>';
-    });
-    html += '</tbody></table><p><br></p>';
-  } else {
-    html += '<table><thead><tr>';
-    for (let j = 0; j < manualCols.value; j++) {
-      html += '<th data-align="left">Capçalera</th>';
-    }
-    html += '</tr></thead><tbody>';
-    for (let i = 1; i < manualRows.value; i++) {
-      html += '<tr>';
-      for (let j = 0; j < manualCols.value; j++) {
-        html += '<td>Dada</td>';
-      }
-      html += '</tr>';
-    }
-    html += '</tbody></table><p><br></p>';
-  }
-  
-  if (activeEditorTab.value === 'visual') {
-    restoreSelection();
-    if (activeEditTableNode) {
-      const div = document.createElement('div');
-      div.innerHTML = html;
-      const newTable = div.querySelector('table');
-      
-      newTable.querySelectorAll('th').forEach(th => {
-        th.onclick = () => toggleTableAlignment(th);
-      });
-      
-      newTable.ondblclick = (e) => {
-        e.stopPropagation();
-        openTableModal(newTable);
-      };
-      
-      activeEditTableNode.parentNode.replaceChild(newTable, activeEditTableNode);
-    } else {
-      document.execCommand('insertHTML', false, html);
-      nextTick(() => {
-        canvasRef.value.querySelectorAll('table').forEach(table => {
-          table.querySelectorAll('th').forEach(th => {
-            th.onclick = () => toggleTableAlignment(th);
-          });
-          table.ondblclick = (e) => {
-            e.stopPropagation();
-            openTableModal(table);
-          };
-        });
-      });
-    }
-    syncVisualToCode();
-  }
-  isTableModalOpen.value = false;
-};
 
 // Apply Variable Chip to canvas or textarea
 const applyVariable = () => {
@@ -1333,47 +1140,6 @@ const sidebarCopyInsert = (expr) => {
 };
 
 // Insert variables at cursor inside the IF condition box in the modal
-const insertVarIntoIfExpr = (varPath) => {
-  const input = blockExprInputRef.value;
-  if (input) {
-    const start = input.selectionStart;
-    const end = input.selectionEnd;
-    const current = modalExpr.value || '';
-    modalExpr.value = current.substring(0, start) + varPath + current.substring(end);
-    nextTick(() => {
-      input.focus();
-      input.selectionStart = input.selectionEnd = start + varPath.length;
-    });
-  } else {
-    modalExpr.value = (modalExpr.value || '') + varPath;
-  }
-};
-
-// Insert variables at cursor inside the LaTeX equation input box in the modal
-const insertVarIntoMathExpr = (varPath) => {
-  const input = document.getElementById('mathExprInput');
-  const insertText = `{{ ${varPath} }}`;
-  const start = mathCaretStart.value;
-  const end = mathCaretEnd.value;
-  const current = mathExpr.value || '';
-  
-  mathExpr.value = current.substring(0, start) + insertText + current.substring(end);
-  
-  mathCaretStart.value = start + insertText.length;
-  mathCaretEnd.value = start + insertText.length;
-  
-  nextTick(() => {
-    if (input) {
-      input.focus();
-      input.setSelectionRange(start + insertText.length, start + insertText.length);
-    }
-  });
-};
-
-const selectArrayForLoop = (arrayPath) => {
-  forArrayVar.value = arrayPath;
-};
-
 // Helper to insert ELIF / ELSE branch at the current cursor location inside an IF block
 const insertBranchAtCursorOrFooter = (ifBlock, branchElement, bodyElement) => {
   let targetContent = null;
@@ -1417,15 +1183,13 @@ const insertBranchAtCursorOrFooter = (ifBlock, branchElement, bodyElement) => {
   }
 };
 
-// Apply Jinja Logical Card (IF, FOR or ELIF)
-const applyBlock = () => {
-  let expr = '';
-  if (blockType.value === 'for') {
-    expr = `${forItemVar.value.trim()} in ${forArrayVar.value.trim()}`;
-  } else {
-    expr = modalExpr.value.trim();
-  }
-  
+// BlockModal.vue owns the expr/forItemVar/forArrayVar form state and reports
+// the final expression string on apply; inserting/updating the
+// .jinja-block/.j-branch DOM in the canvas stays here since it needs
+// activeEditNode/activeBlockForNewBranch/savedRange/canvasRef — canvas-level
+// state, and this logic is also reused by the canvas's own rendered
+// "+ELIF"/"+ELSE" button handlers below.
+const onBlockApply = (expr) => {
   if (!expr) return;
 
   if (activeEditorTab.value === 'visual') {
@@ -2140,134 +1904,21 @@ const onCanvasPaste = (e) => {
 
 // --- Pandoc YAML Metadata Modal State & Logic ---
 const isMetadataModalOpen = ref(false);
-const metadataForm = ref({
-  title: '',
-  subtitle: '',
-  author: '',
-  date: '',
-  lang: 'ca',
-  toc: false,
-  tocTitle: 'Índex de continguts',
-  abstract: '',
-  keywords: '',
-  customYamlText: ''
-});
-
-const parseYamlHeader = (mdText) => {
-  const match = (mdText || '').match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  if (!match) return { header: null, body: mdText || '' };
-  
-  const yamlContent = match[1];
-  const body = (mdText || '').slice(match[0].length);
-  
-  const fields = {
-    title: '',
-    subtitle: '',
-    author: '',
-    date: '',
-    lang: 'ca',
-    toc: false,
-    tocTitle: 'Índex de continguts',
-    abstract: '',
-    keywords: '',
-    customYaml: []
-  };
-  
-  const lines = yamlContent.split(/\r?\n/);
-  lines.forEach(line => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) return;
-    
-    const kvMatch = line.match(/^([a-zA-Z0-9_\-]+)\s*:\s*(.*)$/);
-    if (kvMatch) {
-      const key = kvMatch[1].trim();
-      let val = kvMatch[2].trim();
-      val = val.replace(/^["'](.*)["']$/, '$1');
-      
-      if (key === 'title') fields.title = val;
-      else if (key === 'subtitle') fields.subtitle = val;
-      else if (key === 'author') fields.author = val;
-      else if (key === 'date') fields.date = val;
-      else if (key === 'lang') fields.lang = val;
-      else if (key === 'toc') fields.toc = (val === 'true' || val === '1' || val === 'yes');
-      else if (key === 'toc-title') fields.tocTitle = val;
-      else if (key === 'abstract') fields.abstract = val;
-      else if (key === 'keywords') fields.keywords = val;
-      else fields.customYaml.push(line);
-    } else {
-      fields.customYaml.push(line);
-    }
-  });
-  
-  return { header: fields, body };
-};
+const metadataModalRef = ref(null);
 
 const openMetadataModal = () => {
   saveSelection();
-  const parsed = parseYamlHeader(store.templateText || '');
-  if (parsed.header) {
-    metadataForm.value = {
-      title: parsed.header.title,
-      subtitle: parsed.header.subtitle,
-      author: parsed.header.author,
-      date: parsed.header.date,
-      lang: parsed.header.lang || 'ca',
-      toc: parsed.header.toc,
-      tocTitle: parsed.header.tocTitle || 'Índex de continguts',
-      abstract: parsed.header.abstract,
-      keywords: parsed.header.keywords,
-      customYamlText: parsed.header.customYaml.join('\n')
-    };
-  } else {
-    metadataForm.value = {
-      title: '',
-      subtitle: '',
-      author: '',
-      date: new Date().toLocaleDateString('ca-ES'),
-      lang: 'ca',
-      toc: false,
-      tocTitle: 'Índex de continguts',
-      abstract: '',
-      keywords: '',
-      customYamlText: ''
-    };
-  }
   isMetadataModalOpen.value = true;
 };
 
-const applyMetadataModal = () => {
-  const customLines = (metadataForm.value.customYamlText || '')
-    .split(/\r?\n/)
-    .filter(l => l.trim().length > 0);
-    
-  const lines = ['---'];
-  if (metadataForm.value.title) lines.push(`title: "${metadataForm.value.title.replace(/"/g, '\\"')}"`);
-  if (metadataForm.value.subtitle) lines.push(`subtitle: "${metadataForm.value.subtitle.replace(/"/g, '\\"')}"`);
-  if (metadataForm.value.author) lines.push(`author: "${metadataForm.value.author.replace(/"/g, '\\"')}"`);
-  if (metadataForm.value.date) lines.push(`date: "${metadataForm.value.date.replace(/"/g, '\\"')}"`);
-  if (metadataForm.value.lang) lines.push(`lang: "${metadataForm.value.lang}"`);
-  if (metadataForm.value.toc) {
-    lines.push(`toc: true`);
-    if (metadataForm.value.tocTitle) lines.push(`toc-title: "${metadataForm.value.tocTitle.replace(/"/g, '\\"')}"`);
-  }
-  if (metadataForm.value.abstract) lines.push(`abstract: "${metadataForm.value.abstract.replace(/"/g, '\\"')}"`);
-  if (metadataForm.value.keywords) lines.push(`keywords: "${metadataForm.value.keywords.replace(/"/g, '\\"')}"`);
-  
-  if (customLines.length > 0) {
-    customLines.forEach(l => lines.push(l));
-  }
-  
-  lines.push('---');
-  const yamlHeaderStr = lines.join('\n');
-  
-  const parsed = parseYamlHeader(store.templateText || '');
-  const newText = yamlHeaderStr + '\n\n' + parsed.body.trimStart();
-  
+// MetadataModal.vue computes the new full template text (it owns its own form
+// state and YAML parsing); writing it back into the shared editor state and
+// re-rendering the canvas stays a parent concern, same split as every other
+// extracted modal.
+const onMetadataApply = (newText) => {
   store.templateText = newText;
   editorText.value = newText;
   syncCodeToVisual();
-  
-  isMetadataModalOpen.value = false;
   store.addLog("Bloc de metadades Pandoc actualitzat a la plantilla.", "success");
 };
 
@@ -2385,16 +2036,16 @@ const handleGlobalKeyDown = (e) => {
       applyVariable();
     } else if (isBlockModalOpen.value) {
       e.preventDefault();
-      applyBlock();
+      blockModalRef.value?.apply();
     } else if (isMathModalOpen.value) {
       e.preventDefault();
-      applyMath();
+      mathModalRef.value?.apply();
     } else if (isTableModalOpen.value) {
       e.preventDefault();
-      applyTableModal();
+      tableModalRef.value?.apply();
     } else if (isMetadataModalOpen.value && e.ctrlKey) {
       e.preventDefault();
-      applyMetadataModal();
+      metadataModalRef.value?.apply();
     }
   }
 };
@@ -2999,479 +2650,48 @@ onUnmounted(() => {
     </div>
 
     <!-- 2. Logic Block Configuration Modal -->
-    <div class="modal-overlay" :style="{ display: isBlockModalOpen ? 'flex' : 'none' }">
-      <div class="modal-content" style="max-width: 750px; width: 95%;">
-        <div class="modal-header">
-          <h3 style="border: none; padding-bottom: 0; margin: 0;">{{ modalTitle }}</h3>
-          <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem;" @click="isBlockModalOpen = false">&times;</button>
-        </div>
-        
-        <div class="modal-body" style="display: grid; grid-template-columns: 1fr 280px; gap: 1.5rem; align-items: start;">
-          <!-- Left Panel: Input controls -->
-          <div style="display: flex; flex-direction: column; gap: 1rem;">
-            <!-- IF / ELIF expression -->
-            <div v-if="blockType !== 'for'" class="form-row">
-              <label for="blockExprInput">Expressió de la Condició (Jinja2)</label>
-              <input 
-                type="text" 
-                ref="blockExprInputRef"
-                id="blockExprInput" 
-                v-model="modalExpr" 
-                placeholder="economia.pressupost_total > 50000" 
-                style="font-family: monospace;"
-              >
-              <span style="font-size:0.7rem; color:var(--text-muted); margin-top:0.25rem;">
-                Escriviu la condició lògica. Podeu fer clic a les variables del navegador lateral per anar-les inserint on estigui el cursor.
-              </span>
-            </div>
-            
-            <!-- FOR parameters -->
-            <div v-else style="display: flex; flex-direction: column; gap: 1rem;">
-              <div class="form-row">
-                <label>Nom de la variable d'element (Iterador)</label>
-                <input type="text" v-model="forItemVar" placeholder="item" style="font-family: monospace;">
-              </div>
-              <div class="form-row">
-                <label>Array / Llista d'Excel a recórrer</label>
-                <input type="text" v-model="forArrayVar" placeholder="lots" style="font-family: monospace;">
-              </div>
-              
-              <div style="background-color: var(--bg-tertiary); padding: 0.75rem; border-radius: 4px; border: 1px solid var(--border-color);">
-                <span style="font-size: 0.75rem; font-weight: bold; color: var(--text-secondary); text-transform: uppercase;">Vista prèvia del tag Jinja2</span>
-                <pre style="margin-top: 0.25rem; font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-primary);">{% for {{ forItemVar }} in {{ forArrayVar || '...' }} %}</pre>
-              </div>
-            </div>
-          </div>
-          
-          <!-- Right Panel: Data Browser -->
-          <div style="border-left: 1px solid var(--border-color); padding-left: 1.25rem;">
-            <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 0.5rem; letter-spacing: 0.05em;">
-              Navegador de Dades
-            </div>
-            
-            <div v-if="!store.excelJsonData" style="font-size:0.75rem; color:var(--text-muted); font-style:italic">
-              Carrega un Excel per activar el navegador.
-            </div>
-            
-            <!-- Variable List for IF/ELIF -->
-            <div v-else-if="blockType !== 'for'" style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem; padding-right: 2px;">
-              <div 
-                v-for="v in availableVariables" 
-                :key="v.path" 
-                class="variable-item present" 
-                :style="v.isContext ? 'margin: 0; font-size: 0.75rem; padding: 4px 6px; background-color: var(--color-success-light); border-left: 3px solid var(--color-success); justify-content: space-between;' : (v.category === 'array' || v.category === 'arrayExpr' ? 'margin: 0; font-size: 0.75rem; padding: 4px 6px; background-color: var(--color-primary-light); justify-content: space-between;' : 'margin: 0; font-size: 0.75rem; padding: 4px 6px; justify-content: space-between;')"
-                @click="insertVarIntoIfExpr(v.path)"
-                title="Clica per afegir a l'expressió"
-              >
-                <span style="font-weight: 600;">{{ v.path }}</span>
-                <span style="font-size: 0.6rem; font-weight: 600;" :style="{ color: v.isContext ? 'var(--color-success-dark)' : (v.category === 'array' || v.category === 'arrayExpr' ? 'var(--color-primary-dark)' : 'var(--text-muted)') }">
-                  {{ v.isContext ? 'bucle' : (v.category === 'array' ? 'llista' : (v.category === 'arrayExpr' ? 'recompte' : (v.category === 'arrayItem' ? 'element' : 'clau'))) }}
-                </span>
-              </div>
-            </div>
-            
-            <!-- Array List for FOR -->
-            <div v-else style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem; padding-right: 2px;">
-              <div 
-                v-for="arr in availableArrays" 
-                :key="arr" 
-                class="variable-item present" 
-                style="margin: 0; font-size: 0.75rem; padding: 4px 6px; background-color: var(--color-primary-light); justify-content: space-between;"
-                @click="selectArrayForLoop(arr)"
-                title="Clica per seleccionar com a array a recórrer"
-              >
-                <span style="font-weight: 600;">{{ arr }}</span>
-                <span class="variable-badge present" style="background-color: var(--color-primary); color: white;">Array</span>
-              </div>
-              <div v-if="availableArrays.length === 0" style="font-size: 0.75rem; color: var(--text-muted); font-style: italic;">
-                No s'ha detectat cap llista (array) al full de dades.
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div class="modal-footer">
-          <button class="btn btn-secondary" style="width: auto;" @click="isBlockModalOpen = false">Cancel·lar</button>
-          <button class="btn btn-primary" style="width: auto;" @click="applyBlock">Aplicar</button>
-        </div>
-      </div>
-    </div>
+    <BlockModal
+      ref="blockModalRef"
+      v-model="isBlockModalOpen"
+      :block-type="blockType"
+      :title="modalTitle"
+      :initial-expr="blockModalInitialExpr"
+      :initial-for-item-var="blockModalInitialForItemVar"
+      :initial-for-array-var="blockModalInitialForArrayVar"
+      :available-variables="availableVariables"
+      :available-arrays="availableArrays"
+      @apply="onBlockApply"
+    />
 
     <!-- 3. Math Equation Configuration Modal -->
-    <div class="modal-overlay" :style="{ display: isMathModalOpen ? 'flex' : 'none' }">
-      <div class="modal-content" style="max-width: 1200px; width: 98%;">
-        <div class="modal-header">
-          <h3 style="border: none; padding-bottom: 0; margin: 0;">Editor d'Equacions LaTeX</h3>
-          <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem;" @click="isMathModalOpen = false">&times;</button>
-        </div>
-        
-        <div class="modal-body" style="display: grid; grid-template-columns: 200px 1fr 280px; gap: 1.5rem; height: 500px; max-height: 70vh;">
-          <!-- Left side: Categories list -->
-          <div style="border-right: 1px solid var(--border-color); padding-right: 1rem; display: flex; flex-direction: column; gap: 0.5rem; overflow-y: auto;">
-            <button 
-              v-for="cat in latexSymbols.categorias" 
-              :key="cat.id"
-              class="btn"
-              :class="activeMathCategory === cat.id ? 'btn-primary' : 'btn-secondary'"
-              style="width: 100%; text-align: left; padding: 8px 12px; font-size: 0.85rem;"
-              @click="activeMathCategory = cat.id"
-            >
-              {{ getCategoryNameInCatalan(cat.nombre) }}
-            </button>
-          </div>
-          
-          <!-- Middle side: Symbols Grid and Input/Preview -->
-          <div style="display: flex; flex-direction: column; gap: 1.25rem; overflow-y: auto; padding-right: 0.5rem;">
-            <!-- Symbols Grid -->
-            <div style="background-color: var(--bg-tertiary); padding: 1rem; border-radius: 6px; border: 1px solid var(--border-color); flex-grow: 1; overflow-y: auto;">
-              <div 
-                v-for="cat in latexSymbols.categorias" 
-                :key="cat.id" 
-                v-show="activeMathCategory === cat.id"
-                style="display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 8px;"
-              >
-                <button 
-                  v-for="(el, idx) in cat.elementos" 
-                  :key="idx"
-                  class="btn btn-secondary"
-                  style="height: 50px; padding: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: white;"
-                  :title="el.title"
-                  @click="insertLatexAtCursor(el.latex)"
-                >
-                  <span v-html="renderSymbolHtml(el)" style="font-size: 1.15rem; color: #1e293b;"></span>
-                </button>
-              </div>
-            </div>
-            
-            <!-- Real-time Preview Box -->
-            <div style="border: 1px solid var(--border-color); border-radius: 6px; padding: 1rem; background-color: var(--bg-card); display: flex; align-items: center; justify-content: center; min-height: 80px; box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);">
-              <div v-html="currentMathPreview" style="font-size: 1.25rem;"></div>
-            </div>
-            
-            <!-- Input control -->
-            <div style="display: grid; grid-template-columns: 1fr 240px; gap: 1rem; align-items: end;">
-              <div class="form-row" style="margin: 0;">
-                <label for="mathExprInput">Expressió LaTeX</label>
-                <input 
-                  type="text" 
-                  id="mathExprInput" 
-                  v-model="mathExpr" 
-                  placeholder="e = mc^2" 
-                  style="font-family: monospace; font-size: 1.05rem; padding: 8px;"
-                  @blur="saveMathCaret"
-                  @keyup="saveMathCaret"
-                  @click="saveMathCaret"
-                  @focus="saveMathCaret"
-                >
-              </div>
-              
-              <div class="form-row" style="margin: 0;">
-                <label for="mathTypeSelect">Tipus de Fórmula</label>
-                <select 
-                  id="mathTypeSelect" 
-                  v-model="mathType" 
-                  style="padding: 6px; border: 1px solid var(--border-color); border-radius: 4px; height: 42px; font-size: 0.9rem;"
-                >
-                  <option value="inline">En línia ($ ... $)</option>
-                  <option value="display">Independent / Bloc ($$ ... $$)</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <!-- Right side: Data Browser (Grouped, contextual tree matching main sidebar) -->
-          <div style="border-left: 1px solid var(--border-color); padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; overflow-y: auto;">
-            <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 0.5rem; letter-spacing: 0.05em;">
-              Navegador de Dades
-            </div>
-            
-            <!-- Contextual loop variables banner in equation modal -->
-            <div v-if="activeLoopContext" style="background-color: var(--color-primary-light); padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border-focus); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;">
-              <div style="font-size: 0.65rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase;">
-                📌 Dins del bucle actiu:
-              </div>
-              <code style="font-family: var(--font-mono); font-size: 0.7rem; font-weight: bold; color: var(--text-primary);">
-                for {{ activeLoopContext.iterator }} in {{ activeLoopContext.arrayPath }}
-              </code>
-              <div style="display:flex; flex-direction:column; gap:0.3rem; margin-top:0.15rem;">
-                <div 
-                  v-for="col in activeLoopContext.columns" 
-                  :key="col"
-                  class="variable-item present"
-                  style="background-color: var(--bg-card); margin: 0; font-size: 0.75rem; padding: 4px 6px; justify-content: space-between;"
-                  @click="insertVarIntoMathExpr(`${activeLoopContext.iterator}.${col}`)"
-                  title="Insereix variable contextual del bucle"
-                >
-                  <span style="font-weight: 600;">{{ activeLoopContext.iterator }}.{{ col }}</span>
-                  <span class="variable-badge present" style="background-color: var(--color-primary); color: white;">bucle</span>
-                </div>
-              </div>
-            </div>
-
-            <div v-if="!store.excelJsonData" style="font-size:0.75rem; color:var(--text-muted); font-style:italic">
-              Carrega un Excel per activar el navegador.
-            </div>
-            <div v-else style="display:flex; flex-direction:column; gap:0.6rem;">
-              <div v-for="(item, rootKey) in store.excelJsonData" :key="rootKey" style="margin-bottom:0.25rem;">
-                <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-secondary); margin-bottom: 0.25rem; border-bottom: 1px solid var(--border-color); padding-bottom: 2px;">
-                  {{ rootKey }}
-                </div>
-                
-                <template v-if="Array.isArray(item)">
-                  <template v-if="item.length > 0">
-                    <div 
-                      v-for="subKey in Object.keys(item[0])" 
-                      v-show="subKey !== rootKey"
-                      :key="subKey" 
-                      class="variable-item present"
-                      style="margin: 0; font-size: 0.75rem; padding: 4px 6px; justify-content: space-between;"
-                      @click="insertVarIntoMathExpr(`${rootKey}.${subKey}`)"
-                      title="Clica per inserir variable"
-                    >
-                      <span>{{ subKey }}</span>
-                      <span class="variable-badge present">Columna</span>
-                    </div>
-                  </template>
-                </template>
-                
-                <template v-else>
-                  <div 
-                    v-for="(val, k) in item" 
-                    :key="k" 
-                    class="variable-item present"
-                    style="margin: 0; font-size: 0.75rem; padding: 4px 6px; justify-content: space-between;"
-                    @click="insertVarIntoMathExpr(`${rootKey}.${k}`)"
-                    title="Clica per inserir variable"
-                  >
-                    <span>{{ k }}</span>
-                    <span class="variable-badge present">Clau</span>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div class="modal-footer">
-          <button class="btn btn-secondary" style="width: auto;" @click="isMathModalOpen = false">Cancel·lar</button>
-          <button class="btn btn-primary" style="width: auto;" @click="applyMath">Aplicar</button>
-        </div>
-      </div>
-    </div>
+    <MathModal
+      ref="mathModalRef"
+      v-model="isMathModalOpen"
+      :initial-expr="mathModalInitialExpr"
+      :initial-type="mathModalInitialType"
+      :active-loop-context="activeLoopContext"
+      @apply="onMathApply"
+    />
 
     <!-- 4. Table Configuration Modal -->
-    <div class="modal-overlay" :style="{ display: isTableModalOpen ? 'flex' : 'none' }">
-      <div class="modal-content" style="max-width: 720px; width: 95%;">
-        <div class="modal-header">
-          <h3 style="border: none; padding-bottom: 0; margin: 0;">{{ activeEditTableNode ? 'Configurar / Modificar Taula' : 'Inserir Nova Taula' }}</h3>
-          <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem;" @click="isTableModalOpen = false">&times;</button>
-        </div>
-        
-        <div class="modal-body" style="display: flex; flex-direction: column; gap: 1rem;">
-          <!-- Mode Selector (Tabs style) -->
-          <div style="display: flex; gap: 8px; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">
-            <button 
-              class="btn-secondary" 
-              style="width: auto; padding: 0.35rem 0.7rem; font-size: 0.75rem; border: 1px solid var(--border-color);"
-              :class="{ 'btn-primary': tableMode === 'dynamic' }"
-              @click="tableMode = 'dynamic'"
-            >
-              📊 Dinàmica (Fila iterable)
-            </button>
-            <button 
-              class="btn-secondary" 
-              style="width: auto; padding: 0.35rem 0.7rem; font-size: 0.75rem; border: 1px solid var(--border-color);"
-              :class="{ 'btn-primary': tableMode === 'transposed' }"
-              @click="tableMode = 'transposed'"
-            >
-              🔄 Transposada (Columnes iterables)
-            </button>
-            <button 
-              class="btn-secondary" 
-              style="width: auto; padding: 0.35rem 0.7rem; font-size: 0.75rem; border: 1px solid var(--border-color);"
-              :class="{ 'btn-primary': tableMode === 'manual' }"
-              @click="tableMode = 'manual'"
-            >
-              ✏️ Manual (Files i Columnes)
-            </button>
-          </div>
-          
-          <!-- Mode 1: Dynamic & Mode 2: Transposed controls -->
-          <div v-if="tableMode === 'dynamic' || tableMode === 'transposed'" style="display: flex; flex-direction: column; gap: 0.75rem;">
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-              <div class="form-row">
-                <label>Llista/Array d'Excel per a la taula</label>
-                <select v-model="selectedArray" @change="onArraySelected" style="padding: 6px; border: 1px solid var(--border-color); border-radius:4px;">
-                  <option value="">Selecciona una taula...</option>
-                  <option v-for="arr in availableArrays" :key="arr" :value="arr">{{ arr }}</option>
-                </select>
-              </div>
-              <div class="form-row">
-                <label>Nom de la variable iteradora</label>
-                <input type="text" v-model="iteratorVar" placeholder="item" style="font-family: monospace;">
-              </div>
-            </div>
-            
-            <!-- Specific Transposed Header Selection -->
-            <div v-if="tableMode === 'transposed'" class="form-row">
-              <label>Camp de la capçalera de columna (es repetirà per columna)</label>
-              <select v-model="selectedColHeaderKey" style="padding: 6px; border: 1px solid var(--border-color); border-radius:4px;">
-                <option v-for="c in tableColumns" :key="c.key" :value="c.key">{{ c.key }}</option>
-              </select>
-            </div>
-            
-            <!-- Column Fields List -->
-            <div v-if="selectedArray" style="border: 1px solid var(--border-color); border-radius: 4px; padding: 0.75rem; background-color: var(--bg-tertiary);">
-              <span style="font-size: 0.8rem; font-weight: bold; color: var(--text-secondary); display: block; margin-bottom: 0.5rem;">
-                {{ tableMode === 'dynamic' ? 'Selecciona les columnes, alineació i filtres' : 'Selecciona les files dades, alineació i filtres' }}
-              </span>
-              
-              <div style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 220px; overflow-y: auto; padding-right: 4px;">
-                <!-- Header grid layout -->
-                <div style="display: grid; grid-template-columns: 30px 125px 150px 95px 125px; gap: 8px; font-size: 0.7rem; font-weight:bold; text-transform:uppercase; color: var(--text-muted); border-bottom: 1px solid var(--border-color); padding-bottom: 4px; margin-bottom: 4px;">
-                  <span>Usa</span>
-                  <span>Clau</span>
-                  <span>Títol</span>
-                  <span>Alineació</span>
-                  <span>Filtre Jinja2</span>
-                </div>
-                
-                <div 
-                  v-for="c in tableColumns" 
-                  :key="c.key"
-                  v-show="tableMode === 'dynamic' || c.key !== selectedColHeaderKey"
-                  style="display: grid; grid-template-columns: 30px 125px 150px 95px 125px; gap: 8px; align-items: center;"
-                >
-                  <input type="checkbox" v-model="c.selected">
-                  <span style="font-family: monospace; font-size: 0.8rem; font-weight: 600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" :title="c.key">{{ c.key }}</span>
-                  <input type="text" v-model="c.header" placeholder="Capçalera" style="padding: 4px; font-size: 0.75rem;">
-                  <select v-model="c.align" style="padding: 4px; font-size: 0.75rem;">
-                    <option value="left">Esquerra</option>
-                    <option value="center">Centre</option>
-                    <option value="right">Dreta</option>
-                  </select>
-                  <select v-model="c.filter" style="padding: 4px; font-size: 0.75rem;">
-                    <option value="">Sense filtre</option>
-                    <option value="coin">Moneda (€ | coin)</option>
-                    <option value="number">Número (| number)</option>
-                    <option value="round(2)">Arrodonit (| round(2))</option>
-                    <option value="percent">Percentatge (| percent)</option>
-                    <option value="upper">Majúscules (| upper)</option>
-                    <option value="lower">Minúscules (| lower)</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <!-- Mode 3: Manual controls -->
-          <div v-else style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-            <div class="form-row">
-              <label>Número de files (incloent capçalera)</label>
-              <input type="number" v-model="manualRows" min="1" max="100">
-            </div>
-            <div class="form-row">
-              <label>Número de columnes</label>
-              <input type="number" v-model="manualCols" min="1" max="50">
-            </div>
-          </div>
-        </div>
-        
-        <div class="modal-footer">
-          <button class="btn btn-secondary" style="width: auto;" @click="isTableModalOpen = false">Cancel·lar</button>
-          <button class="btn btn-primary" style="width: auto;" @click="applyTableModal">Aplicar</button>
-        </div>
-      </div>
-    </div>
+    <TableModal
+      ref="tableModalRef"
+      v-model="isTableModalOpen"
+      :is-editing="tableModalIsEditing"
+      :initial-config="tableModalInitialConfig"
+      :available-arrays="availableArrays"
+      :resolve-path="resolvePath"
+      :resolve-field-label="resolveFieldLabel"
+      @apply="onTableApply"
+    />
 
     <!-- Pandoc Metadata Modal -->
-    <div class="modal-overlay" v-if="isMetadataModalOpen" style="display: flex; z-index: 1060;">
-      <div class="modal-content" style="max-width: 650px; width: 90%; max-height: 85vh; display: flex; flex-direction: column;">
-        <div class="modal-header">
-          <h3 style="border: none; padding-bottom: 0; margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-            🏷️ Configurar Metadades Pandoc (YAML)
-          </h3>
-          <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isMetadataModalOpen = false">&times;</button>
-        </div>
-        
-        <div class="modal-body" style="flex-grow: 1; overflow-y: auto; padding: 1rem 0; display: flex; flex-direction: column; gap: 1rem;">
-          <p style="margin: 0; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.4;">
-            Pandoc utilitza aquestes metadades YAML al principi del document per generar automàticament la portada, l'autor, la data, l'índex i l'estructura del document Word final.
-          </p>
-
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
-            <div class="form-row" style="grid-column: span 2;">
-              <label style="font-weight: 600; font-size: 0.8rem;">Títol Principal del Document (title)</label>
-              <input type="text" v-model="metadataForm.title" placeholder="ex: Memòria Justificativa de la Licitació">
-            </div>
-
-            <div class="form-row">
-              <label style="font-weight: 600; font-size: 0.8rem;">Subtítol (subtitle)</label>
-              <input type="text" v-model="metadataForm.subtitle" placeholder="ex: Contracte de Serveis Informàtics">
-            </div>
-
-            <div class="form-row">
-              <label style="font-weight: 600; font-size: 0.8rem;">Autor / Organisme (author)</label>
-              <input type="text" v-model="metadataForm.author" placeholder="ex: Òrgan de Contractació">
-            </div>
-
-            <div class="form-row">
-              <label style="font-weight: 600; font-size: 0.8rem;">Data del Document (date)</label>
-              <input type="text" v-model="metadataForm.date" placeholder="ex: 31 de juliol de 2026">
-            </div>
-
-            <div class="form-row">
-              <label style="font-weight: 600; font-size: 0.8rem;">Idioma Principal (lang)</label>
-              <select v-model="metadataForm.lang">
-                <option value="ca">Català (ca)</option>
-                <option value="es">Castellà (es)</option>
-                <option value="en">Anglès (en)</option>
-                <option value="fr">Francès (fr)</option>
-                <option value="de">Alemany (de)</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Table of Contents configuration -->
-          <div style="border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.75rem; background: var(--bg-tertiary); display: flex; flex-direction: column; gap: 0.5rem;">
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-              <input type="checkbox" id="chkToc" v-model="metadataForm.toc">
-              <label for="chkToc" style="display: inline; margin: 0; font-weight: 600; font-size: 0.85rem; cursor: pointer;">
-                📑 Genera automàticament l'Índex de Continguts (toc: true)
-              </label>
-            </div>
-            
-            <div v-if="metadataForm.toc" class="form-row" style="margin-top: 0.4rem;">
-              <label style="font-weight: 600; font-size: 0.8rem;">Títol de l'Índex (toc-title)</label>
-              <input type="text" v-model="metadataForm.tocTitle" placeholder="ex: Índex de continguts">
-            </div>
-          </div>
-
-          <div class="form-row">
-            <label style="font-weight: 600; font-size: 0.8rem;">Resum del Document / Introducció (abstract)</label>
-            <textarea v-model="metadataForm.abstract" rows="2" placeholder="Resum executiu del tràmit o objecte de la contractació..."></textarea>
-          </div>
-
-          <div class="form-row">
-            <label style="font-weight: 600; font-size: 0.8rem;">Paraules Clau (keywords)</label>
-            <input type="text" v-model="metadataForm.keywords" placeholder="ex: contractació, licitació, plec de clàusules">
-          </div>
-
-          <!-- Advanced Custom YAML -->
-          <div style="border-top: 1px dashed var(--border-color); padding-top: 0.5rem;">
-            <label style="font-weight: 600; font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">
-              ⚙️ Línies YAML Addicionals Personalitzades (opcional)
-            </label>
-            <textarea v-model="metadataForm.customYamlText" rows="3" style="font-family: var(--font-mono); font-size: 0.75rem;" placeholder="geometry: margin=2.5cm&#10;fontsize: 11pt"></textarea>
-          </div>
-        </div>
-
-        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 0.5rem; padding-top: 0.75rem; border-top: 1px solid var(--border-color); margin-top: 0.5rem;">
-          <button class="btn btn-secondary" style="width: auto;" @click="isMetadataModalOpen = false">Cancel·lar</button>
-          <button class="btn btn-primary" style="width: auto;" @click="applyMetadataModal">Aplicar Metadades a la Plantilla</button>
-        </div>
-      </div>
-    </div>
+    <MetadataModal
+      ref="metadataModalRef"
+      v-model="isMetadataModalOpen"
+      :template-text="store.templateText"
+      @apply="onMetadataApply"
+    />
 
     <!-- Special Characters Modal -->
     <SpecialCharPickerModal
