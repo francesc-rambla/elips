@@ -1722,6 +1722,15 @@ const syncVisualToCode = () => {
 
 const syncCodeToVisual = () => {
   if (canvasRef.value) {
+    // Rebuilding innerHTML below wipes the browser's selection. If the canvas
+    // currently holds focus (i.e. this rebuild was triggered by an in-place
+    // interactive edit — ELIF/ELSE/trash/layout-toggle/"Comprova Plantilla" —
+    // rather than an external content swap like a tab switch or undo/redo),
+    // capture the caret offset now and restore it after the rebuild so the
+    // user doesn't lose their editing position on every small structural edit.
+    const shouldPreserveCaret = !!(document.activeElement && canvasRef.value.contains(document.activeElement));
+    const caretOffset = shouldPreserveCaret ? getCaretCharacterOffsetWithin(canvasRef.value) : 0;
+
     try {
       const html = compileMarkdownToHtml(editorText.value);
       if (html !== undefined && html !== null) {
@@ -1858,6 +1867,11 @@ const syncCodeToVisual = () => {
     });
 
     ensureTrailingEditableLine(canvasRef.value);
+
+    if (shouldPreserveCaret && caretOffset > 0) {
+      canvasRef.value.focus();
+      setCaretCharacterOffsetWithin(canvasRef.value, caretOffset);
+    }
   }
 };
 
@@ -2130,7 +2144,7 @@ const sanitizePasteHtml = (node) => {
       }
       
       // 4. Safe structural HTML tags
-      if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'br', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'div', 'span'].includes(tag)) {
+      if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'br', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'div', 'span', 'strong', 'b', 'em', 'i'].includes(tag)) {
         const el = document.createElement(tag);
         
         if (curr.className) {

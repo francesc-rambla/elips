@@ -27,29 +27,93 @@ export const convertHtmlToMarkdown = (element) => {
     c.parentNode.replaceChild(document.createTextNode(marker), c);
   });
 
-  let html = clone.innerHTML;
-  html = html.replace(/<h1>(.*?)<\/h1>/gi, '\n# $1\n\n')
-             .replace(/<h2>(.*?)<\/h2>/gi, '\n## $1\n\n')
-             .replace(/<h3>(.*?)<\/h3>/gi, '\n### $1\n\n')
-             .replace(/<h4>(.*?)<\/h4>/gi, '\n#### $1\n\n')
-             .replace(/<h5>(.*?)<\/h5>/gi, '\n##### $1\n\n')
-             .replace(/<h6>(.*?)<\/h6>/gi, '\n###### $1\n\n')
-             .replace(/<b>(.*?)<\/b>|<strong>(.*?)<\/strong>/gi, '**$1$2**')
-             .replace(/<i>(.*?)<\/i>|<em>(.*?)<\/em>/gi, '*$1$2*')
-             .replace(/<ul>/gi, '\n').replace(/<\/ul>/gi, '\n')
-             .replace(/<li>(.*?)<\/li>/gi, '- $1\n')
-             .replace(/<ol>([\s\S]*?)<\/ol>/gi, (m, cnt) => {
-               let i = 1;
-               return '\n' + cnt.replace(/<li>(.*?)<\/li>/gi, (m2, t) => `${i++}. ${t}\n`) + '\n';
-             })
-             .replace(/<div><br><\/div>/gi, '\n')
-             .replace(/<div>(.*?)<\/div>/gi, '\n$1')
-             .replace(/<p>(.*?)<\/p>/gi, '\n$1\n')
-             .replace(/<br\s*[\/]?>/gi, '\n');
+  // Serialize the (now chip-free) DOM tree to Markdown by recursively walking
+  // it, rather than running regex over the innerHTML string. A regex like
+  // /<li>(.*?)<\/li>/ has no notion of nesting and truncates at the *first*
+  // closing tag it finds — which is the innermost one — silently corrupting
+  // any nested list (e.g. a Tab-indented sub-bullet, or a lettered sub-clause
+  // pasted from Word) and any <div> that itself contains a nested <div>
+  // (common in browser-generated contentEditable markup). Walking real DOM
+  // nodes handles arbitrary nesting correctly by construction. It also fixes
+  // ordered lists always rendering as "-" bullets: the previous regex chain
+  // converted every <li> to "- $1" globally *before* the <ol>-specific
+  // numbering pass ever got a chance to see one.
+  const HEADING_MARKERS = { H1: '#', H2: '##', H3: '###', H4: '####', H5: '#####', H6: '######' };
 
-  const txt = document.createElement("textarea");
-  txt.innerHTML = html.replace(/<[^>]*>?/gm, '');
-  return txt.value;
+  const childrenToMarkdown = (node, listDepth) => {
+    let out = '';
+    node.childNodes.forEach(child => { out += nodeToMarkdown(child, listDepth); });
+    return out;
+  };
+
+  const listItemToMarkdown = (li, depth, orderedIndex) => {
+    const indent = '  '.repeat(depth);
+    const marker = orderedIndex !== null ? `${orderedIndex}.` : '-';
+
+    // Split this <li>'s own inline content from any nested <ul>/<ol> inside it
+    let inlineMd = '';
+    let nestedMd = '';
+    li.childNodes.forEach(child => {
+      if (child.nodeType === Node.ELEMENT_NODE && (child.tagName === 'UL' || child.tagName === 'OL')) {
+        nestedMd += nodeToMarkdown(child, depth + 1);
+      } else {
+        inlineMd += nodeToMarkdown(child, depth);
+      }
+    });
+
+    let out = `${indent}${marker} ${inlineMd.trim()}\n`;
+    if (nestedMd.trim()) {
+      out += nestedMd.replace(/^\n+/, '').replace(/\n{2,}/g, '\n');
+    }
+    return out;
+  };
+
+  const nodeToMarkdown = (node, listDepth = 0) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return node.textContent;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+    const tag = node.tagName;
+
+    if (HEADING_MARKERS[tag]) {
+      return `\n${HEADING_MARKERS[tag]} ${childrenToMarkdown(node, listDepth).trim()}\n\n`;
+    }
+    if (tag === 'B' || tag === 'STRONG') {
+      const inner = childrenToMarkdown(node, listDepth);
+      return inner.trim() ? `**${inner}**` : inner;
+    }
+    if (tag === 'I' || tag === 'EM') {
+      const inner = childrenToMarkdown(node, listDepth);
+      return inner.trim() ? `*${inner}*` : inner;
+    }
+    if (tag === 'BR') {
+      return '\n';
+    }
+    if (tag === 'UL' || tag === 'OL') {
+      let out = '\n';
+      let counter = 1;
+      node.childNodes.forEach(child => {
+        if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'LI') {
+          out += listItemToMarkdown(child, listDepth, tag === 'OL' ? counter++ : null);
+        }
+      });
+      return out + '\n';
+    }
+    if (tag === 'P') {
+      return `\n${childrenToMarkdown(node, listDepth)}\n`;
+    }
+    if (tag === 'DIV') {
+      if (node.childNodes.length === 1 && node.firstChild.nodeType === Node.ELEMENT_NODE && node.firstChild.tagName === 'BR') {
+        return '\n';
+      }
+      return `\n${childrenToMarkdown(node, listDepth)}`;
+    }
+    // Unknown/generic wrapper (span, etc.): drop the tag, keep its content
+    return childrenToMarkdown(node, listDepth);
+  };
+
+  return childrenToMarkdown(clone, 0);
 };
 
 // 1. Convert visual HTML to clean Markdown + Jinja (using Text Placeholders to bypass DOM serialisation linebreak bugs)
