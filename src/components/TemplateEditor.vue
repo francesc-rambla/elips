@@ -2246,23 +2246,31 @@ onMounted(() => {
     }
   };
 
-  store.editorActions = {
-    switchEditorTab: (tab) => switchTab(tab),
-    openMetadataModal: () => openMetadataModal(),
-    formatBlock: (val) => formatBlock(val),
-    formatDoc: (cmd) => formatDoc(cmd),
-    insertList: (type) => insertList(type),
-    openTableModal: () => openTableModal(),
-    openBlockModal: (type) => openBlockModal(type),
-    openMathModal: () => openMathModal(),
-    openVarModal: () => openVarModal(),
-    openSpecialCharModal: () => openSpecialCharModal(),
-    openVersionHistoryModal: () => { window.__openVersionHistoryModal && window.__openVersionHistoryModal(); },
-    checkTemplateVariables: () => checkTemplateVariables(),
-    emitGenerate: () => emitGenerate(),
-    getActiveTab: () => activeEditorTab.value,
-    scrollToLine: (lineIndex) => scrollToLine(lineIndex),
-  };
+  // DataInspector.vue also always mounts a second, normally-hidden
+  // TemplateEditor instance (isCellMode) for cell editing. Only the main
+  // (non-cell-mode) instance may claim this shared store slot — otherwise
+  // whichever instance happens to mount last wins it, and the App.vue
+  // ribbon buttons can silently end up driving the hidden cell-mode editor
+  // instead of the visible one.
+  if (!props.isCellMode) {
+    store.editorActions = {
+      switchEditorTab: (tab) => switchTab(tab),
+      openMetadataModal: () => openMetadataModal(),
+      formatBlock: (val) => formatBlock(val),
+      formatDoc: (cmd) => formatDoc(cmd),
+      insertList: (type) => insertList(type),
+      openTableModal: () => openTableModal(),
+      openBlockModal: (type) => openBlockModal(type),
+      openMathModal: () => openMathModal(),
+      openVarModal: () => openVarModal(),
+      openSpecialCharModal: () => openSpecialCharModal(),
+      openVersionHistoryModal: () => { window.__openVersionHistoryModal && window.__openVersionHistoryModal(); },
+      checkTemplateVariables: () => checkTemplateVariables(),
+      emitGenerate: () => emitGenerate(),
+      getActiveTab: () => activeEditorTab.value,
+      scrollToLine: (lineIndex) => scrollToLine(lineIndex),
+    };
+  }
   syncCodeToVisual();
   window.addEventListener('keydown', handleGlobalKeyDown);
   document.addEventListener('selectionchange', () => {
