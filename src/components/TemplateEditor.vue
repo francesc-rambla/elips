@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import { isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
 import { useLoopContext } from '../composables/useLoopContext';
-import { useMarkdownJinjaCompiler, convertHtmlToMarkdown, parseHtmlToMarkdown } from '../composables/useMarkdownJinjaCompiler';
+import { useMarkdownJinjaCompiler, htmlToMarkdown } from '../composables/useMarkdownJinjaCompiler';
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
 import SpecialCharPickerModal from './template-editor/SpecialCharPickerModal.vue';
@@ -1595,7 +1595,7 @@ const configureRowLoop = () => {
 };
 
 // BI-DIRECTIONAL PARSERS: HTML DOM ⇄ MARKDOWN + JINJA2
-// convertHtmlToMarkdown/parseHtmlToMarkdown live in useMarkdownJinjaCompiler.js (imported above).
+// htmlToMarkdown lives in useMarkdownJinjaCompiler.js (imported above).
 
 // Static AST extractor for loop stacks at any point in template text (independent of user caret position!)
 const extractVariablesWithStaticContext = (text) => {
@@ -1712,7 +1712,7 @@ const checkTemplateVariables = () => {
 // extract without changing behavior. Left as a candidate for a future dedicated phase.
 const syncVisualToCode = () => {
   if (canvasRef.value && activeEditorTab.value === 'visual') {
-    const parsed = parseHtmlToMarkdown(canvasRef.value);
+    const parsed = htmlToMarkdown(canvasRef.value);
     // Safety guard: do not overwrite editorText with empty text if canvas was blanked due to error
     if (parsed || !editorText.value) {
       editorText.value = parsed;
@@ -2081,150 +2081,61 @@ const onCanvasMouseUp = () => {
   updateActiveLoopContext();
 };
 
-// Clean paste formatting inside contenteditable preserving custom chips
-const sanitizePasteHtml = (node) => {
-  const fragment = document.createDocumentFragment();
-  
-  const walk = (curr, parentFrag) => {
-    if (curr.nodeType === Node.TEXT_NODE) {
-      parentFrag.appendChild(document.createTextNode(curr.textContent));
-      return;
-    }
-    
-    if (curr.nodeType === Node.ELEMENT_NODE) {
-      const tag = curr.tagName.toLowerCase();
-      
-      // 1. Variable Chip
-      if (tag === 'span' && curr.classList.contains('j-var-chip')) {
-        const chip = document.createElement('span');
-        chip.className = 'j-var-chip';
-        chip.setAttribute('contenteditable', 'false');
-        chip.setAttribute('data-raw', curr.getAttribute('data-raw') || '');
-        chip.innerText = curr.innerText;
-        chip.ondblclick = (e) => { e.stopPropagation(); openVarModal(chip); };
-        parentFrag.appendChild(chip);
-        return;
-      }
-      
-      // 2. LaTeX Chip
-      if ((tag === 'span' || tag === 'div') && curr.classList.contains('latex-chip')) {
-        const chip = document.createElement(tag);
-        chip.className = curr.className;
-        chip.setAttribute('contenteditable', 'false');
-        chip.setAttribute('data-expr', curr.getAttribute('data-expr') || '');
-        chip.setAttribute('data-type', curr.getAttribute('data-type') || 'inline');
-        chip.innerHTML = curr.innerHTML;
-        chip.ondblclick = (e) => { e.stopPropagation(); openMathModal(chip); };
-        parentFrag.appendChild(chip);
-        return;
-      }
-      
-      // 3. Jinja block wrapper or conditional text
-      if (tag === 'div' && curr.classList.contains('jinja-block')) {
-        const block = document.createElement('div');
-        block.className = 'jinja-block';
-        block.setAttribute('data-type', curr.getAttribute('data-type') || '');
-        parentFrag.appendChild(block);
-        for (let child of curr.childNodes) {
-          walk(child, block);
-        }
-        return;
-      }
-      if (tag === 'span' && curr.classList.contains('j-cond-text')) {
-        const cond = document.createElement('span');
-        cond.className = 'j-cond-text';
-        cond.setAttribute('data-cond', curr.getAttribute('data-cond') || '');
-        cond.innerText = curr.innerText;
-        cond.onclick = (e) => {
-          e.stopPropagation();
-          openBlockModal(curr.parentNode?.getAttribute('data-type') || 'if', cond);
-        };
-        parentFrag.appendChild(cond);
-        return;
-      }
-      
-      // 4. Safe structural HTML tags
-      if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'br', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'div', 'span', 'strong', 'b', 'em', 'i'].includes(tag)) {
-        const el = document.createElement(tag);
-        
-        if (curr.className) {
-          const cleanClasses = [];
-          curr.classList.forEach(cls => {
-            if (['j-head', 'j-branch', 'j-content', 'j-footer', 'j-row-loop', 'btn-branch-trash', 'j-btn-mini'].includes(cls)) {
-              cleanClasses.push(cls);
-            }
-          });
-          if (cleanClasses.length > 0) {
-            el.className = cleanClasses.join(' ');
-          }
-        }
-        
-        if (curr.hasAttribute('data-jinja-for')) {
-          el.setAttribute('data-jinja-for', curr.getAttribute('data-jinja-for'));
-        }
-        if (curr.hasAttribute('data-jinja-col-loop')) {
-          el.setAttribute('data-jinja-col-loop', curr.getAttribute('data-jinja-col-loop'));
-        }
-        if (curr.style.textAlign) {
-          el.style.textAlign = curr.style.textAlign;
-        }
-        
-        if (curr.classList.contains('btn-branch-trash')) {
-          el.onclick = () => {
-            el.nextElementSibling?.remove();
-            el.remove();
-            syncVisualToCode();
-          };
-        }
-        
-        parentFrag.appendChild(el);
-        for (let child of curr.childNodes) {
-          walk(child, el);
-        }
-        return;
-      }
-      
-      // 5. Walk generic formatting children
-      for (let child of curr.childNodes) {
-        walk(child, parentFrag);
-      }
-    }
-  };
-  
-  for (let child of node.childNodes) {
-    walk(child, fragment);
+// Markdown/Jinja2 is the priority representation for the clipboard, not HTML:
+// copying/cutting from the canvas puts the underlying source text on the
+// clipboard (not styled HTML), and pasted HTML/rich text is always converted
+// to Markdown via htmlToMarkdown *before* it ever enters editorText — never
+// preserved as HTML inside the contenteditable DOM. This replaces the old
+// sanitizePasteHtml DOM-surgery approach entirely.
+const onCanvasCopyOrCut = (e) => {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return; // nothing selected: let default happen
+  const range = sel.getRangeAt(0);
+  const md = htmlToMarkdown(range.cloneContents());
+  e.clipboardData.setData('text/plain', md);
+  e.preventDefault();
+  if (e.type === 'cut') {
+    range.deleteContents();
+    saveSelection();
+    syncVisualToCode();
   }
-  
-  return fragment;
 };
 
 const onCanvasPaste = (e) => {
   e.preventDefault();
-  
+  if (!canvasRef.value) return;
+
   const html = e.clipboardData.getData('text/html');
+  let pastedMarkdown;
   if (html) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const cleanFragment = sanitizePasteHtml(doc.body);
-    
-    restoreSelection();
-    const sel = window.getSelection();
-    if (sel.rangeCount > 0) {
-      const range = sel.getRangeAt(0);
-      range.deleteContents();
-      range.insertNode(cleanFragment);
-      
-      range.collapse(false);
-      sel.removeAllRanges();
-      sel.addRange(range);
-      saveSelection();
-    }
-    syncVisualToCode();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    pastedMarkdown = htmlToMarkdown(doc.body);
   } else {
-    const text = e.clipboardData.getData('text/plain');
-    document.execCommand('insertText', false, text);
-    syncVisualToCode();
+    pastedMarkdown = e.clipboardData.getData('text/plain') || '';
   }
+  if (!pastedMarkdown) return;
+
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+
+  // Locate the insertion point in editorText: the length of the Markdown
+  // that the canvas content *up to the caret* converts to is a reliable
+  // proxy for its offset in the source, since htmlToMarkdown is exactly what
+  // keeps editorText in sync with the canvas elsewhere. A best-effort
+  // approximation (not an exact DOM<->source position map), which is fine —
+  // worst case it lands a character or two off, self-correcting on the next edit.
+  const prefixRange = document.createRange();
+  prefixRange.selectNodeContents(canvasRef.value);
+  prefixRange.setEnd(range.startContainer, range.startOffset);
+  const insertAt = htmlToMarkdown(prefixRange.cloneContents()).length;
+
+  syncVisualToCode(); // ensure editorText reflects the canvas exactly before splicing
+  const current = editorText.value || '';
+  const at = Math.min(insertAt, current.length);
+  editorText.value = current.slice(0, at) + pastedMarkdown + current.slice(at);
+
+  nextTick(() => syncCodeToVisual());
 };
 
 // --- Pandoc YAML Metadata Modal State & Logic ---
@@ -2848,6 +2759,8 @@ onUnmounted(() => {
           @keydown="onCanvasKeyDown"
           @keyup="onCanvasKeyUp"
           @paste="onCanvasPaste"
+          @copy="onCanvasCopyOrCut"
+          @cut="onCanvasCopyOrCut"
           @blur="saveSelection"
           @click="onCanvasClick"
           @mouseup="onCanvasMouseUp"

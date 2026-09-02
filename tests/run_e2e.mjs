@@ -26,6 +26,7 @@ const chromiumPath = resolveChromiumPath();
 const E2E_SCRIPTS = [
   'e2e_browser.e2e.js',
   'test_nested_features.e2e.js',
+  'test_visual_editor.e2e.js',
   'test_zip_recovery.e2e.js',
   'test_project_workflow.js',
 ];
