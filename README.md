@@ -148,3 +148,16 @@ Els tests `test:e2e` necessiten un navegador Chromium/Chrome disponible. Si `pup
 ## 🔒 Privacitat i seguretat
 
 Tots els fitxers carregats, el full de càlcul Excel, les plantilles Markdown i els documents generats es processen **exclusivament en la memòria local del navegador de l'usuari**. Cap informació ni dada confidencial no surt del dispositiu local.
+
+---
+
+## 📜 Llicència
+
+Copyright (C) 2026 Francesc Rambla i Marigot.
+
+Aquest programa és programari lliure: el podeu redistribuir i/o modificar
+sota els termes de la Llicència Pública General GNU tal com ha estat
+publicada per la Free Software Foundation, ja sigui la versió 3 de la
+Llicència, o (si ho preferiu) qualsevol versió posterior.
+
+Vegeu el fitxer [`LICENSE`](./LICENSE) per al text complet de la llicència.

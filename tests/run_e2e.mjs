@@ -1,3 +1,21 @@
+/*
+ * elips — Editor de LIcitacions PúbliqueS
+ * Copyright (C) 2026  Francesc Rambla i Marigot
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 // Orchestrates the Puppeteer e2e suite: builds the app, serves dist/ on
 // http://localhost:8000 (the URL every e2e script targets), waits for it to
 // respond, then runs each e2e script in turn and forwards their exit code.

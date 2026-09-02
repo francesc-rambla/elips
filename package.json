@@ -2,6 +2,7 @@
   "name": "generador-contractes-vue",
   "version": "2.0.0",
   "private": true,
+  "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "vite",
