@@ -326,15 +326,21 @@ const placeholder = (kind, idx) => `${kind}${idx}`;
 // around the lone placeholder text, since our replacement HTML (a <div> or
 // <table>) is itself already block-level — leaving the <p> would nest
 // block content inside an inline element.
+//
+// Tokens are unpadded ("JB1", "JB10", "JB11"...), so a plain substring
+// replace of "JB1" would also match as a prefix inside "JB10"/"JB11"/...,
+// corrupting any document with 10+ placeholders of the same kind. The
+// (?!\d) lookahead ensures a token only matches when NOT followed by another
+// digit, so "JB1" can never eat into "JB10".
 const restorePlaceholders = (text, kind, values, blockLevel = false) => {
   let out = text;
   values.forEach((html, idx) => {
     const token = placeholder(kind, idx);
     if (blockLevel) {
-      const wrapped = new RegExp(`<p>\\s*${token}\\s*</p>`, 'g');
+      const wrapped = new RegExp(`<p>\\s*${token}(?!\\d)\\s*</p>`, 'g');
       out = out.replace(wrapped, () => html);
     }
-    out = out.split(token).join(html);
+    out = out.replace(new RegExp(`${token}(?!\\d)`, 'g'), () => html);
   });
   return out;
 };
@@ -687,7 +693,12 @@ export function useMarkdownJinjaCompiler({ store, activeLoopStack, hasCheckedTem
     if (end === -1) return false;
     if (!silent) {
       const token = state.push('jinja_var', '', 0);
-      token.content = state.src.slice(state.pos + 2, end).trim();
+      // This rule slices raw source text directly rather than going through
+      // markdown-it's normal character-by-character inline tokenization, so
+      // it never benefits from markdown-it's own backslash-escape handling —
+      // unescape \| back to | ourselves (see escapeFilterPipesInBraces below,
+      // the counterpart that put it there).
+      token.content = state.src.slice(state.pos + 2, end).trim().replace(/\\\|/g, '|');
     }
     state.pos = end + 2;
     return true;
@@ -715,6 +726,15 @@ export function useMarkdownJinjaCompiler({ store, activeLoopStack, hasCheckedTem
     return `<td style="text-align: ${align};">`;
   };
 
+  // markdown-it's table block-parser splits a row into cells on every
+  // unescaped '|', BEFORE any inline rule (including our jinja_var rule
+  // above) ever runs — so a filter expression like {{ x | percent }} sitting
+  // in a plain author-typed Markdown table gets its '|' read as an extra
+  // column separator, silently truncating/misaligning that row. Escaping it
+  // as \| (markdown-it's own convention for "not a separator") fixes the
+  // table parse; jinja_var's content slicing above undoes the escape again.
+  const escapeFilterPipesInBraces = (text) => text.replace(/\{\{[^{}]*\}\}/g, (m) => m.replace(/\|/g, '\\|'));
+
   // Compiles Markdown+Jinja2 to the interactive visual-canvas HTML. Recursive:
   // called again for each Jinja block branch's body (block-layout) so nesting
   // of any depth is handled by construction, not by a hand-tracked stack.
@@ -725,7 +745,7 @@ export function useMarkdownJinjaCompiler({ store, activeLoopStack, hasCheckedTem
     const { text: afterBlockJinja, blocks: blockJinjaBlocks } = extractBlockJinja(afterTables, compileMarkdownToHtml);
     const { text: afterInlineJinja, blocks: inlineJinjaBlocks } = extractInlineJinja(afterBlockJinja, (t) => md.renderInline(t));
 
-    let html = md.render(afterInlineJinja);
+    let html = md.render(escapeFilterPipesInBraces(afterInlineJinja));
     // blockLevel: true for all — a no-op when a placeholder isn't alone in its
     // own paragraph (the common case for inline jinja/math), but strips the
     // <p> markdown-it wrapped it in when it is (block jinja, tables, and

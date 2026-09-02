@@ -193,4 +193,50 @@ describe('Markdown -> HTML -> Markdown round-trip stability', () => {
     const backToHtml = makeCompiler().compileMarkdownToHtml(asMarkdown);
     expect(htmlToMarkdown(el(backToHtml))).toBe(asMarkdown);
   });
+
+  it('does not corrupt block #1 when 10+ block-level jinja constructs are present (placeholder token collision)', () => {
+    // Placeholder tokens are unpadded ("JB1", "JB10", "JB11"...): a naive
+    // substring replace of "JB1" also matches as a prefix inside "JB10"/
+    // "JB11"/..., so a document with 10+ if/for blocks used to have block #1's
+    // content stomp over blocks #10, #11, etc. (with a stray trailing digit
+    // left behind). Build 12 distinct if-blocks and check each one's own
+    // condition/content survives intact and exactly once (adjacent-block
+    // whitespace is covered by other tests, so this checks content only).
+    const blocks = Array.from({ length: 12 }, (_, i) => `{% if v${i} %}\nBlock number ${i}\n{% endif %}`);
+    const md = blocks.join('\n\n');
+    const result = roundtrip(md);
+    for (let i = 0; i < 12; i++) {
+      expect(result).toContain(`{% if v${i} %}\nBlock number ${i}\n{% endif %}`);
+      expect((result.match(new RegExp(`Block number ${i}(?!\\d)`, 'g')) || [])).toHaveLength(1);
+    }
+  });
+
+  it('keeps every column of a plain Markdown table row whose cells use a Jinja filter pipe', () => {
+    // markdown-it's table block-parser splits a row on every unescaped '|',
+    // including ones inside a Jinja filter expression like {{ x | percent }}
+    // — since that happens before any inline rule runs. Left unescaped, this
+    // silently drops/misaligns columns (a real data-loss bug, not cosmetic).
+    const md = [
+      '| Concepte | Percentatge | Import |',
+      '| --- | --: | --: |',
+      '| Costos directes | {{ pres.perc|percent }} | {{ pres.costos|coin }} |',
+    ].join('\n');
+    const { compileMarkdownToHtml } = makeCompiler();
+    const html = compileMarkdownToHtml(md);
+    const table = el(html).querySelector('table');
+    const dataRow = Array.from(table.querySelectorAll('tbody tr')[0].querySelectorAll('td'));
+    expect(dataRow).toHaveLength(3);
+    expect(dataRow[1].querySelector('.j-var-chip').getAttribute('data-raw')).toBe('pres.perc|percent');
+    expect(dataRow[2].querySelector('.j-var-chip').getAttribute('data-raw')).toBe('pres.costos|coin');
+
+    // Both filter expressions must survive as whole, correctly-delimited
+    // cells — not merged into one cell, not truncated at their own internal
+    // '|'. (A naive split on every '|' can't tell a real column separator
+    // from one that's legitimately part of a filter's syntax, which is
+    // exactly the distinction the fix restores — so check cell boundaries
+    // directly instead.)
+    const backToMarkdown = htmlToMarkdown(el(html));
+    const dataLine = backToMarkdown.split('\n').find((l) => l.includes('Costos directes'));
+    expect(dataLine).toBe('| Costos directes | {{ pres.perc|percent }} | {{ pres.costos|coin }} |');
+  });
 });
