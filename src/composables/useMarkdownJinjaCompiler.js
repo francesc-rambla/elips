@@ -174,7 +174,7 @@ const buildTurndownService = () => {
     node.classList.contains('j-head') || node.classList.contains('j-actions') ||
     node.classList.contains('j-footer') || node.classList.contains('j-inline-tag') ||
     node.classList.contains('j-inline-toolbar') || node.classList.contains('j-cond-text') ||
-    node.classList.contains('trailing-editable-line')
+    node.classList.contains('table-edit-btn') || node.classList.contains('trailing-editable-line')
   ));
 
   td.addRule('jinjaVarChip', {
@@ -249,6 +249,16 @@ const ICON_LOOP = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13
 const ICON_IF = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>';
 const ICON_INLINE_TOGGLE = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
 const ICON_TRASH = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+const ICON_EDIT = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+
+// A dedicated edit affordance for dynamic/transposed tables — double-clicking
+// the header is the only other way in, and a double-click on a <th> also
+// fires two single clicks first, silently toggling that column's alignment
+// twice as an unwanted side effect. This is a plain sibling placed right
+// before <table> (never a child of it — a stray non-<tr> child of <table>
+// would just get foster-parented out by HTML parsing anyway), so it needs no
+// wrapper and can't perturb the table's own cell/column structure.
+const tableEditButtonHtml = () => `<div class="table-edit-btn" contenteditable="false" title="Edita la configuració de la taula">${ICON_EDIT} Edita taula</div>`;
 
 const btnLayoutHtml = () => `<button class="j-btn-mini btn-layout" style="background-color:var(--color-primary);color:white;border:none;display:inline-flex;align-items:center;gap:3px;" title="Canvia a mode integrat al text (Inline)">${ICON_INLINE_TOGGLE} <span>Inline</span></button>`;
 const btnToBlockHtml = () => `<button class="j-btn-mini btn-to-block" style="background-color:var(--color-primary);color:white;border:none;display:inline-flex;align-items:center;gap:3px;" title="Canvia a mode Bloc">${ICON_INLINE_TOGGLE} <span>Bloc</span></button>`;
@@ -473,15 +483,42 @@ const extractInlineJinja = (text, compileInline) => {
   return { text: out, blocks };
 };
 
+// Splits a "| a | b |" row into cells on '|', except a '|' that's part of a
+// {{ ... | filter }} expression (e.g. {{ part.Import | coin }}) — a plain
+// split('|') would also break on that one, turning one cell into two (or
+// more, for chained filters) and leaving the header row's column count out
+// of sync with the body's. Tracked via {{ / }} depth rather than a regex,
+// since a cell can contain more than one such expression.
 const splitTableLine = (line) => {
   const clean = line.trim().replace(/^\|/, '').replace(/\|$/, '');
-  return clean.split('|').map((c) => c.trim());
+  const cells = [];
+  let depth = 0;
+  let current = '';
+  for (let i = 0; i < clean.length; i++) {
+    if (clean[i] === '{' && clean[i + 1] === '{') { depth++; current += '{{'; i++; continue; }
+    if (clean[i] === '}' && clean[i + 1] === '}') { depth = Math.max(0, depth - 1); current += '}}'; i++; continue; }
+    if (clean[i] === '|' && depth === 0) { cells.push(current.trim()); current = ''; continue; }
+    current += clean[i];
+  }
+  cells.push(current.trim());
+  return cells;
 };
 
 const alignFromDivider = (div) => {
   if (div.startsWith(':') && div.endsWith(':')) return 'center';
   if (div.endsWith(':')) return 'right';
   return 'left';
+};
+
+// A totals-row cell's raw expression is a compound Jinja2 expression (e.g.
+// "(pres.parts | sum(attribute='Import')) | coin"), not a simple field path
+// — resolveFieldLabel's "take the text before the first |" heuristic makes
+// a mess of it. Give the chip a short, aggregate-shaped label instead.
+const friendlyTotalLabel = (raw) => {
+  if (/\|\s*sum\(attribute=/.test(raw) && /\)\s*\/\s*\(/.test(raw)) return 'Mitjana';
+  if (/\|\s*sum\(attribute=/.test(raw)) return 'Suma';
+  if (/\|\s*length\)/.test(raw)) return 'Compte';
+  return 'Fórmula';
 };
 
 const TRANSPOSED_TABLE_RE = /<!--\s*TRANSPOSED_TABLE_START:(.*?)\s*-->([\s\S]*?)<!--\s*TRANSPOSED_TABLE_END\s*-->/g;
@@ -522,7 +559,7 @@ const extractCommentTables = (text, { findBestKeyMatch, findColHeaderKeyMatch, r
 
     if (!colHeader) colHeader = findColHeaderKeyMatch(arrayPath, headerValues);
 
-    let html = '<table><thead><tr><th data-align="left">Dada</th>';
+    let html = tableEditButtonHtml() + '<table><thead><tr><th data-align="left">Dada</th>';
     const headJinjaMatch = lines[0].match(/\{\{\s*([^}]+)\s*\}\}/);
     const headChipRaw = headJinjaMatch ? headJinjaMatch[1].trim() : `${loopVar}.${colHeader}`;
     html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">${resolveFieldLabel(headChipRaw)}</span></th></tr></thead><tbody>`;
@@ -549,28 +586,40 @@ const extractCommentTables = (text, { findBestKeyMatch, findColHeaderKeyMatch, r
     const headerLine = lines.find((l) => l.startsWith('|') && !l.includes('---'));
     const dividerLine = lines.find((l) => l.startsWith('|') && l.includes('---'));
     const bodyLine = lines.find((l) => l.startsWith('|') && l.includes('{{'));
+    const endforIdx = lines.findIndex((l) => l.trim() === '{% endfor %}');
+    // A totals row is just an ordinary "| ... |" line placed after the loop's
+    // {% endfor %} — the same convention a hand-written totals row already
+    // uses outside of DYNAMIC_TABLE. Recognized here so it survives being
+    // re-rendered to the visual canvas instead of silently vanishing.
+    const totalsLine = endforIdx !== -1 ? lines.slice(endforIdx + 1).find((l) => l.startsWith('|')) : undefined;
     if (!headerLine) return match;
 
     const headers = splitTableLine(headerLine);
     const aligns = dividerLine ? splitTableLine(dividerLine).map(alignFromDivider) : [];
+    const cellToHtml = (cell, align, labelFn = resolveFieldLabel) => {
+      const chipHtml = cell.replace(/\{\{\s*(.*?)\s*\}\}/g, (m, v) => {
+        const raw = v.trim();
+        return `<span class="j-var-chip" contenteditable="false" data-raw="${raw}">${labelFn(raw)}</span>`;
+      });
+      return `<td style="text-align: ${align};">${chipHtml}</td>`;
+    };
 
-    let html = '<table><thead><tr>';
+    let html = tableEditButtonHtml() + '<table><thead><tr>';
     headers.forEach((h, idx) => {
       const align = aligns[idx] || 'left';
       html += `<th data-align="${align}" style="text-align: ${align};">${h}</th>`;
     });
     html += `</tr></thead><tbody><tr class="j-row-loop" data-jinja-for="${loopExpr}">`;
     if (bodyLine) {
-      splitTableLine(bodyLine).forEach((cell, idx) => {
-        const align = aligns[idx] || 'left';
-        const chipHtml = cell.replace(/\{\{\s*(.*?)\s*\}\}/g, (m, v) => {
-          const raw = v.trim();
-          return `<span class="j-var-chip" contenteditable="false" data-raw="${raw}">${resolveFieldLabel(raw)}</span>`;
-        });
-        html += `<td style="text-align: ${align};">${chipHtml}</td>`;
-      });
+      splitTableLine(bodyLine).forEach((cell, idx) => html += cellToHtml(cell, aligns[idx] || 'left'));
     }
-    html += '</tr></tbody></table>';
+    html += '</tr>';
+    if (totalsLine) {
+      html += '<tr class="j-totals-row">';
+      splitTableLine(totalsLine).forEach((cell, idx) => html += cellToHtml(cell, aligns[idx] || 'left', friendlyTotalLabel));
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
     return stash(html);
   });
 

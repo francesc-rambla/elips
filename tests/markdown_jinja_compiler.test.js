@@ -205,6 +205,57 @@ describe('Markdown -> HTML -> Markdown round-trip stability', () => {
     expect(twice).toBe(once);
   });
 
+  it('keeps a DYNAMIC_TABLE row intact when a cell uses a Jinja filter pipe', () => {
+    // DYNAMIC_TABLE/TRANSPOSED_TABLE rows are split on '|' by splitTableLine,
+    // a hand-rolled parser separate from markdown-it's own table plugin — it
+    // had the exact same "|' inside {{ x | filter }} is not a filter, it's an
+    // extra column" bug, previously untested because no existing fixture used
+    // a filtered column inside one of these blocks (even though filters are
+    // the default for numeric columns created via the Table modal).
+    const dynamic = [
+      '<!-- DYNAMIC_TABLE_START:part in pres.parts -->',
+      '| Nom | Import |',
+      '| --- | ---: |',
+      '{% for part in pres.parts %}',
+      '| {{ part.nom }} | {{ part.import | coin }} |',
+      '{% endfor %}',
+      '<!-- DYNAMIC_TABLE_END -->',
+    ].join('\n');
+    const html = makeCompiler().compileMarkdownToHtml(dynamic);
+    const table = el(html).querySelector('table');
+    expect(table.querySelectorAll('thead th')).toHaveLength(2);
+    const bodyCells = Array.from(table.querySelector('.j-row-loop').querySelectorAll('td'));
+    expect(bodyCells).toHaveLength(2);
+    expect(bodyCells[1].querySelector('.j-var-chip').getAttribute('data-raw')).toBe('part.import | coin');
+    expect(roundtrip(dynamic)).toBe(dynamic);
+  });
+
+  it('supports an optional totals row on a DYNAMIC_TABLE, using only built-in Jinja2 filters', () => {
+    const dynamic = [
+      '<!-- DYNAMIC_TABLE_START:part in pres.parts -->',
+      '| Nom | Import |',
+      '| --- | ---: |',
+      '{% for part in pres.parts %}',
+      '| {{ part.nom }} | {{ part.import | coin }} |',
+      '{% endfor %}',
+      "| Total | {{ (pres.parts | sum(attribute='import')) | coin }} |",
+      '<!-- DYNAMIC_TABLE_END -->',
+    ].join('\n');
+    const html = makeCompiler().compileMarkdownToHtml(dynamic);
+    const table = el(html).querySelector('table');
+    const totalsRow = table.querySelector('.j-totals-row');
+    expect(totalsRow).not.toBeNull();
+    const cells = Array.from(totalsRow.querySelectorAll('td'));
+    expect(cells).toHaveLength(2);
+    expect(cells[0].textContent.trim()).toBe('Total');
+    const chip = cells[1].querySelector('.j-var-chip');
+    expect(chip.getAttribute('data-raw')).toBe("(pres.parts | sum(attribute='import')) | coin");
+    // Labeled by aggregate type ("Suma"), not resolveFieldLabel's mangled
+    // take on a compound expression with more than one '|'.
+    expect(chip.textContent.trim()).toBe('Suma');
+    expect(roundtrip(dynamic)).toBe(dynamic);
+  });
+
   it('is idempotent for HTML pasted from Word (nested list with bold)', () => {
     const wordHtml = '<p>Some <strong>bold</strong> text.</p><ul><li>A<ul><li><strong>A1</strong></li><li>A2</li></ul></li><li>B</li></ul>';
     const asMarkdown = htmlToMarkdown(el(wordHtml));

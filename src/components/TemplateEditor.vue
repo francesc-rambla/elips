@@ -879,10 +879,36 @@ const openTableModal = (table = null) => {
             header: th ? th.innerText.trim() : key,
             align: cell.style.textAlign || 'left',
             selected: true,
-            filter
+            filter,
+            totalFormula: '',
+            totalCustomExpr: '',
           };
         });
-        tableModalInitialConfig.value = { mode: 'dynamic', iteratorVar, selectedArray, columns };
+
+        // Recognize an existing totals row's per-column aggregate, matching
+        // it back to one of the built-in formulas TableModal.vue's
+        // buildTotalExpr() generates (falling back to 'custom' verbatim for
+        // anything else) — same index order as the loop row's own cells.
+        const totalsRow = table.querySelector('.j-totals-row');
+        if (totalsRow) {
+          const totalsCells = Array.from(totalsRow.querySelectorAll('td'));
+          const arr = selectedArray.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          columns.forEach((col, idx) => {
+            const chip = totalsCells[idx]?.querySelector('.j-var-chip');
+            if (!chip) return;
+            const raw = chip.getAttribute('data-raw') || '';
+            let m = raw.match(new RegExp(`^\\(${arr}\\s*\\|\\s*sum\\(attribute='[^']+'\\)\\)(?:\\s*\\|\\s*.+)?$`));
+            if (m) { col.totalFormula = 'sum'; return; }
+            m = raw.match(new RegExp(`^\\(\\(${arr}\\s*\\|\\s*sum\\(attribute='[^']+'\\)\\)\\s*/\\s*\\(${arr}\\s*\\|\\s*length\\)\\)(?:\\s*\\|\\s*.+)?$`));
+            if (m) { col.totalFormula = 'avg'; return; }
+            m = raw.match(new RegExp(`^\\(${arr}\\s*\\|\\s*length\\)(?:\\s*\\|\\s*.+)?$`));
+            if (m) { col.totalFormula = 'count'; return; }
+            col.totalFormula = 'custom';
+            col.totalCustomExpr = raw;
+          });
+        }
+
+        tableModalInitialConfig.value = { mode: 'dynamic', iteratorVar, selectedArray, columns, totalsRow: !!totalsRow };
       }
     } else if (colLoopCell) {
       const loopExpr = colLoopCell.getAttribute('data-jinja-col-loop') || '';
@@ -943,6 +969,7 @@ const onTableApply = (html) => {
     const div = document.createElement('div');
     div.innerHTML = html;
     const newTable = div.querySelector('table');
+    const newEditBtn = div.querySelector('.table-edit-btn');
 
     newTable.querySelectorAll('th').forEach(th => {
       th.onclick = () => toggleTableAlignment(th);
@@ -952,6 +979,15 @@ const onTableApply = (html) => {
       e.stopPropagation();
       openTableModal(newTable);
     };
+    if (newEditBtn) newEditBtn.onclick = (e) => { e.stopPropagation(); openTableModal(newTable); };
+
+    // TABLE_EDIT_BTN_HTML is a sibling right before <table>, not a
+    // descendant — replaceChild below only swaps the <table> node itself,
+    // so its old edit-button sibling (if any) needs removing and the new
+    // one inserting in the real DOM separately.
+    const oldEditBtn = activeEditTableNode.previousElementSibling;
+    if (oldEditBtn?.classList.contains('table-edit-btn')) oldEditBtn.remove();
+    if (newEditBtn) activeEditTableNode.parentNode.insertBefore(newEditBtn, activeEditTableNode);
 
     activeEditTableNode.parentNode.replaceChild(newTable, activeEditTableNode);
   } else {
@@ -965,6 +1001,10 @@ const onTableApply = (html) => {
           e.stopPropagation();
           openTableModal(table);
         };
+        const editBtn = table.previousElementSibling;
+        if (editBtn?.classList.contains('table-edit-btn')) {
+          editBtn.onclick = (e) => { e.stopPropagation(); openTableModal(table); };
+        }
       });
     });
   }
@@ -1544,6 +1584,10 @@ const syncCodeToVisual = () => {
         e.stopPropagation();
         openTableModal(table);
       };
+      const editBtn = table.previousElementSibling;
+      if (editBtn?.classList.contains('table-edit-btn')) {
+        editBtn.onclick = (e) => { e.stopPropagation(); openTableModal(table); };
+      }
     });
 
     canvasRef.value.querySelectorAll('.jinja-block').forEach(block => {
@@ -2755,6 +2799,18 @@ onUnmounted(() => {
   margin-top: 0;
 }
 
+.editor-textarea p {
+  margin: 0.75em 0;
+}
+
+.editor-textarea p:first-child {
+  margin-top: 0;
+}
+
+.editor-textarea p:last-child {
+  margin-bottom: 0;
+}
+
 .editor-textarea h1::before {
   content: "H1";
   display: inline-flex;
@@ -3338,6 +3394,37 @@ table th, table td {
 table th {
   background-color: var(--bg-tertiary);
   font-weight: bold;
+}
+
+.j-totals-row td {
+  font-weight: 700;
+  border-top: 2px solid var(--border-color);
+  background-color: var(--bg-tertiary);
+}
+
+/* Dedicated edit affordance for dynamic/transposed tables, sitting right
+   above the table like a small attached tab — double-clicking the header
+   also works, but a double-click is two single clicks first, which
+   silently toggles that column's alignment twice as a side effect. */
+.table-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  padding: 2px 8px;
+  cursor: pointer;
+  user-select: none;
+  margin: 0.5rem 0 -1px 0;
+}
+
+.table-edit-btn:hover {
+  background-color: var(--color-primary-light);
 }
 
 /* Only the header shows the loop-column badge — every body cell in a

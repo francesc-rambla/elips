@@ -48,13 +48,20 @@ const emit = defineEmits(['update:modelValue', 'apply']);
 
 const store = useWorkspaceStore();
 
+// Matches the markup useMarkdownJinjaCompiler.js prepends to a dynamic/
+// transposed table once it's re-rendered from source — kept identical here
+// so the table looks the same right after Apply, before any tab switch
+// triggers that re-render.
+const TABLE_EDIT_BTN_HTML = '<div class="table-edit-btn" contenteditable="false" title="Edita la configuració de la taula"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg> Edita taula</div>';
+
 const tableMode = ref('dynamic'); // 'dynamic', 'transposed', 'manual'
 const manualRows = ref(3);
 const manualCols = ref(3);
 const selectedArray = ref('');
 const iteratorVar = ref('item');
 const selectedColHeaderKey = ref('');
-const tableColumns = ref([]); // Array of { key, header, align, selected, filter }
+const tableColumns = ref([]); // Array of { key, header, align, selected, filter, totalFormula, totalCustomExpr }
+const showTotalsRow = ref(false); // Dynamic tables only: append a totals/aggregate row
 
 const isNumericColumn = (arrayName, colKey) => {
   const arr = props.resolvePath(store.excelJsonData, arrayName);
@@ -68,6 +75,26 @@ const isNumericColumn = (arrayName, colKey) => {
   return false;
 };
 
+const columnDefaults = (field) => {
+  const isNum = isNumericColumn(selectedArray.value, field);
+  let defaultFilter = '';
+  const fLower = field.toLowerCase();
+  if (fLower.includes('preu') || fLower.includes('import') || fLower.includes('cost') || fLower.includes('sou') || fLower.includes('pressupost') || fLower.includes('iva') || fLower.includes('base') || fLower.includes('total') || fLower.includes('valor')) {
+    defaultFilter = 'coin';
+  } else if (isNum) {
+    defaultFilter = 'number';
+  }
+  return {
+    key: field,
+    header: field.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()),
+    align: (defaultFilter || isNum) ? 'right' : 'left',
+    selected: true,
+    filter: defaultFilter,
+    totalFormula: isNum ? 'sum' : '',
+    totalCustomExpr: '',
+  };
+};
+
 const onArraySelected = () => {
   if (!selectedArray.value) {
     tableColumns.value = [];
@@ -76,27 +103,29 @@ const onArraySelected = () => {
   const arr = props.resolvePath(store.excelJsonData, selectedArray.value);
   if (arr && Array.isArray(arr) && arr.length > 0) {
     const fields = Object.keys(arr[0]).filter((k) => k !== selectedArray.value.split('.').pop());
-    tableColumns.value = fields.map((f) => {
-      const isNum = isNumericColumn(selectedArray.value, f);
-      let defaultFilter = '';
-      const fLower = f.toLowerCase();
-      if (fLower.includes('preu') || fLower.includes('import') || fLower.includes('cost') || fLower.includes('sou') || fLower.includes('pressupost') || fLower.includes('iva') || fLower.includes('base') || fLower.includes('total') || fLower.includes('valor')) {
-        defaultFilter = 'coin';
-      } else if (isNum) {
-        defaultFilter = 'number';
-      }
-      return {
-        key: f,
-        header: f.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()),
-        align: (defaultFilter || isNum) ? 'right' : 'left',
-        selected: true,
-        filter: defaultFilter,
-      };
-    });
-
+    tableColumns.value = fields.map((f) => columnDefaults(f));
     iteratorVar.value = selectedArray.value.split('.').pop().toLowerCase().replace(/s$/, '') || 'item';
     selectedColHeaderKey.value = fields[0] || '';
   }
+};
+
+// When editing an existing table, tableColumns comes from parsing *that
+// table's own DOM* (TemplateEditor.vue's openTableModal) — i.e. only the
+// columns it already has. Append any field the underlying array has gained
+// since (or that was simply left unchecked when the table was first
+// created) so it's selectable here too, without touching the columns
+// already configured. New ones start unselected so nothing changes on
+// Apply unless the user explicitly opts in.
+const mergeMissingColumns = () => {
+  if (!selectedArray.value) return;
+  const arr = props.resolvePath(store.excelJsonData, selectedArray.value);
+  if (!(arr && Array.isArray(arr) && arr.length > 0)) return;
+  const existingKeys = new Set(tableColumns.value.map((c) => c.key));
+  const fields = Object.keys(arr[0]).filter((k) => k !== selectedArray.value.split('.').pop());
+  fields.forEach((f) => {
+    if (existingKeys.has(f)) return;
+    tableColumns.value.push({ ...columnDefaults(f), selected: false });
+  });
 };
 
 watch(() => props.modelValue, (open) => {
@@ -106,16 +135,36 @@ watch(() => props.modelValue, (open) => {
   iteratorVar.value = cfg.iteratorVar || 'item';
   selectedArray.value = cfg.selectedArray || '';
   selectedColHeaderKey.value = cfg.selectedColHeaderKey || '';
-  tableColumns.value = cfg.columns || [];
+  tableColumns.value = (cfg.columns || []).map((c) => ({ totalFormula: '', totalCustomExpr: '', ...c }));
   manualRows.value = cfg.manualRows || 3;
   manualCols.value = cfg.manualCols || 3;
+  showTotalsRow.value = !!cfg.totalsRow;
 
   if (!cfg.columns?.length && selectedArray.value) {
     onArraySelected();
+  } else if (selectedArray.value) {
+    mergeMissingColumns();
   }
 });
 
 const close = () => emit('update:modelValue', false);
+
+// Builds a totals-row cell's raw Jinja2 expression from a column's chosen
+// aggregate formula, using only Jinja2 *built-in* filters (sum, length) —
+// no changes needed to the Python engine's filter set. The column's own
+// display filter (e.g. "coin") is re-applied to the aggregate too, for
+// visual consistency with the column it summarizes; 'custom' skips that
+// since the user's own expression already controls formatting.
+const buildTotalExpr = (col) => {
+  if (!col.totalFormula) return '';
+  const arr = selectedArray.value.trim();
+  const displayFilter = col.filter ? ` | ${col.filter.trim().replace(/^\|\s*/, '')}` : '';
+  if (col.totalFormula === 'sum') return `(${arr} | sum(attribute='${col.key}'))${displayFilter}`;
+  if (col.totalFormula === 'avg') return `((${arr} | sum(attribute='${col.key}')) / (${arr} | length))${displayFilter}`;
+  if (col.totalFormula === 'count') return `(${arr} | length)${displayFilter}`;
+  if (col.totalFormula === 'custom') return (col.totalCustomExpr || '').trim();
+  return '';
+};
 
 const apply = () => {
   let html = '';
@@ -134,7 +183,7 @@ const apply = () => {
       return;
     }
 
-    html += '<table><thead><tr>';
+    html += TABLE_EDIT_BTN_HTML + '<table><thead><tr>';
     activeCols.forEach((c) => {
       html += `<th data-align="${c.align}" style="text-align: ${c.align};">${c.header}</th>`;
     });
@@ -146,7 +195,32 @@ const apply = () => {
       const chipRaw = `${iteratorVar.value.trim()}.${c.key}${filterPart}`;
       html += `<td style="text-align: ${c.align};"><span class="j-var-chip" contenteditable="false" data-raw="${chipRaw}">${props.resolveFieldLabel(chipRaw)}</span></td>`;
     });
-    html += '</tr></tbody></table><p><br></p>';
+    html += '</tr>';
+
+    if (showTotalsRow.value) {
+      html += '<tr class="j-totals-row">';
+      activeCols.forEach((c, idx) => {
+        const expr = buildTotalExpr(c);
+        if (expr) {
+          // A totals cell's raw expression is a compound Jinja2 expression,
+          // not a simple field path — label it by aggregate type instead of
+          // the generic resolveFieldLabel (which mangles anything with more
+          // than one '|').
+          const label = { sum: 'Suma', avg: 'Mitjana', count: 'Compte' }[c.totalFormula] || 'Fórmula';
+          html += `<td style="text-align: ${c.align};"><span class="j-var-chip" contenteditable="false" data-raw="${expr}">${label}</span></td>`;
+        } else if (idx === 0) {
+          // Plain text, not a chip: styled bold via .j-totals-row CSS rather
+          // than embedding <strong> — keeps the Markdown round-trip a plain
+          // "| Total | ... |" row instead of needing **bold** handling here.
+          html += '<td style="text-align: left;">Total</td>';
+        } else {
+          html += `<td style="text-align: ${c.align};"></td>`;
+        }
+      });
+      html += '</tr>';
+    }
+
+    html += '</tbody></table><p><br></p>';
   } else if (isTrans) {
     if (!selectedArray.value || !iteratorVar.value) {
       alert('Si us plau, selecciona un array de dades i un iterador vàlids.');
@@ -160,7 +234,7 @@ const apply = () => {
       return;
     }
 
-    html += '<table><thead><tr>';
+    html += TABLE_EDIT_BTN_HTML + '<table><thead><tr>';
     html += '<th data-align="left">Dada</th>';
     const headChipRaw = `${iteratorVar.value.trim()}.${colHeaderKey}`;
     html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">${props.resolveFieldLabel(headChipRaw)}</span></th>`;
@@ -298,6 +372,41 @@ defineExpose({ apply });
                   <option value="upper">Majúscules (| upper)</option>
                   <option value="lower">Minúscules (| lower)</option>
                 </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Totals row config (dynamic tables only) -->
+          <div v-if="tableMode === 'dynamic' && selectedArray" style="border: 1px solid var(--border-color); border-radius: 4px; padding: 0.75rem; background-color: var(--bg-tertiary);">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: bold; color: var(--text-secondary); cursor: pointer;">
+              <input type="checkbox" v-model="showTotalsRow">
+              Afegeix una fila de totals al final de la taula
+            </label>
+
+            <div v-if="showTotalsRow" style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.6rem; padding-right: 4px;">
+              <div
+                v-for="c in tableColumns.filter((col) => col.selected && col.key)"
+                :key="c.key"
+                style="display: grid; grid-template-columns: 150px 140px 1fr; gap: 8px; align-items: center;"
+              >
+                <span style="font-family: monospace; font-size: 0.8rem; font-weight: 600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" :title="c.key">{{ c.header || c.key }}</span>
+                <select v-model="c.totalFormula" style="padding: 4px; font-size: 0.75rem;">
+                  <option value="">Cap (buit)</option>
+                  <option value="sum">Suma</option>
+                  <option value="avg">Mitjana</option>
+                  <option value="count">Compte de files</option>
+                  <option value="custom">Fórmula personalitzada...</option>
+                </select>
+                <input
+                  v-if="c.totalFormula === 'custom'"
+                  type="text"
+                  v-model="c.totalCustomExpr"
+                  placeholder="expressió Jinja2, ex: item.a + item.b"
+                  style="font-family: monospace; padding: 4px; font-size: 0.75rem;"
+                >
+                <span v-else style="font-size: 0.7rem; color: var(--text-muted); font-style: italic;">
+                  {{ c.totalFormula ? buildTotalExpr(c) : '' }}
+                </span>
               </div>
             </div>
           </div>
