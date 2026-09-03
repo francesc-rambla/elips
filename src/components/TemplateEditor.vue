@@ -228,16 +228,73 @@ const linesCount = computed(() => {
   return editorText.value.split('\n').length;
 });
 
+// Scroll-fraction based sync (Visual<->Codi tab switches, reload
+// persistence, and the two DocumentPreview panes) — proportional rather
+// than pixel-exact, since two views of "the same document" (raw source vs.
+// compiled HTML; clean Markdown vs. rendered HTML preview) render at very
+// different total heights. Matching the same *fraction* scrolled keeps you
+// looking at roughly the same part of the document in both.
+const getScrollFraction = (el) => {
+  if (!el) return 0;
+  const max = el.scrollHeight - el.clientHeight;
+  return max > 0 ? el.scrollTop / max : 0;
+};
+
+const setScrollFraction = (el, fraction) => {
+  if (!el) return;
+  const max = el.scrollHeight - el.clientHeight;
+  el.scrollTop = max > 0 ? fraction * max : 0;
+};
+
+// Per-line pixel heights for the code editor's line-number gutter. This is
+// a *text* editor, not a code editor in the usual sense — its lines are
+// prose paragraphs, not short statements — so wrapping stays on, and a
+// wrapped line's own number needs to span the full height its wrapped
+// content actually takes rather than a single fixed row. There's no direct
+// API for "how tall does this one line render wrapped", so it's measured
+// via a hidden mirror element built with the textarea's exact font/width/
+// white-space (all lines measured in one batch — one reflow, not one per
+// line — by giving each its own child element and reading every
+// getBoundingClientRect() after a single append).
+const lineHeightsPx = ref([]);
+let lineHeightsRaf = null;
+let lineHeightsResizeObserver = null;
+
+const recomputeLineHeights = () => {
+  if (lineHeightsRaf) cancelAnimationFrame(lineHeightsRaf);
+  lineHeightsRaf = requestAnimationFrame(() => {
+    lineHeightsRaf = null;
+    const ta = textareaRef.value;
+    if (!ta || ta.clientWidth === 0) return;
+    const lines = editorText.value.split('\n');
+    const style = getComputedStyle(ta);
+    const mirror = document.createElement('div');
+    Object.assign(mirror.style, {
+      position: 'absolute', visibility: 'hidden', top: '0', left: '-9999px',
+      whiteSpace: 'pre-wrap', overflowWrap: 'break-word', wordBreak: style.wordBreak,
+      font: style.font, letterSpacing: style.letterSpacing, lineHeight: style.lineHeight,
+      padding: style.padding, border: style.border, boxSizing: style.boxSizing,
+      width: `${ta.clientWidth}px`,
+    });
+    lines.forEach((line) => {
+      const div = document.createElement('div');
+      div.textContent = line.length ? line : ' ';
+      mirror.appendChild(div);
+    });
+    document.body.appendChild(mirror);
+    lineHeightsPx.value = Array.from(mirror.children).map((child) => child.getBoundingClientRect().height);
+    document.body.removeChild(mirror);
+  });
+};
+
 // Keeps the line-number gutter and the syntax-highlight backdrop scrolled
 // exactly with the (invisible-text) textarea sitting on top of them.
 const onCodeScroll = () => {
   if (!textareaRef.value) return;
-  const { scrollTop, scrollLeft } = textareaRef.value;
+  const { scrollTop } = textareaRef.value;
   if (codeGutterRef.value) codeGutterRef.value.scrollTop = scrollTop;
-  if (codeHighlightRef.value) {
-    codeHighlightRef.value.scrollTop = scrollTop;
-    codeHighlightRef.value.scrollLeft = scrollLeft;
-  }
+  if (codeHighlightRef.value) codeHighlightRef.value.scrollTop = scrollTop;
+  saveScrollState();
 };
 
 const escapeHtmlForHighlight = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1621,6 +1678,14 @@ const syncCodeToVisual = () => {
     // user doesn't lose their editing position on every small structural edit.
     const shouldPreserveCaret = !!(document.activeElement && canvasRef.value.contains(document.activeElement));
     const caretOffset = shouldPreserveCaret ? getCaretCharacterOffsetWithin(canvasRef.value) : 0;
+    // Rebuilding innerHTML below also resets scrollTop to 0 — preserved
+    // regardless of focus (unlike the caret above), since a rebuild can be
+    // triggered by something with no connection to what's focused right
+    // now (e.g. project/template data finishing an async load a moment
+    // after the initial render) and shouldn't silently throw away whatever
+    // scroll position — the user's, or one restoreCaretState() just set —
+    // was showing.
+    const scrollFraction = getScrollFraction(canvasRef.value);
 
     try {
       const html = compileMarkdownToHtml(editorText.value);
@@ -1781,6 +1846,7 @@ const syncCodeToVisual = () => {
       canvasRef.value.focus();
       setCaretCharacterOffsetWithin(canvasRef.value, caretOffset);
     }
+    setScrollFraction(canvasRef.value, scrollFraction);
   }
 };
 
@@ -1790,10 +1856,15 @@ const switchTab = (tab) => {
 
   // Capture the caret's position in terms of editorText — the one thing
   // both representations share — *before* switching, so it can be
-  // translated into the new tab's own terms once it's rendered.
+  // translated into the new tab's own terms once it's rendered. Same for
+  // the scroll fraction: cursor position alone doesn't guarantee landing
+  // at the same *scroll depth* the user was reading at (e.g. they scrolled
+  // without moving the caret), so both are carried across independently.
+  const fromEl = tab === 'code' ? canvasRef.value : textareaRef.value;
   const sourceOffset = tab === 'code'
     ? sourceOffsetFromVisualCaret()
     : (textareaRef.value?.selectionStart ?? 0);
+  const scrollFraction = getScrollFraction(fromEl);
 
   if (tab === 'code') {
     syncVisualToCode();
@@ -1806,10 +1877,14 @@ const switchTab = (tab) => {
     if (tab === 'code' && textareaRef.value) {
       textareaRef.value.focus();
       textareaRef.value.setSelectionRange(sourceOffset, sourceOffset);
+      recomputeLineHeights();
+      // Set *after* focus/selection — a browser's own "scroll the caret
+      // into view" reaction to that would otherwise override it.
+      setScrollFraction(textareaRef.value, scrollFraction);
     } else if (tab === 'visual' && canvasRef.value) {
       canvasRef.value.focus();
       visualCaretFromSourceOffset(sourceOffset);
-      scrollCaretIntoView();
+      setScrollFraction(canvasRef.value, scrollFraction);
     }
     updateActiveLoopContext();
   });
@@ -2395,19 +2470,6 @@ const visualCaretFromSourceOffset = (offset) => {
   setCaretCharacterOffsetWithin(canvasRef.value, renderedLength);
 };
 
-// Scrolls the visual canvas so the current selection is visible. The code
-// textarea doesn't need this — browsers already scroll a <textarea> to the
-// caret on focus()+setSelectionRange() — but a contenteditable doesn't
-// reliably auto-scroll after a programmatic Range change.
-const scrollCaretIntoView = () => {
-  if (activeEditorTab.value !== 'visual') return;
-  const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0) return;
-  const node = sel.getRangeAt(0).startContainer;
-  const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-  el?.scrollIntoView({ block: 'nearest' });
-};
-
 // A single canonical position — an offset into editorText, the Markdown+
 // Jinja2 source that's the one real source of truth regardless of which tab
 // is active — replaces the old, disjoint caretCode/caretVisual keys (each
@@ -2417,22 +2479,38 @@ const scrollCaretIntoView = () => {
 // has its own undo history (cellHistory) — it has no business reading or
 // writing the main document's cursor-position keys (the same reasoning as
 // the store.editorActions !isCellMode guard elsewhere in this file).
-const saveCaretState = () => {
-  if (props.isCellMode) return;
+const getCaretStorageKeys = () => {
   const pName = store.currentProjectName || localStorage.getItem('currentProjectName') || 'Default';
   const dName = store.activeDocName || localStorage.getItem(`${pName}:activeDocName`) || 'Document Principal';
+  return { pName, dName };
+};
+
+// Persists only the scroll position (not the caret) — called from plain
+// scroll events, which fire far more often than selectionchange and don't
+// need the (relatively expensive) sourceOffsetFromVisualCaret() conversion
+// saveCaretState below does.
+const saveScrollState = () => {
+  if (props.isCellMode) return;
+  const { pName, dName } = getCaretStorageKeys();
+  const activeEl = activeEditorTab.value === 'code' ? textareaRef.value : canvasRef.value;
+  localStorage.setItem(`${pName}:doc:${dName}:scrollFraction`, getScrollFraction(activeEl));
+};
+
+const saveCaretState = () => {
+  if (props.isCellMode) return;
+  const { pName, dName } = getCaretStorageKeys();
 
   const pos = activeEditorTab.value === 'code' && textareaRef.value
     ? (textareaRef.value.selectionStart || 0)
     : sourceOffsetFromVisualCaret();
   localStorage.setItem(`${pName}:doc:${dName}:sourceCaretOffset`, pos);
   localStorage.setItem(`${pName}:doc:${dName}:activeEditorTab`, activeEditorTab.value);
+  saveScrollState();
 };
 
 const restoreCaretState = () => {
   if (props.isCellMode) return;
-  const pName = store.currentProjectName || localStorage.getItem('currentProjectName') || 'Default';
-  const dName = store.activeDocName || localStorage.getItem(`${pName}:activeDocName`) || 'Document Principal';
+  const { pName, dName } = getCaretStorageKeys();
 
   const savedTab = localStorage.getItem(`${pName}:doc:${dName}:activeEditorTab`);
   if (savedTab && (savedTab === 'visual' || savedTab === 'code')) {
@@ -2440,22 +2518,43 @@ const restoreCaretState = () => {
   }
 
   const savedOffset = parseInt(localStorage.getItem(`${pName}:doc:${dName}:sourceCaretOffset`) || '0', 10);
-  if (!savedOffset) return;
+  const savedScrollFraction = parseFloat(localStorage.getItem(`${pName}:doc:${dName}:scrollFraction`) || '0');
 
   nextTick(() => {
     if (activeEditorTab.value === 'code' && textareaRef.value) {
-      textareaRef.value.focus();
-      textareaRef.value.setSelectionRange(savedOffset, savedOffset);
+      if (savedOffset) {
+        textareaRef.value.focus();
+        textareaRef.value.setSelectionRange(savedOffset, savedOffset);
+      }
+      recomputeLineHeights();
+      // Set *after* focus/selection — a browser's own "scroll the caret
+      // into view" reaction to that would otherwise override it.
+      setScrollFraction(textareaRef.value, savedScrollFraction);
     } else if (activeEditorTab.value === 'visual' && canvasRef.value) {
-      visualCaretFromSourceOffset(savedOffset);
-      scrollCaretIntoView();
+      if (savedOffset) visualCaretFromSourceOffset(savedOffset);
+      setScrollFraction(canvasRef.value, savedScrollFraction);
     }
   });
 };
 
+// selectionchange is a *document*-level event — it fires for any selection
+// change anywhere on the page, not just within this editor, including ones
+// this component itself causes indirectly (e.g. syncCodeToVisual()
+// rebuilding the canvas's innerHTML clears whatever selection was inside
+// it). Without this check, such a spurious event's handler would read the
+// canvas's currently-unset scrollTop/selection as if it were real and
+// overwrite the correctly-persisted values with it — this is what broke
+// reload-restored scroll position: a late data-load re-render fired well
+// after restoreCaretState() had already applied it correctly.
+const isSelectionWithinActiveEditor = () => {
+  if (activeEditorTab.value === 'code') return document.activeElement === textareaRef.value;
+  const sel = window.getSelection();
+  return !!(canvasRef.value && sel && sel.rangeCount > 0 && canvasRef.value.contains(sel.getRangeAt(0).commonAncestorContainer));
+};
+
 const handleSelectionChange = () => {
   saveSelection();
-  saveCaretState();
+  if (isSelectionWithinActiveEditor()) saveCaretState();
   updateActiveLoopContext();
 };
 
@@ -2478,6 +2577,7 @@ watch(() => activeEditorTab.value, () => {
 watch(() => editorText.value, () => {
   if (activeEditorTab.value === 'code') {
     updateActiveLoopContext();
+    recomputeLineHeights();
   }
 });
 
@@ -2551,12 +2651,21 @@ onMounted(() => {
       const targetLineText = lines[targetLine] || '';
       textareaRef.value.focus();
       textareaRef.value.setSelectionRange(charOffset, charOffset + targetLineText.length);
-      
-      const totalLines = Math.max(lines.length, 1);
-      const computedLineHeight = textareaRef.value.scrollHeight / totalLines;
-      const scrollPos = Math.max(0, (targetLine * computedLineHeight) - 80);
-      
-      textareaRef.value.scrollTop = scrollPos;
+
+      // Lines wrap to different heights now, so a uniform scrollHeight/
+      // totalLines estimate would land increasingly off for a document with
+      // long wrapped paragraphs above the target line. Use the real
+      // per-line heights already measured for the gutter when they're
+      // current for this text; the uniform estimate is still a reasonable
+      // fallback for the first jump before that measurement exists.
+      let scrollPos;
+      if (lineHeightsPx.value.length === lines.length) {
+        scrollPos = lineHeightsPx.value.slice(0, targetLine).reduce((sum, h) => sum + h, 0);
+      } else {
+        const totalLines = Math.max(lines.length, 1);
+        scrollPos = targetLine * (textareaRef.value.scrollHeight / totalLines);
+      }
+      textareaRef.value.scrollTop = Math.max(0, scrollPos - 80);
     }
   };
 
@@ -2590,12 +2699,22 @@ onMounted(() => {
   document.addEventListener('selectionchange', handleSelectionChange);
   restoreCaretState();
   updateActiveLoopContext();
+
+  // A width change (window resize, the panel being resized, browser zoom)
+  // changes where every wrapped line breaks, so the gutter's per-line
+  // heights need remeasuring — ResizeObserver catches all of those, unlike
+  // a plain window "resize" listener (which misses panel-only resizes).
+  if (textareaRef.value) {
+    lineHeightsResizeObserver = new ResizeObserver(() => recomputeLineHeights());
+    lineHeightsResizeObserver.observe(textareaRef.value);
+  }
 });
 
 onUnmounted(() => {
   delete window.__openPandocMetadataModal;
   window.removeEventListener('keydown', handleGlobalKeyDown);
   document.removeEventListener('selectionchange', handleSelectionChange);
+  lineHeightsResizeObserver?.disconnect();
 });
 </script>
 
@@ -2734,16 +2853,20 @@ onUnmounted(() => {
           @click="onCanvasClick"
           @mouseup="onCanvasMouseUp"
           @focus="onCanvasFocus"
+          @scroll="saveScrollState"
         ></div>
 
         <!-- Code Raw Editor: line-number gutter + syntax-highlighted backdrop
              behind a transparent-text textarea (the textarea itself is the
              one and only place the real text lives — the backdrop is a
              purely visual, regenerated-on-every-keystroke layer, so a
-             highlighting bug can never corrupt or lose content). -->
+             highlighting bug can never corrupt or lose content). Long lines
+             wrap (this edits prose, not short code lines) — each gutter
+             number's own height is measured to match however many visual
+             rows its line actually wraps to, so it still lines up. -->
         <div v-show="activeEditorTab === 'code'" class="code-editor-wrapper">
           <div ref="codeGutterRef" class="code-gutter">
-            <span v-for="n in linesCount" :key="n">{{ n }}</span>
+            <span v-for="(h, idx) in lineHeightsPx" :key="idx" :style="{ height: h + 'px', lineHeight: h + 'px' }">{{ idx + 1 }}</span>
           </div>
           <div class="code-editor-scroll-area">
             <pre ref="codeHighlightRef" class="code-highlight-backdrop" aria-hidden="true"><code v-html="highlightedCodeHtml"></code></pre>
@@ -3114,7 +3237,8 @@ onUnmounted(() => {
   font-family: var(--font-mono);
   font-size: 0.9rem;
   line-height: 1.6;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
   overflow: hidden;
   pointer-events: none;
   color: var(--text-primary);
@@ -3125,17 +3249,21 @@ onUnmounted(() => {
   background: none;
 }
 
-/* Line numbers require each source line to occupy exactly one visual row,
-   so wrapping is off here (standard for code editors) — long lines scroll
-   horizontally instead, kept in sync with the backdrop above. */
+/* This edits prose (Jinja2/Markdown source), not short code lines, so long
+   lines wrap rather than scrolling horizontally like a typical code editor
+   would — each gutter number's own height is measured (recomputeLineHeights,
+   in the script) to match however many visual rows its line wraps to,
+   instead of assuming one fixed-height row per line. */
 .editor-textarea.code-editor-textarea {
   position: relative;
   z-index: 1;
   background: transparent;
   color: transparent;
   caret-color: var(--text-primary);
-  white-space: pre;
-  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  overflow-x: hidden;
+  overflow-y: auto;
   resize: none;
   width: 100%;
   height: 100%;

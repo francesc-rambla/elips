@@ -17,7 +17,7 @@
 -->
 
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import { marked } from 'marked';
 import katex from 'katex';
@@ -25,6 +25,37 @@ import katex from 'katex';
 const store = useWorkspaceStore();
 
 const isGenerated = computed(() => !!store.renderedMarkdown);
+
+// Keeps the two preview panes (rendered HTML and raw Markdown) scrolled
+// together — proportionally, not pixel-for-pixel, since the same document
+// renders at very different total heights in each. A guard flag prevents
+// the feedback loop a programmatic scrollTop write would otherwise cause
+// (it fires that pane's own 'scroll' event too).
+const htmlPaneRef = ref(null);
+const mdPaneRef = ref(null);
+let isSyncingPreviewScroll = false;
+
+const getScrollFraction = (el) => {
+  if (!el) return 0;
+  const max = el.scrollHeight - el.clientHeight;
+  return max > 0 ? el.scrollTop / max : 0;
+};
+
+const setScrollFraction = (el, fraction) => {
+  if (!el) return;
+  const max = el.scrollHeight - el.clientHeight;
+  el.scrollTop = max > 0 ? fraction * max : 0;
+};
+
+const syncPreviewScroll = (fromEl, toEl) => {
+  if (isSyncingPreviewScroll) return;
+  isSyncingPreviewScroll = true;
+  setScrollFraction(toEl, getScrollFraction(fromEl));
+  requestAnimationFrame(() => { isSyncingPreviewScroll = false; });
+};
+
+const onHtmlPaneScroll = () => syncPreviewScroll(htmlPaneRef.value, mdPaneRef.value);
+const onMdPaneScroll = () => syncPreviewScroll(mdPaneRef.value, htmlPaneRef.value);
 
 const parseYamlHeader = (rawYaml) => {
   const meta = {};
@@ -169,7 +200,7 @@ const copyMd = () => {
         <span style="font-size: 0.75rem; color: var(--color-success)">Previsualització HTML (Interactiva)</span>
       </div>
       
-      <div class="preview-body markdown-preview" id="previewHtml" @click="handlePreviewClick">
+      <div ref="htmlPaneRef" class="preview-body markdown-preview" id="previewHtml" @click="handlePreviewClick" @scroll="onHtmlPaneScroll">
         <div v-if="!isGenerated" style="text-align:center; padding:5rem 1rem; color:var(--text-muted)">
           <p>No hi ha cap document generat encara.</p>
           <p style="font-size:0.8rem; margin-top:0.5rem">Fes clic al botó "Genera Documents" al panell esquerre.</p>
@@ -192,11 +223,13 @@ const copyMd = () => {
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
         </button>
       </div>
-      <textarea 
-        class="raw-textarea" 
-        readonly 
+      <textarea
+        ref="mdPaneRef"
+        class="raw-textarea"
+        readonly
         :value="store.cleanMarkdown || store.renderedMarkdown"
         placeholder="El markdown generat apareixerà aquí..."
+        @scroll="onMdPaneScroll"
       ></textarea>
     </div>
   </div>
