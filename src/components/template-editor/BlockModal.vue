@@ -27,7 +27,7 @@
  * ELIF/ELSE buttons back to openBlockModal and shares insertBranchAtCursorOrFooter
  * with the canvas's own "+ ELSE" button, so it stays canvas-level parent state.
  */
-import { ref, watch, nextTick } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -47,11 +47,29 @@ const blockForItemVar = ref('item');
 const blockForArrayVar = ref('');
 const blockExprInputRef = ref(null);
 
+// Search box for the data browser — a model can carry many fields, so
+// scrolling to find one is impractical. Filters the same flat lists the
+// browser already renders, so results stay consistent with what's shown
+// without a search term.
+const browserSearchQuery = ref('');
+const normalizeSearchText = (s) => (s || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const filteredAvailableVariables = computed(() => {
+  const q = normalizeSearchText(browserSearchQuery.value.trim());
+  if (!q) return props.availableVariables;
+  return props.availableVariables.filter((v) => normalizeSearchText(v.path).includes(q) || normalizeSearchText(v.label || '').includes(q));
+});
+const filteredAvailableArrays = computed(() => {
+  const q = normalizeSearchText(browserSearchQuery.value.trim());
+  if (!q) return props.availableArrays;
+  return props.availableArrays.filter((arr) => normalizeSearchText(arr).includes(q));
+});
+
 watch(() => props.modelValue, (open) => {
   if (!open) return;
   blockExpr.value = props.initialExpr || '';
   blockForItemVar.value = props.initialForItemVar || 'item';
   blockForArrayVar.value = props.initialForArrayVar || '';
+  browserSearchQuery.value = '';
 });
 
 const close = () => emit('update:modelValue', false);
@@ -143,10 +161,30 @@ defineExpose({ apply });
             Carrega un Excel per activar el navegador.
           </div>
 
+          <div v-else style="position: relative; margin-bottom: 0.5rem;">
+            <input
+              type="text"
+              v-model="browserSearchQuery"
+              placeholder="🔎 Cerca un camp o una taula..."
+              style="width: 100%; padding: 5px 24px 5px 8px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.75rem; background: var(--bg-primary); color: var(--text-primary); box-sizing: border-box;"
+            >
+            <button
+              v-if="browserSearchQuery"
+              type="button"
+              class="btn-icon-only"
+              title="Neteja la cerca"
+              @click="browserSearchQuery = ''"
+              style="position: absolute; right: 3px; top: 50%; transform: translateY(-50%); border: none; background: none; cursor: pointer; font-size: 0.8rem; line-height: 1; color: var(--text-muted);"
+            >&times;</button>
+          </div>
+
           <!-- Variable List for IF/ELIF -->
-          <div v-else-if="blockType !== 'for'" style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem; padding-right: 2px;">
+          <div v-if="availableVariables.length > 0 && blockType !== 'for'" style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem; padding-right: 2px;">
+            <div v-if="filteredAvailableVariables.length === 0" style="font-size:0.75rem; color:var(--text-muted); font-style:italic">
+              Cap resultat per «{{ browserSearchQuery }}».
+            </div>
             <div
-              v-for="v in availableVariables"
+              v-for="v in filteredAvailableVariables"
               :key="v.path"
               class="variable-item present"
               :style="v.isContext ? 'margin: 0; font-size: 0.75rem; padding: 4px 6px; background-color: var(--color-success-light); border-left: 3px solid var(--color-success); justify-content: space-between;' : (v.category === 'array' || v.category === 'arrayExpr' ? 'margin: 0; font-size: 0.75rem; padding: 4px 6px; background-color: var(--color-primary-light); justify-content: space-between;' : 'margin: 0; font-size: 0.75rem; padding: 4px 6px; justify-content: space-between;')"
@@ -161,9 +199,9 @@ defineExpose({ apply });
           </div>
 
           <!-- Array List for FOR -->
-          <div v-else style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem; padding-right: 2px;">
+          <div v-else-if="blockType === 'for'" style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem; padding-right: 2px;">
             <div
-              v-for="arr in availableArrays"
+              v-for="arr in filteredAvailableArrays"
               :key="arr"
               class="variable-item present"
               style="margin: 0; font-size: 0.75rem; padding: 4px 6px; background-color: var(--color-primary-light); justify-content: space-between;"
@@ -175,6 +213,9 @@ defineExpose({ apply });
             </div>
             <div v-if="availableArrays.length === 0" style="font-size: 0.75rem; color: var(--text-muted); font-style: italic;">
               No s'ha detectat cap llista (array) al full de dades.
+            </div>
+            <div v-else-if="filteredAvailableArrays.length === 0" style="font-size: 0.75rem; color: var(--text-muted); font-style: italic;">
+              Cap resultat per «{{ browserSearchQuery }}».
             </div>
           </div>
         </div>

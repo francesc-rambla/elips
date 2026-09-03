@@ -154,48 +154,170 @@ const isSpecialCharModalOpen = ref(false);
 const modalTitle = ref('');
 const blockType = ref('if'); // 'if', 'for', 'elif'
 const modalExpr = ref('');
-const modalFilter = ref('');
 
-// Advanced Filter Selection State
-const selectedFilterType = ref(''); // '', 'coin', 'number', 'words', 'prefix', 'upper', 'lower', 'capitalize', 'title', 'default', 'length', 'replace', 'trim', 'custom'
-const filterParamFallback = ref('de');
-const filterParamElided = ref("d'");
-const filterParamDefault = ref('Sense dades');
-const filterParamReplaceOld = ref('');
-const filterParamReplaceNew = ref('');
-const filterCustomText = ref('');
+// Filter chain: variables can carry several filters piped one after another
+// ({{ x | trim | upper | default('N/A') }}), so the modal builds a list of
+// steps instead of a single dropdown. Catalog covers elips' own Catalan
+// formatting filters (coin/number/percent/words/prefix/sort/where/cert/fals,
+// all registered in engine.py) plus the standard Jinja2 filters most useful
+// in prose documents; anything not listed here can still be typed by hand
+// via the 'custom' step, which round-trips through the parser below like
+// any other step.
+const FILTER_CATALOG = [
+  { name: 'coin', label: '💶 coin — Format Moneda (ex: 15.250,50 €)', group: 'Formats numèrics i moneda', params: [] },
+  { name: 'number', label: '🔢 number — Format Numèric', group: 'Formats numèrics i moneda', params: [{ key: 'precision', label: 'Decimals', type: 'number', default: '2' }] },
+  { name: 'percent', label: '％ percent — Format Percentatge', group: 'Formats numèrics i moneda', params: [{ key: 'precision', label: 'Decimals', type: 'number', default: '2' }] },
+  { name: 'words', label: '🔤 words — Número a Text en Català (ex: 3 -> tres)', group: 'Formats numèrics i moneda', params: [] },
+  { name: 'round', label: 'round — Arrodoneix un número', group: 'Formats numèrics i moneda', params: [{ key: 'precision', label: 'Decimals', type: 'number', default: '0' }] },
+  { name: 'abs', label: 'abs — Valor absolut', group: 'Formats numèrics i moneda', params: [] },
+  { name: 'int', label: 'int — Converteix a número enter', group: 'Formats numèrics i moneda', params: [] },
+  { name: 'float', label: 'float — Converteix a número decimal', group: 'Formats numèrics i moneda', params: [] },
+
+  { name: 'prefix', label: "🔤 prefix — Apostrofació Automàtica (de / d')", group: 'Gramàtica i text en català', params: [{ key: 'fallback', label: 'Prefix Normal', default: 'de' }, { key: 'elided', label: "Prefix Apostrofat", default: "d'" }] },
+  { name: 'cert', label: 'cert — Interpreta com a booleà CERT', group: 'Gramàtica i text en català', params: [] },
+  { name: 'fals', label: 'fals — Interpreta com a booleà FALS', group: 'Gramàtica i text en català', params: [] },
+  { name: 'upper', label: '🔠 upper — Tot Majúscules', group: 'Gramàtica i text en català', params: [] },
+  { name: 'lower', label: '🔡 lower — Tot Minúscules', group: 'Gramàtica i text en català', params: [] },
+  { name: 'capitalize', label: 'capitalize — Primera lletra majúscula', group: 'Gramàtica i text en català', params: [] },
+  { name: 'title', label: 'title — Majúscula per cada paraula', group: 'Gramàtica i text en català', params: [] },
+  { name: 'trim', label: '✂️ trim — Eliminar espais en blanc', group: 'Gramàtica i text en català', params: [] },
+  { name: 'replace', label: '🔄 replace — Reemplaçar text', group: 'Gramàtica i text en català', params: [{ key: 'old', label: 'Text a Cercar', default: '' }, { key: 'new', label: 'Nou Text', default: '' }] },
+  { name: 'truncate', label: 'truncate — Escurça el text', group: 'Gramàtica i text en català', params: [{ key: 'length', label: 'Longitud màxima', type: 'number', default: '255' }] },
+  { name: 'wordwrap', label: 'wordwrap — Ajusta salts de línia', group: 'Gramàtica i text en català', params: [{ key: 'width', label: 'Amplada (caràcters)', type: 'number', default: '79' }] },
+  { name: 'striptags', label: 'striptags — Elimina etiquetes HTML', group: 'Gramàtica i text en català', params: [] },
+  { name: 'wordcount', label: 'wordcount — Compta paraules', group: 'Gramàtica i text en català', params: [] },
+
+  { name: 'sort', label: '↕️ sort — Ordena una llista', group: 'Llistes i sub-taules', params: [{ key: 'field', label: 'Camp (buit = pel valor)', default: '' }] },
+  { name: 'where', label: '🔎 where — Filtra registres per criteri', group: 'Llistes i sub-taules', params: [{ key: 'raw', label: "Criteri (ex: actiu=True)", raw: true }] },
+  { name: 'length', label: '📏 length — Compta caràcters o elements', group: 'Llistes i sub-taules', params: [] },
+  { name: 'first', label: 'first — Primer element', group: 'Llistes i sub-taules', params: [] },
+  { name: 'last', label: 'last — Últim element', group: 'Llistes i sub-taules', params: [] },
+  { name: 'join', label: 'join — Uneix una llista en text', group: 'Llistes i sub-taules', params: [{ key: 'sep', label: 'Separador', default: ', ' }] },
+  { name: 'min', label: 'min — Valor mínim', group: 'Llistes i sub-taules', params: [] },
+  { name: 'max', label: 'max — Valor màxim', group: 'Llistes i sub-taules', params: [] },
+  { name: 'sum', label: 'sum — Suma els valors', group: 'Llistes i sub-taules', params: [] },
+  { name: 'unique', label: 'unique — Elimina duplicats', group: 'Llistes i sub-taules', params: [] },
+  { name: 'reverse', label: "reverse — Inverteix l'ordre", group: 'Llistes i sub-taules', params: [] },
+
+  { name: 'default', label: '❓ default — Valor alternatiu si està buit', group: 'Control i altres', params: [{ key: 'value', label: 'Text o valor si la variable és buida', default: 'Sense dades' }] },
+  { name: 'string', label: 'string — Converteix a text', group: 'Control i altres', params: [] },
+  { name: 'safe', label: 'safe — No escapar HTML', group: 'Control i altres', params: [] },
+  { name: 'custom', label: '✏️ Lliure — escriu el filtre manualment', group: 'Control i altres', params: [{ key: 'raw', label: 'Filtre complet (nom i arguments)', placeholder: "selectattr('actiu')", raw: true }] },
+];
+const FILTER_GROUPS = ['Formats numèrics i moneda', 'Gramàtica i text en català', 'Llistes i sub-taules', 'Control i altres'];
+const FILTER_DEFS = Object.fromEntries(FILTER_CATALOG.map(f => [f.name, f]));
+const groupedFilterCatalog = FILTER_GROUPS.reduce((acc, g) => {
+  acc[g] = FILTER_CATALOG.filter(f => f.group === g);
+  return acc;
+}, {});
+const filterParamDefs = (name) => FILTER_DEFS[name]?.params || [];
+
+const filterChain = ref([]); // [{ id, name, params: {...} }]
+let filterChainIdSeq = 0;
+
+const onFilterStepNameChange = (item) => {
+  const params = {};
+  filterParamDefs(item.name).forEach((p) => { params[p.key] = p.default ?? ''; });
+  item.params = params;
+};
+
+const addFilterChainStep = () => {
+  filterChain.value.push({ id: ++filterChainIdSeq, name: '', params: {} });
+};
+
+const removeFilterChainStep = (id) => {
+  filterChain.value = filterChain.value.filter((f) => f.id !== id);
+};
+
+const moveFilterChainStep = (id, dir) => {
+  const idx = filterChain.value.findIndex((f) => f.id === id);
+  const newIdx = idx + dir;
+  if (idx < 0 || newIdx < 0 || newIdx >= filterChain.value.length) return;
+  const arr = filterChain.value.slice();
+  [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+  filterChain.value = arr;
+};
+
+const buildFilterExprForStep = (item) => {
+  const def = FILTER_DEFS[item.name];
+  if (!def) return '';
+  if (item.name === 'custom') return (item.params.raw || '').trim();
+  if (!def.params || def.params.length === 0) return item.name;
+  if (def.params.length === 1 && def.params[0].raw) {
+    const v = (item.params[def.params[0].key] ?? '').trim();
+    return v ? `${item.name}(${v})` : item.name;
+  }
+  const argsStr = def.params.map((p) => {
+    let v = item.params[p.key];
+    if (v === undefined || v === null || v === '') v = p.default ?? '';
+    if (p.type === 'number') return v;
+    return `'${String(v).replace(/'/g, "\\'")}'`;
+  }).join(', ');
+  return `${item.name}(${argsStr})`;
+};
 
 const computedModalFilter = computed(() => {
-  const t = selectedFilterType.value;
-  if (!t) return '';
-  if (t === 'coin') return 'coin';
-  if (t === 'number') return 'number';
-  if (t === 'words') return 'words';
-  if (t === 'prefix') {
-    const f = filterParamFallback.value || 'de';
-    const e = filterParamElided.value || "d'";
-    return `prefix('${f}', "${e}")`;
-  }
-  if (t === 'upper') return 'upper';
-  if (t === 'lower') return 'lower';
-  if (t === 'capitalize') return 'capitalize';
-  if (t === 'title') return 'title';
-  if (t === 'default') {
-    const d = filterParamDefault.value || '';
-    return `default('${d}')`;
-  }
-  if (t === 'length') return 'length';
-  if (t === 'trim') return 'trim';
-  if (t === 'replace') {
-    const o = filterParamReplaceOld.value || '';
-    const n = filterParamReplaceNew.value || '';
-    return `replace('${o}', '${n}')`;
-  }
-  if (t === 'custom') {
-    return filterCustomText.value;
-  }
-  return t;
+  return filterChain.value
+    .map(buildFilterExprForStep)
+    .map((s) => (s || '').trim())
+    .filter(Boolean)
+    .join(' | ');
 });
+
+// Splits a "filter1 | filter2(args)" string on its top-level '|'/','
+// separators only, ignoring any that appear inside quoted strings or
+// parentheses (e.g. replace('a, b', 'c') or a where() criteria containing
+// a comma) — a small hand-rolled scanner rather than a real parser, but
+// filter arguments in practice are always this simple.
+const splitTopLevel = (s, sep) => {
+  const parts = [];
+  let depth = 0, quote = null, cur = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (quote) {
+      cur += c;
+      if (c === quote && s[i - 1] !== '\\') quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"') { quote = c; cur += c; continue; }
+    if (c === '(') { depth++; cur += c; continue; }
+    if (c === ')') { depth--; cur += c; continue; }
+    if (c === sep && depth === 0) { parts.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  if (cur.trim() !== '' || parts.length > 0) parts.push(cur);
+  return parts.map((p) => p.trim());
+};
+
+const parseFilterStep = (piece) => {
+  const m = piece.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\((.*)\))?$/s);
+  if (!m || !FILTER_DEFS[m[1]]) return { id: ++filterChainIdSeq, name: 'custom', params: { raw: piece } };
+  const name = m[1];
+  const def = FILTER_DEFS[name];
+  const argsStr = m[2] !== undefined ? m[2] : null;
+  if (!def.params || def.params.length === 0) return { id: ++filterChainIdSeq, name, params: {} };
+  if (def.params.length === 1 && def.params[0].raw) {
+    return { id: ++filterChainIdSeq, name, params: { [def.params[0].key]: argsStr ?? '' } };
+  }
+  const argParts = splitTopLevel(argsStr || '', ',');
+  const params = {};
+  def.params.forEach((p, i) => {
+    let v = argParts[i];
+    if (v === undefined) { params[p.key] = p.default ?? ''; return; }
+    v = v.trim();
+    if (p.type !== 'number') {
+      const qm = v.match(/^(['"])([\s\S]*)\1$/);
+      v = qm ? qm[2] : v;
+    }
+    params[p.key] = v;
+  });
+  return { id: ++filterChainIdSeq, name, params };
+};
+
+const parseFilterChainFromRaw = (raw) => {
+  if (!raw) return [];
+  return splitTopLevel(raw, '|').filter(Boolean).map(parseFilterStep);
+};
 
 // Block modal: form state (expr/forItemVar/forArrayVar) lives in
 // BlockModal.vue; only the initial values used to populate it on open stay
@@ -513,6 +635,36 @@ const availableArrays = computed(() => {
   return Array.from(setList);
 });
 
+// Search box for the "Esquema de Dades" sidebar — models routinely have
+// dozens/hundreds of fields several levels deep, so scrolling the tree to
+// find one is impractical. Search runs over the already-flattened
+// availableVariables/availableArrays (built once for BlockModal's own data
+// browser) rather than the nested sidebarTree, so a match surfaces
+// regardless of how deep the field is or whether its parent loop is
+// currently active in the cursor's context.
+const varSearchQuery = ref('');
+const normalizeSearchText = (s) => (s || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+const filteredVariableSearchResults = computed(() => {
+  const q = normalizeSearchText(varSearchQuery.value.trim());
+  if (!q) return [];
+  return availableVariables.value.filter((v) => v.category !== 'array' && (
+    normalizeSearchText(v.label).includes(q) || normalizeSearchText(v.path).includes(q)
+  ));
+});
+
+const filteredArraySearchResults = computed(() => {
+  const q = normalizeSearchText(varSearchQuery.value.trim());
+  if (!q) return [];
+  return availableArrays.value.filter((p) => normalizeSearchText(p).includes(q));
+});
+
+const sidebarSearchInsertArray = (arrayPath) => {
+  const key = arrayPath.split('.').pop();
+  const iteratorName = key.replace(/s$/, '').replace(/es$/, '') || 'item';
+  sidebarInsertLoop(key, arrayPath, iteratorName, []);
+};
+
 const sidebarTree = computed(() => {
   if (!store.excelJsonData) return [];
   const result = [];
@@ -753,69 +905,15 @@ const openVarModal = (node = null) => {
     const parts = raw.split('|');
     modalExpr.value = parts[0].trim();
     rawFilter = parts.slice(1).join('|').trim();
-    modalFilter.value = rawFilter;
     modalTitle.value = "Editar Variable";
   } else {
     activeEditNode = null;
     modalExpr.value = '';
     rawFilter = '';
-    modalFilter.value = '';
     modalTitle.value = "Inserir Variable";
   }
 
-  // Parse rawFilter to set selectedFilterType and param inputs
-  if (!rawFilter) {
-    selectedFilterType.value = '';
-  } else if (rawFilter === 'coin') {
-    selectedFilterType.value = 'coin';
-  } else if (rawFilter === 'number') {
-    selectedFilterType.value = 'number';
-  } else if (rawFilter === 'words') {
-    selectedFilterType.value = 'words';
-  } else if (rawFilter === 'upper') {
-    selectedFilterType.value = 'upper';
-  } else if (rawFilter === 'lower') {
-    selectedFilterType.value = 'lower';
-  } else if (rawFilter === 'capitalize') {
-    selectedFilterType.value = 'capitalize';
-  } else if (rawFilter === 'title') {
-    selectedFilterType.value = 'title';
-  } else if (rawFilter === 'length') {
-    selectedFilterType.value = 'length';
-  } else if (rawFilter === 'trim') {
-    selectedFilterType.value = 'trim';
-  } else if (rawFilter.startsWith('prefix')) {
-    selectedFilterType.value = 'prefix';
-    const match = rawFilter.match(/prefix\(\s*['"](.*?)['"]\s*,\s*['"](.*?)['"]\s*\)/);
-    if (match) {
-      filterParamFallback.value = match[1];
-      filterParamElided.value = match[2];
-    } else {
-      filterParamFallback.value = 'de';
-      filterParamElided.value = "d'";
-    }
-  } else if (rawFilter.startsWith('default')) {
-    selectedFilterType.value = 'default';
-    const match = rawFilter.match(/default\(\s*['"](.*?)['"]\s*\)/);
-    if (match) {
-      filterParamDefault.value = match[1];
-    } else {
-      filterParamDefault.value = 'Sense dades';
-    }
-  } else if (rawFilter.startsWith('replace')) {
-    selectedFilterType.value = 'replace';
-    const match = rawFilter.match(/replace\(\s*['"](.*?)['"]\s*,\s*['"](.*?)['"]\s*\)/);
-    if (match) {
-      filterParamReplaceOld.value = match[1];
-      filterParamReplaceNew.value = match[2];
-    } else {
-      filterParamReplaceOld.value = '';
-      filterParamReplaceNew.value = '';
-    }
-  } else {
-    selectedFilterType.value = 'custom';
-    filterCustomText.value = rawFilter;
-  }
+  filterChain.value = parseFilterChainFromRaw(rawFilter);
 
   isVarModalOpen.value = true;
 };
@@ -2892,6 +2990,25 @@ onUnmounted(() => {
       <div class="variables-sidebar">
       <div class="variables-title">Esquema de Dades</div>
 
+      <!-- Search box: models routinely have many fields several levels deep,
+           so scrolling the tree to find one is impractical. -->
+      <div v-if="store.excelJsonData" style="position: relative; margin-bottom: 0.5rem;">
+        <input
+          type="text"
+          v-model="varSearchQuery"
+          placeholder="🔎 Cerca un camp o una taula..."
+          style="width: 100%; padding: 6px 26px 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); font-size: 0.78rem; background: var(--bg-primary); color: var(--text-primary); box-sizing: border-box;"
+        >
+        <button
+          v-if="varSearchQuery"
+          type="button"
+          class="btn-icon-only"
+          title="Neteja la cerca"
+          @click="varSearchQuery = ''"
+          style="position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: none; background: none; cursor: pointer; font-size: 0.85rem; line-height: 1; color: var(--text-muted);"
+        >&times;</button>
+      </div>
+
       <!-- Manual Template Verification Trigger Card -->
       <div style="background: var(--bg-tertiary); border: 1px solid var(--border-color); padding: 8px 10px; border-radius: var(--radius-sm); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 6px;">
         <div style="display: flex; align-items: center; justify-content: space-between;">
@@ -2931,82 +3048,116 @@ onUnmounted(() => {
         </div>
       </div>
       
-      <!-- Active Loop Stack Cards (ordered by depth: innermost loop first) -->
-      <div v-for="(ctx, idx) in activeLoopStack" :key="ctx.iterator + idx" style="background-color: var(--color-primary-light); padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border-focus); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;">
-        <div style="font-size: 0.68rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase; display: flex; align-items: center; justify-content: space-between;">
-          <span style="display: flex; align-items: center; gap: 4px;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-            Iterador #{{ idx + 1 }}: {{ ctx.iterator }}
-          </span>
-          <span class="variable-badge present" style="background-color: var(--color-primary); color: white; font-size: 0.58rem;">for {{ ctx.iterator }} in {{ ctx.arrayPath }}</span>
-        </div>
-        
-        <div style="display:flex; flex-direction:column; gap:0.25rem; margin-top:0.2rem;">
-          <!-- Primitive fields of active iterator -->
-          <div 
-            v-for="col in ctx.columns" 
-            :key="col"
-            class="variable-item present"
-            style="background-color: var(--bg-card); margin: 0; font-size: 0.72rem; padding: 2px 6px; justify-content: space-between;"
-            @click="sidebarCopyInsert(`{{ ${ctx.iterator}.${col} }}`)"
-            :title="`Insereix variable ${ctx.iterator}.${col}`"
-          >
-            <span style="font-weight: 600;" :title="ctx.iterator + '.' + col">{{ getFieldCustomLabel(col) }}</span>
-            <span class="variable-badge present" style="font-size:0.58rem; background-color: var(--color-primary); color: white;">{{ ctx.iterator }}.{{ col }}</span>
-          </div>
-
-          <!-- Child Sub-Arrays for active iterator (if any) -->
-          <div 
-            v-for="subArray in getSubArraysForArray(ctx.arrayPath)" 
-            :key="subArray.key"
-            class="variable-item present"
-            style="background-color: var(--color-primary-light); margin: 2px 0 0 0; font-size: 0.72rem; padding: 3px 6px; justify-content: space-between;"
-            @click="sidebarInsertLoop(subArray.key, `${ctx.iterator}.${subArray.key}`, subArray.iteratorName, subArray.fields)"
-            :title="`Insereix bucle d'iteració per a ${ctx.iterator}.${subArray.key}`"
-          >
-            <span style="font-weight: 700; color: var(--color-primary);">Itera {{ ctx.iterator }}.{{ subArray.key }}</span>
-            <span class="variable-badge present" style="background-color: var(--color-primary); color: white; font-size: 0.58rem;">Bucle</span>
-          </div>
-        </div>
-      </div>
-
       <div v-if="!store.excelJsonData" style="font-size:0.75rem; color:var(--text-muted); font-style:italic">
         Carrega un Excel per generar la llista de variables disponibles.
       </div>
-      <div v-else style="display:flex; flex-direction:column; gap:0.6rem; flex: 1; overflow-y: auto; min-height: 0;">
-        <!-- Root Data Model Card -->
-        <div v-for="node in sidebarTree" :key="node.name" style="margin-bottom:0.5rem;">
-          <div style="font-size: 0.78rem; font-weight: 700; color: var(--text-secondary); margin-bottom: 0.25rem; border-bottom: 1px solid var(--border-color); padding-bottom: 2px;">
-            Model: {{ node.name }}
-          </div>
-          
-          <!-- Top-level Primitive Keys -->
-          <div 
-            v-for="f in node.fields" 
-            :key="typeof f === 'string' ? f : f.fullPath" 
-            class="variable-item present"
-            style="margin-bottom: 0.25rem;"
-            @click="sidebarCopyInsert(`{{ ${typeof f === 'string' ? node.name + '.' + f : f.fullPath} }}`)"
-            title="Clica per copiar i inserir variable"
-          >
-            <span :title="typeof f === 'string' ? f : f.key">{{ getFieldCustomLabel(typeof f === 'string' ? f : f.key) }}</span>
-            <span class="variable-badge present">Clau</span>
+
+      <!-- Flat search results: bypasses the tree/loop-context nesting below
+           entirely, since a search should find a field no matter how deep
+           it lives or whether its parent loop happens to be active. -->
+      <div v-else-if="varSearchQuery.trim()" style="display:flex; flex-direction:column; gap:0.6rem; flex: 1; overflow-y: auto; min-height: 0;">
+        <div v-if="filteredVariableSearchResults.length === 0 && filteredArraySearchResults.length === 0" style="font-size:0.75rem; color:var(--text-muted); font-style:italic">
+          Cap resultat per «{{ varSearchQuery }}».
+        </div>
+        <div
+          v-for="v in filteredVariableSearchResults"
+          :key="v.path"
+          class="variable-item present"
+          :style="v.isContext ? 'margin: 0; font-size: 0.75rem; padding: 4px 6px; background-color: var(--color-success-light); border-left: 3px solid var(--color-success); justify-content: space-between;' : 'margin: 0; font-size: 0.75rem; padding: 4px 6px; justify-content: space-between;'"
+          @click="sidebarCopyInsert(`{{ ${v.path} }}`)"
+          title="Clica per copiar i inserir variable"
+        >
+          <span style="font-weight: 600;">{{ v.label }}</span>
+          <span class="variable-badge present" style="font-size:0.58rem;">{{ v.path }}</span>
+        </div>
+        <div
+          v-for="arr in filteredArraySearchResults"
+          :key="arr"
+          class="variable-item present"
+          style="background-color: var(--color-primary-light); margin: 0; font-size: 0.75rem; padding: 4px 6px; justify-content: space-between;"
+          @click="sidebarSearchInsertArray(arr)"
+          title="Clica per copiar i inserir bucle Jinja"
+        >
+          <span style="font-weight: 700; color: var(--color-primary);">Itera {{ arr }}</span>
+          <span class="variable-badge present" style="background-color: var(--color-primary); color: white; font-size: 0.58rem;">Bucle</span>
+        </div>
+      </div>
+
+      <template v-else>
+        <!-- Active Loop Stack Cards (ordered by depth: innermost loop first) -->
+        <div v-for="(ctx, idx) in activeLoopStack" :key="ctx.iterator + idx" style="background-color: var(--color-primary-light); padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border-focus); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;">
+          <div style="font-size: 0.68rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase; display: flex; align-items: center; justify-content: space-between;">
+            <span style="display: flex; align-items: center; gap: 4px;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              Iterador #{{ idx + 1 }}: {{ ctx.iterator }}
+            </span>
+            <span class="variable-badge present" style="background-color: var(--color-primary); color: white; font-size: 0.58rem;">for {{ ctx.iterator }} in {{ ctx.arrayPath }}</span>
           </div>
 
-          <!-- Top-level Sub-Arrays (e.g. parts) -->
-          <div v-for="sub in node.subArrays" :key="sub.key" style="margin-top: 0.3rem;">
-            <div 
+          <div style="display:flex; flex-direction:column; gap:0.25rem; margin-top:0.2rem;">
+            <!-- Primitive fields of active iterator -->
+            <div
+              v-for="col in ctx.columns"
+              :key="col"
               class="variable-item present"
-              style="background-color: var(--color-primary-light); padding: 3px 6px;"
-              @click="sidebarInsertLoop(sub.key, sub.fullPath, sub.iteratorName, sub.fields)"
-              title="Clica per copiar i inserir bucle Jinja"
+              style="background-color: var(--bg-card); margin: 0; font-size: 0.72rem; padding: 2px 6px; justify-content: space-between;"
+              @click="sidebarCopyInsert(`{{ ${ctx.iterator}.${col} }}`)"
+              :title="`Insereix variable ${ctx.iterator}.${col}`"
             >
-              <span style="font-weight: 700; color: var(--color-primary);">Itera {{ sub.key }}</span>
+              <span style="font-weight: 600;" :title="ctx.iterator + '.' + col">{{ getFieldCustomLabel(col) }}</span>
+              <span class="variable-badge present" style="font-size:0.58rem; background-color: var(--color-primary); color: white;">{{ ctx.iterator }}.{{ col }}</span>
+            </div>
+
+            <!-- Child Sub-Arrays for active iterator (if any) -->
+            <div
+              v-for="subArray in getSubArraysForArray(ctx.arrayPath)"
+              :key="subArray.key"
+              class="variable-item present"
+              style="background-color: var(--color-primary-light); margin: 2px 0 0 0; font-size: 0.72rem; padding: 3px 6px; justify-content: space-between;"
+              @click="sidebarInsertLoop(subArray.key, `${ctx.iterator}.${subArray.key}`, subArray.iteratorName, subArray.fields)"
+              :title="`Insereix bucle d'iteració per a ${ctx.iterator}.${subArray.key}`"
+            >
+              <span style="font-weight: 700; color: var(--color-primary);">Itera {{ ctx.iterator }}.{{ subArray.key }}</span>
               <span class="variable-badge present" style="background-color: var(--color-primary); color: white; font-size: 0.58rem;">Bucle</span>
             </div>
           </div>
         </div>
-      </div>
+
+        <div style="display:flex; flex-direction:column; gap:0.6rem; flex: 1; overflow-y: auto; min-height: 0;">
+          <!-- Root Data Model Card -->
+          <div v-for="node in sidebarTree" :key="node.name" style="margin-bottom:0.5rem;">
+            <div style="font-size: 0.78rem; font-weight: 700; color: var(--text-secondary); margin-bottom: 0.25rem; border-bottom: 1px solid var(--border-color); padding-bottom: 2px;">
+              Model: {{ node.name }}
+            </div>
+
+            <!-- Top-level Primitive Keys -->
+            <div
+              v-for="f in node.fields"
+              :key="typeof f === 'string' ? f : f.fullPath"
+              class="variable-item present"
+              style="margin-bottom: 0.25rem;"
+              @click="sidebarCopyInsert(`{{ ${typeof f === 'string' ? node.name + '.' + f : f.fullPath} }}`)"
+              title="Clica per copiar i inserir variable"
+            >
+              <span :title="typeof f === 'string' ? f : f.key">{{ getFieldCustomLabel(typeof f === 'string' ? f : f.key) }}</span>
+              <span class="variable-badge present">Clau</span>
+            </div>
+
+            <!-- Top-level Sub-Arrays (e.g. parts) -->
+            <div v-for="sub in node.subArrays" :key="sub.key" style="margin-top: 0.3rem;">
+              <div
+                class="variable-item present"
+                style="background-color: var(--color-primary-light); padding: 3px 6px;"
+                @click="sidebarInsertLoop(sub.key, sub.fullPath, sub.iteratorName, sub.fields)"
+                title="Clica per copiar i inserir bucle Jinja"
+              >
+                <span style="font-weight: 700; color: var(--color-primary);">Itera {{ sub.key }}</span>
+                <span class="variable-badge present" style="background-color: var(--color-primary); color: white; font-size: 0.58rem;">Bucle</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
 
     <!-- 1. Variable Configuration Modal -->
@@ -3023,71 +3174,34 @@ onUnmounted(() => {
           </div>
 
           <div class="form-row">
-            <label style="font-weight: bold; font-size: 0.8rem; margin-bottom: 4px; display: block;">Filtre Jinja2 (Opcional)</label>
-            <select v-model="selectedFilterType" style="width: 100%; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.85rem; background: var(--bg-primary); color: var(--text-primary);">
-              <option value="">-- Sense filtre --</option>
-              <optgroup label="Formats Numèrics i Moneda">
-                <option value="coin">💶 coin — Format Moneda (ex: 15.250,50 €)</option>
-                <option value="number">🔢 number — Format Numèric (ex: 15.250,50)</option>
-                <option value="words">🔤 words — Número a Text en Català (ex: 3 -> tres)</option>
-              </optgroup>
-              <optgroup label="Gramàtica i Text en Català">
-                <option value="prefix">🔤 prefix — Apostrofació Automàtica (de / d')</option>
-                <option value="upper">🔠 upper — Tot Majúscules</option>
-                <option value="lower">🔡 lower — Tot Minúscules</option>
-                <option value="capitalize">Capitalize — Primera lletra majúscula</option>
-                <option value="title">Title — Majúscula per cada paraula</option>
-                <option value="replace">🔄 replace — Reemplaçar text</option>
-                <option value="trim">✂️ trim — Eliminar espais en blanc</option>
-              </optgroup>
-              <optgroup label="Control i Altres">
-                <option value="default">❓ default — Valor alternatiu si està buit</option>
-                <option value="length">📏 length — Comptar caràcters o elements</option>
-                <option value="custom">✏️ custom — Personalitzat / Codi lliure</option>
-              </optgroup>
-            </select>
-          </div>
-
-          <!-- Parameter Inputs Based on Selected Filter -->
-          <div v-if="selectedFilterType === 'prefix'" style="padding: 10px; background: var(--bg-tertiary, #f8f9fa); border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
-            <div style="font-size: 0.75rem; font-weight: bold; color: var(--color-primary);">PARÀMETRES D'APOSTROFACIÓ</div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-              <div>
-                <label style="font-size: 0.7rem; color: var(--text-muted); display: block;">Prefix Normal</label>
-                <input type="text" v-model="filterParamFallback" placeholder="de" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
+            <label style="font-weight: bold; font-size: 0.8rem; margin-bottom: 4px; display: block;">Filtres Jinja2 (Opcional, encadenables)</label>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+              <div
+                v-for="(item, idx) in filterChain"
+                :key="item.id"
+                style="padding: 8px; background: var(--bg-tertiary, #f8f9fa); border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 6px;"
+              >
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span style="font-size: 0.7rem; font-weight: bold; color: var(--text-muted); min-width: 14px;">{{ idx + 1 }}.</span>
+                  <select v-model="item.name" @change="onFilterStepNameChange(item)" style="flex: 1; padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.8rem; background: var(--bg-primary); color: var(--text-primary);">
+                    <option value="">-- Selecciona un filtre --</option>
+                    <optgroup v-for="group in FILTER_GROUPS" :key="group" :label="group">
+                      <option v-for="f in groupedFilterCatalog[group]" :key="f.name" :value="f.name">{{ f.label }}</option>
+                    </optgroup>
+                  </select>
+                  <button type="button" class="btn-icon-only" title="Mou amunt" :disabled="idx === 0" @click="moveFilterChainStep(item.id, -1)" style="border: none; background: none; cursor: pointer; opacity: 0.75;">⬆️</button>
+                  <button type="button" class="btn-icon-only" title="Mou avall" :disabled="idx === filterChain.length - 1" @click="moveFilterChainStep(item.id, 1)" style="border: none; background: none; cursor: pointer; opacity: 0.75;">⬇️</button>
+                  <button type="button" class="btn-icon-only" title="Elimina aquest filtre" @click="removeFilterChainStep(item.id)" style="border: none; background: none; cursor: pointer; color: var(--color-danger);">🗑️</button>
+                </div>
+                <div v-if="filterParamDefs(item.name).length" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px;">
+                  <div v-for="p in filterParamDefs(item.name)" :key="p.key">
+                    <label style="font-size: 0.7rem; color: var(--text-muted); display: block;">{{ p.label }}</label>
+                    <input :type="p.type === 'number' ? 'number' : 'text'" v-model="item.params[p.key]" :placeholder="p.placeholder || p.default || ''" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
+                  </div>
+                </div>
               </div>
-              <div>
-                <label style="font-size: 0.7rem; color: var(--text-muted); display: block;">Prefix Apostrofat</label>
-                <input type="text" v-model="filterParamElided" placeholder="d'" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
-              </div>
+              <button type="button" class="btn btn-secondary" style="width: auto; align-self: flex-start; font-size: 0.8rem; padding: 4px 10px;" @click="addFilterChainStep">+ Afegeix filtre</button>
             </div>
-          </div>
-
-          <div v-if="selectedFilterType === 'default'" style="padding: 10px; background: var(--bg-tertiary, #f8f9fa); border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
-            <div style="font-size: 0.75rem; font-weight: bold; color: var(--color-primary);">VALOR PER DEFECTE</div>
-            <div>
-              <label style="font-size: 0.7rem; color: var(--text-muted); display: block;">Text o valor si la variable és buida</label>
-              <input type="text" v-model="filterParamDefault" placeholder="Sense dades" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
-            </div>
-          </div>
-
-          <div v-if="selectedFilterType === 'replace'" style="padding: 10px; background: var(--bg-tertiary, #f8f9fa); border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
-            <div style="font-size: 0.75rem; font-weight: bold; color: var(--color-primary);">PARÀMETRES DE REEMPLAÇAMENT</div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-              <div>
-                <label style="font-size: 0.7rem; color: var(--text-muted); display: block;">Text a Cerca</label>
-                <input type="text" v-model="filterParamReplaceOld" placeholder="Text vell" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
-              </div>
-              <div>
-                <label style="font-size: 0.7rem; color: var(--text-muted); display: block;">Nou Text</label>
-                <input type="text" v-model="filterParamReplaceNew" placeholder="Nou text" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
-              </div>
-            </div>
-          </div>
-
-          <div v-if="selectedFilterType === 'custom'" style="padding: 10px; background: var(--bg-tertiary, #f8f9fa); border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
-            <div style="font-size: 0.75rem; font-weight: bold; color: var(--color-primary);">FILTRE PERSONALITZAT / COMBINAT</div>
-            <input type="text" v-model="filterCustomText" placeholder="upper | default('N/A')" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
           </div>
 
           <!-- Live Code Preview -->
