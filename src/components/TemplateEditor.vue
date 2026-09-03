@@ -138,6 +138,8 @@ const restoreBackupTemplate = () => {
 // DOM refs
 const canvasRef = ref(null);
 const textareaRef = ref(null);
+const codeGutterRef = ref(null);
+const codeHighlightRef = ref(null);
 const mathModalRef = ref(null); // Extracted-modal component refs (for the global Ctrl+Enter apply shortcut)
 const tableModalRef = ref(null);
 const blockModalRef = ref(null);
@@ -225,6 +227,55 @@ let activeBlockForNewBranch = null; // Pointer to block when adding a new ELIF b
 const linesCount = computed(() => {
   return editorText.value.split('\n').length;
 });
+
+// Keeps the line-number gutter and the syntax-highlight backdrop scrolled
+// exactly with the (invisible-text) textarea sitting on top of them.
+const onCodeScroll = () => {
+  if (!textareaRef.value) return;
+  const { scrollTop, scrollLeft } = textareaRef.value;
+  if (codeGutterRef.value) codeGutterRef.value.scrollTop = scrollTop;
+  if (codeHighlightRef.value) {
+    codeHighlightRef.value.scrollTop = scrollTop;
+    codeHighlightRef.value.scrollLeft = scrollLeft;
+  }
+};
+
+const escapeHtmlForHighlight = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Best-effort, single-pass Jinja2/Markdown syntax highlighter for the code
+// editor's backdrop — a lightweight regex tokenizer, not a real grammar.
+// Tokens never nest (e.g. a {{ var }} inside a heading line is swallowed
+// whole by the heading token, not separately colored) — an accepted
+// trade-off for staying simple and never at risk of corrupting anything,
+// since this only ever produces a purely decorative backdrop layer; the
+// actual editable text always lives untouched in the real <textarea>.
+const HIGHLIGHT_TOKEN_RE = /(<!--[\s\S]*?-->)|(\{%[\s\S]*?%\})|(\{\{[\s\S]*?\}\})|(\$\$[\s\S]*?\$\$)|(\$[^$\n]+\$)|(^#{1,6}\s.*$)|(\*\*[^\n*]+\*\*)|(\*[^\n*]+\*)/gm;
+
+const highlightJinjaMarkdown = (text) => {
+  let html = '';
+  let lastIndex = 0;
+  let m;
+  HIGHLIGHT_TOKEN_RE.lastIndex = 0;
+  while ((m = HIGHLIGHT_TOKEN_RE.exec(text)) !== null) {
+    const [full, comment, block, variable, mathDisplay, mathInline, header, bold, italic] = m;
+    if (full.length === 0) { HIGHLIGHT_TOKEN_RE.lastIndex++; continue; }
+    html += escapeHtmlForHighlight(text.slice(lastIndex, m.index));
+    let cls = '';
+    if (comment) cls = 'tok-comment';
+    else if (block) cls = 'tok-jinja-block';
+    else if (variable) cls = 'tok-jinja-var';
+    else if (mathDisplay || mathInline) cls = 'tok-math';
+    else if (header) cls = 'tok-header';
+    else if (bold) cls = 'tok-bold';
+    else if (italic) cls = 'tok-italic';
+    html += `<span class="${cls}">${escapeHtmlForHighlight(full)}</span>`;
+    lastIndex = m.index + full.length;
+  }
+  html += escapeHtmlForHighlight(text.slice(lastIndex));
+  return html;
+};
+
+const highlightedCodeHtml = computed(() => highlightJinjaMarkdown(editorText.value || ''));
 
 // Check if document generation is ready to run
 const isGenerateReady = computed(() => {
@@ -1707,16 +1758,32 @@ const syncCodeToVisual = () => {
 // Handle Tab Switches
 const switchTab = (tab) => {
   if (tab === activeEditorTab.value) return;
-  
+
+  // Capture the caret's position in terms of editorText — the one thing
+  // both representations share — *before* switching, so it can be
+  // translated into the new tab's own terms once it's rendered.
+  const sourceOffset = tab === 'code'
+    ? sourceOffsetFromVisualCaret()
+    : (textareaRef.value?.selectionStart ?? 0);
+
   if (tab === 'code') {
     syncVisualToCode();
   } else {
     syncCodeToVisual();
-    nextTick(() => {
-      updateActiveLoopContext();
-    });
   }
   activeEditorTab.value = tab;
+
+  nextTick(() => {
+    if (tab === 'code' && textareaRef.value) {
+      textareaRef.value.focus();
+      textareaRef.value.setSelectionRange(sourceOffset, sourceOffset);
+    } else if (tab === 'visual' && canvasRef.value) {
+      canvasRef.value.focus();
+      visualCaretFromSourceOffset(sourceOffset);
+      scrollCaretIntoView();
+    }
+    updateActiveLoopContext();
+  });
 };
 
 // Helper to identify atomic visual chips (variables, math formulas, inline tags)
@@ -1946,18 +2013,8 @@ const onCanvasPaste = (e) => {
 
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return;
-  const range = sel.getRangeAt(0);
 
-  // Locate the insertion point in editorText: the length of the Markdown
-  // that the canvas content *up to the caret* converts to is a reliable
-  // proxy for its offset in the source, since htmlToMarkdown is exactly what
-  // keeps editorText in sync with the canvas elsewhere. A best-effort
-  // approximation (not an exact DOM<->source position map), which is fine —
-  // worst case it lands a character or two off, self-correcting on the next edit.
-  const prefixRange = document.createRange();
-  prefixRange.selectNodeContents(canvasRef.value);
-  prefixRange.setEnd(range.startContainer, range.startOffset);
-  const insertAt = htmlToMarkdown(prefixRange.cloneContents()).length;
+  const insertAt = sourceOffsetFromVisualCaret();
 
   syncVisualToCode(); // ensure editorText reflects the canvas exactly before splicing
   const current = editorText.value || '';
@@ -2185,45 +2242,112 @@ const setCaretCharacterOffsetWithin = (element, offset) => {
   }
 };
 
+// Approximates the offset within editorText (the Markdown+Jinja2 source)
+// corresponding to the current caret position in the visual canvas: the
+// length of the Markdown that the canvas content *up to the caret* converts
+// to via htmlToMarkdown — the same conversion that keeps editorText in sync
+// with the canvas everywhere else (originally inlined in onCanvasPaste),
+// so it's exact for plain text and a close best-effort near chip/block
+// boundaries. Never destructive — worst case a restored caret lands a
+// character or two off, self-correcting on the next edit.
+const sourceOffsetFromVisualCaret = () => {
+  if (!canvasRef.value) return 0;
+  const sel = window.getSelection();
+  let range = null;
+  if (sel && sel.rangeCount > 0 && canvasRef.value.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+    range = sel.getRangeAt(0);
+  } else if (savedRange && canvasRef.value.contains(savedRange.commonAncestorContainer)) {
+    range = savedRange;
+  }
+  if (!range) return 0;
+  const prefixRange = document.createRange();
+  prefixRange.selectNodeContents(canvasRef.value);
+  prefixRange.setEnd(range.startContainer, range.startOffset);
+  return htmlToMarkdown(prefixRange.cloneContents()).length;
+};
+
+// The inverse: approximates where in the rendered visual canvas a given
+// offset within editorText (source) lands, by compiling just the text up to
+// that offset and measuring how much rendered text it produces. Assumes
+// canvasRef already holds the *full*, correctly rendered document — only
+// the measured prefix length varies.
+const visualCaretFromSourceOffset = (offset) => {
+  if (!canvasRef.value) return;
+  const prefixText = (editorText.value || '').slice(0, offset);
+  let renderedLength = 0;
+  try {
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = compileMarkdownToHtml(prefixText);
+    renderedLength = (tempDiv.textContent || '').length;
+  } catch (err) {
+    console.warn('Could not estimate visual caret position', err);
+    return;
+  }
+  setCaretCharacterOffsetWithin(canvasRef.value, renderedLength);
+};
+
+// Scrolls the visual canvas so the current selection is visible. The code
+// textarea doesn't need this — browsers already scroll a <textarea> to the
+// caret on focus()+setSelectionRange() — but a contenteditable doesn't
+// reliably auto-scroll after a programmatic Range change.
+const scrollCaretIntoView = () => {
+  if (activeEditorTab.value !== 'visual') return;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const node = sel.getRangeAt(0).startContainer;
+  const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  el?.scrollIntoView({ block: 'nearest' });
+};
+
+// A single canonical position — an offset into editorText, the Markdown+
+// Jinja2 source that's the one real source of truth regardless of which tab
+// is active — replaces the old, disjoint caretCode/caretVisual keys (each
+// mode's own last position, never translated into the other's terms).
+// Skipped entirely in cell mode: DataInspector.vue's hidden cell-editing
+// instance shares this component but not a document identity, and already
+// has its own undo history (cellHistory) — it has no business reading or
+// writing the main document's cursor-position keys (the same reasoning as
+// the store.editorActions !isCellMode guard elsewhere in this file).
 const saveCaretState = () => {
+  if (props.isCellMode) return;
   const pName = store.currentProjectName || localStorage.getItem('currentProjectName') || 'Default';
   const dName = store.activeDocName || localStorage.getItem(`${pName}:activeDocName`) || 'Document Principal';
-  
-  if (activeEditorTab.value === 'code' && textareaRef.value) {
-    const pos = textareaRef.value.selectionStart || 0;
-    localStorage.setItem(`${pName}:doc:${dName}:caretCode`, pos);
-  } else if (activeEditorTab.value === 'visual' && canvasRef.value) {
-    const pos = getCaretCharacterOffsetWithin(canvasRef.value);
-    if (pos > 0) {
-      localStorage.setItem(`${pName}:doc:${dName}:caretVisual`, pos);
-    }
-  }
+
+  const pos = activeEditorTab.value === 'code' && textareaRef.value
+    ? (textareaRef.value.selectionStart || 0)
+    : sourceOffsetFromVisualCaret();
+  localStorage.setItem(`${pName}:doc:${dName}:sourceCaretOffset`, pos);
   localStorage.setItem(`${pName}:doc:${dName}:activeEditorTab`, activeEditorTab.value);
 };
 
 const restoreCaretState = () => {
+  if (props.isCellMode) return;
   const pName = store.currentProjectName || localStorage.getItem('currentProjectName') || 'Default';
   const dName = store.activeDocName || localStorage.getItem(`${pName}:activeDocName`) || 'Document Principal';
-  
+
   const savedTab = localStorage.getItem(`${pName}:doc:${dName}:activeEditorTab`);
   if (savedTab && (savedTab === 'visual' || savedTab === 'code')) {
     activeEditorTab.value = savedTab;
   }
 
+  const savedOffset = parseInt(localStorage.getItem(`${pName}:doc:${dName}:sourceCaretOffset`) || '0', 10);
+  if (!savedOffset) return;
+
   nextTick(() => {
     if (activeEditorTab.value === 'code' && textareaRef.value) {
-      const savedCodePos = parseInt(localStorage.getItem(`${pName}:doc:${dName}:caretCode`) || '0', 10);
-      if (savedCodePos > 0) {
-        textareaRef.value.focus();
-        textareaRef.value.setSelectionRange(savedCodePos, savedCodePos);
-      }
+      textareaRef.value.focus();
+      textareaRef.value.setSelectionRange(savedOffset, savedOffset);
     } else if (activeEditorTab.value === 'visual' && canvasRef.value) {
-      const savedVisualPos = parseInt(localStorage.getItem(`${pName}:doc:${dName}:caretVisual`) || '0', 10);
-      if (savedVisualPos > 0) {
-        setCaretCharacterOffsetWithin(canvasRef.value, savedVisualPos);
-      }
+      visualCaretFromSourceOffset(savedOffset);
+      scrollCaretIntoView();
     }
   });
+};
+
+const handleSelectionChange = () => {
+  saveSelection();
+  saveCaretState();
+  updateActiveLoopContext();
 };
 
 const onCanvasFocus = () => {
@@ -2338,11 +2462,7 @@ onMounted(() => {
   }
   syncCodeToVisual();
   window.addEventListener('keydown', handleGlobalKeyDown);
-  document.addEventListener('selectionchange', () => {
-    saveSelection();
-    saveCaretState();
-    updateActiveLoopContext();
-  });
+  document.addEventListener('selectionchange', handleSelectionChange);
   restoreCaretState();
   updateActiveLoopContext();
 });
@@ -2350,7 +2470,7 @@ onMounted(() => {
 onUnmounted(() => {
   delete window.__openPandocMetadataModal;
   window.removeEventListener('keydown', handleGlobalKeyDown);
-  document.removeEventListener('selectionchange', saveSelection);
+  document.removeEventListener('selectionchange', handleSelectionChange);
 });
 </script>
 
@@ -2491,20 +2611,33 @@ onUnmounted(() => {
           @focus="onCanvasFocus"
         ></div>
 
-        <!-- Code Raw Editor Textarea -->
-        <textarea 
-          v-show="activeEditorTab === 'code'"
-          ref="textareaRef"
-          class="editor-textarea" 
-          v-model="editorText" 
-          placeholder="Escriu o edita la teva plantilla Jinja2 en Markdown aquí..."
-          @click="updateActiveLoopContext"
-          @keyup="updateActiveLoopContext"
-          @keydown="updateActiveLoopContext"
-          @select="updateActiveLoopContext"
-          @focus="updateActiveLoopContext"
-          @input="updateActiveLoopContext"
-        ></textarea>
+        <!-- Code Raw Editor: line-number gutter + syntax-highlighted backdrop
+             behind a transparent-text textarea (the textarea itself is the
+             one and only place the real text lives — the backdrop is a
+             purely visual, regenerated-on-every-keystroke layer, so a
+             highlighting bug can never corrupt or lose content). -->
+        <div v-show="activeEditorTab === 'code'" class="code-editor-wrapper">
+          <div ref="codeGutterRef" class="code-gutter">
+            <span v-for="n in linesCount" :key="n">{{ n }}</span>
+          </div>
+          <div class="code-editor-scroll-area">
+            <pre ref="codeHighlightRef" class="code-highlight-backdrop" aria-hidden="true"><code v-html="highlightedCodeHtml"></code></pre>
+            <textarea
+              ref="textareaRef"
+              class="editor-textarea code-editor-textarea"
+              v-model="editorText"
+              placeholder="Escriu o edita la teva plantilla Jinja2 en Markdown aquí..."
+              spellcheck="false"
+              @click="updateActiveLoopContext"
+              @keyup="updateActiveLoopContext"
+              @keydown="updateActiveLoopContext"
+              @select="updateActiveLoopContext"
+              @focus="updateActiveLoopContext"
+              @input="updateActiveLoopContext"
+              @scroll="onCodeScroll"
+            ></textarea>
+          </div>
+        </div>
       </div>
 
       <!-- Variable Clipboard Helper (Sidebar) -->
@@ -2810,6 +2943,93 @@ onUnmounted(() => {
 .editor-textarea p:last-child {
   margin-bottom: 0;
 }
+
+/* Code editor: line-number gutter + syntax-highlight backdrop. The gutter
+   and the highlighted <pre> are purely visual — the real, only copy of the
+   text lives in the (transparent-text) textarea layered on top, so nothing
+   here can ever corrupt or lose content, only mis-color it in an edge case. */
+.code-editor-wrapper {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--bg-card);
+}
+
+.code-gutter {
+  flex: 0 0 auto;
+  overflow: hidden;
+  padding: 1rem 0.6rem 1rem 0;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+  background-color: var(--bg-tertiary);
+  border-right: 1px solid var(--border-color);
+  user-select: none;
+}
+
+.code-gutter span {
+  display: block;
+}
+
+.code-editor-scroll-area {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.code-highlight-backdrop {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  white-space: pre;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--text-primary);
+}
+
+.code-highlight-backdrop code {
+  font-family: inherit;
+  background: none;
+}
+
+/* Line numbers require each source line to occupy exactly one visual row,
+   so wrapping is off here (standard for code editors) — long lines scroll
+   horizontally instead, kept in sync with the backdrop above. */
+.editor-textarea.code-editor-textarea {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text-primary);
+  white-space: pre;
+  overflow: auto;
+  resize: none;
+  width: 100%;
+  height: 100%;
+}
+
+[data-theme="dark"] .editor-textarea.code-editor-textarea,
+body.dark-theme .editor-textarea.code-editor-textarea {
+  background-color: transparent !important;
+  color: transparent !important;
+  caret-color: #f8fafc !important;
+}
+
+.tok-comment { color: var(--text-muted); font-style: italic; }
+.tok-jinja-block { color: #b45309; font-weight: 600; }
+.tok-jinja-var { color: var(--color-primary); font-weight: 600; }
+.tok-math { color: #7c3aed; font-weight: 600; }
+.tok-header { color: var(--text-primary); font-weight: 700; }
+.tok-bold { font-weight: 700; }
+.tok-italic { font-style: italic; }
 
 .editor-textarea h1::before {
   content: "H1";
