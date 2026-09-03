@@ -1551,15 +1551,18 @@ const syncCodeToVisual = () => {
       const type = block.getAttribute('data-type') || 'if';
       
       if (isInline) {
+        const switchToBlock = (e) => {
+          e.stopPropagation();
+          block.setAttribute('data-layout', 'block');
+          block.classList.remove('inline');
+          syncVisualToCode();
+          syncCodeToVisual();
+        };
         block.querySelectorAll('.j-inline-tag').forEach(tag => {
-          tag.onclick = (e) => {
-            e.stopPropagation();
-            block.setAttribute('data-layout', 'block');
-            block.classList.remove('inline');
-            syncVisualToCode();
-            syncCodeToVisual();
-          };
+          tag.onclick = switchToBlock;
         });
+        const toBlockBtn = block.querySelector('.btn-to-block');
+        if (toBlockBtn) toBlockBtn.onclick = switchToBlock;
       } else {
         const condText = block.querySelector('.j-cond-text');
         if (condText) {
@@ -2740,6 +2743,16 @@ onUnmounted(() => {
 .editor-textarea h6 {
   position: relative;
   line-height: 1.4;
+  margin: 1.5em 0 0.6em 0;
+}
+
+.editor-textarea h1:first-child,
+.editor-textarea h2:first-child,
+.editor-textarea h3:first-child,
+.editor-textarea h4:first-child,
+.editor-textarea h5:first-child,
+.editor-textarea h6:first-child {
+  margin-top: 0;
 }
 
 .editor-textarea h1::before {
@@ -2939,7 +2952,7 @@ onUnmounted(() => {
   border: 1.5px solid var(--border-color);
   border-left: 4px solid var(--color-primary, #0284c7);
   border-radius: 6px;
-  margin: 0.8rem 0 0.5rem 0;
+  margin: 1.5rem 0 1.25rem 0;
   background-color: var(--bg-card);
   display: flex;
   flex-direction: column;
@@ -2992,6 +3005,41 @@ onUnmounted(() => {
   font-family: var(--font-mono, monospace);
   user-select: none;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Inline if/for tags identify themselves by icon only — the literal
+   "{% ... %}" text stays in the title tooltip instead of cluttering
+   running text. */
+.j-inline-tag-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.j-inline-tag-text {
+  display: none;
+}
+
+/* Toolbar (just the switch-to-block button) for an inline block, tucked
+   away below the element and revealed only while the cursor is inside it. */
+.j-inline-toolbar {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 3px 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  z-index: 5;
+  white-space: nowrap;
+}
+
+.jinja-block.inline:focus-within .j-inline-toolbar {
+  display: inline-flex;
 }
 
 .j-head {
@@ -3011,6 +3059,28 @@ onUnmounted(() => {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
   z-index: 2;
   user-select: none;
+}
+
+/* Collapsed by default: the block identifies itself by icon alone. The
+   label, condition text and the action toolbar only appear while the
+   cursor is inside the block, so the canvas isn't permanently cluttered
+   with controls for every if/for on the page. */
+.j-head > div:first-child > span {
+  display: none;
+}
+
+.j-actions {
+  display: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.jinja-block:focus-within .j-head > div:first-child > span {
+  display: inline;
+}
+
+.jinja-block:focus-within .j-actions {
+  display: inline-flex;
 }
 
 .j-branch {
@@ -3270,7 +3340,11 @@ table th {
   font-weight: bold;
 }
 
-th[data-jinja-col-loop]::before, td[data-jinja-col-loop]::before {
+/* Only the header shows the loop-column badge — every body cell in a
+   transposed table also carries data-jinja-col-loop (it's how the "which
+   column loops" info round-trips to Markdown), but repeating the badge on
+   every row added noise without new information. */
+th[data-jinja-col-loop]::before {
   content: "🔄 LOOP COL: " attr(data-jinja-col-loop);
   display: block;
   font-size: 0.6rem;

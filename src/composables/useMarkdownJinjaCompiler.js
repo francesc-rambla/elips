@@ -173,7 +173,8 @@ const buildTurndownService = () => {
   td.remove((node) => node.nodeType === Node.ELEMENT_NODE && (
     node.classList.contains('j-head') || node.classList.contains('j-actions') ||
     node.classList.contains('j-footer') || node.classList.contains('j-inline-tag') ||
-    node.classList.contains('j-cond-text') || node.classList.contains('trailing-editable-line')
+    node.classList.contains('j-inline-toolbar') || node.classList.contains('j-cond-text') ||
+    node.classList.contains('trailing-editable-line')
   ));
 
   td.addRule('jinjaVarChip', {
@@ -250,6 +251,7 @@ const ICON_INLINE_TOGGLE = '<svg xmlns="http://www.w3.org/2000/svg" width="11" h
 const ICON_TRASH = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
 
 const btnLayoutHtml = () => `<button class="j-btn-mini btn-layout" style="background-color:var(--color-primary);color:white;border:none;display:inline-flex;align-items:center;gap:3px;" title="Canvia a mode integrat al text (Inline)">${ICON_INLINE_TOGGLE} <span>Inline</span></button>`;
+const btnToBlockHtml = () => `<button class="j-btn-mini btn-to-block" style="background-color:var(--color-primary);color:white;border:none;display:inline-flex;align-items:center;gap:3px;" title="Canvia a mode Bloc">${ICON_INLINE_TOGGLE} <span>Bloc</span></button>`;
 const btnTrashHtml = (title) => `<button class="j-btn-mini btn-trash" style="background-color:var(--color-danger);color:white;border:none;display:inline-flex;align-items:center;justify-content:center;" title="${title}">${ICON_TRASH}</button>`;
 const btnBranchTrashHtml = () => '<button class="j-btn-mini btn-branch-trash" style="background-color:var(--color-danger);color:white;border:none;display:inline-flex;align-items:center;justify-content:center;" title="Elimina la branca">' + ICON_TRASH + '</button>';
 
@@ -279,16 +281,28 @@ const buildJinjaBlockHtml = (type, branches, compileFn) => {
   return html;
 };
 
-// Builds the interactive .jinja-block HTML for an inline-layout for/if.
+// Builds the interactive .jinja-block HTML for an inline-layout for/if. Each
+// tag (open/elif/else/close) shows only a small icon — not its literal
+// "{% ... %}" text, which would otherwise clutter running text — with the
+// full tag kept in its title tooltip. A toolbar (just the switch-to-block
+// button) is appended once, absolutely positioned below the whole inline
+// construct and revealed only on :focus-within (see the matching CSS rules
+// in TemplateEditor.vue), so it doesn't take up space until needed.
 const buildInlineJinjaHtml = (type, branches, compileInline) => {
+  const icon = type === 'for' ? ICON_LOOP : ICON_IF;
+  const inlineTag = (tagText) =>
+    `<span class="j-inline-tag" contenteditable="false" title="${tagText} — Fes clic per passar a BLOC"><span class="j-inline-tag-icon">${icon}</span><span class="j-inline-tag-text">${tagText}</span></span>`;
+
   let html = `<span class="jinja-block inline" contenteditable="false" data-layout="inline" data-type="${type}" data-cond="${branches[0].cond}">`;
   branches.forEach((b, i) => {
     const tagText = i === 0
       ? `{% ${type} ${b.cond} %}`
       : (b.keyword === 'else' ? '{% else %}' : `{% elif ${b.cond} %}`);
-    html += `<span class="j-inline-tag" contenteditable="false" title="Fes clic per passar a BLOC">${tagText}</span><span class="j-content" contenteditable="true">${compileInline(b.body)}</span>`;
+    html += inlineTag(tagText) + `<span class="j-content" contenteditable="true">${compileInline(b.body)}</span>`;
   });
-  html += `<span class="j-inline-tag" contenteditable="false" title="Fes clic per passar a BLOC">{% end${type === 'for' ? 'for' : 'if'} %}</span></span>`;
+  html += inlineTag(`{% end${type === 'for' ? 'for' : 'if'} %}`);
+  html += `<span class="j-inline-toolbar" contenteditable="false">${btnToBlockHtml()}</span>`;
+  html += `</span>`;
   return html;
 };
 
