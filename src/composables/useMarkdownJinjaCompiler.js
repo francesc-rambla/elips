@@ -38,11 +38,21 @@ const stripRawJinjaRef = (raw) => {
 const branchBodyToMarkdown = (td, contentEl) => (contentEl ? td.turndown(contentEl).trim() : '');
 
 const jinjaBlockToMarkdown = (td, node) => {
-  const isInline = node.classList.contains('inline') || node.getAttribute('data-layout') === 'inline';
   const type = node.getAttribute('data-type') || 'if';
   const endTag = type === 'for' ? 'endfor' : 'endif';
+  // Which extraction path to use is decided by the DOM's *actual* shape,
+  // not the inline/data-layout flag: the "Inline"/"Bloc" toggle button
+  // (TemplateEditor.vue) only flips that flag on the existing DOM — it
+  // doesn't restructure it — and relies on this serialization, followed by
+  // a full re-render from the resulting Markdown, to produce the other
+  // shape. Trusting the flag alone here would try to read
+  // .j-inline-tag/.j-content pairs out of a DOM that's still block-shaped
+  // (.j-head/.j-branch/.j-content/.j-footer) or vice versa, find none, and
+  // silently emit nothing — discarding the whole block's content the
+  // instant the button is clicked.
+  const domIsInlineShape = !!node.querySelector(':scope > .j-inline-tag');
 
-  if (isInline) {
+  if (domIsInlineShape) {
     // Inline layout: alternating <span class="j-inline-tag">{% ... %}</span> and
     // <span class="j-content">body</span> children carry the exact tag text and
     // per-branch body already — just concatenate them in DOM order.
@@ -58,30 +68,33 @@ const jinjaBlockToMarkdown = (td, node) => {
     return out;
   }
 
-  // Block layout: .jinja-block's children are, in DOM order, the first branch's
-  // .j-content, then for each elif/else a .j-branch (tag only) followed by its
-  // own sibling .j-content. Walking childNodes in order and emitting each as we
-  // go naturally interleaves tag/body correctly without needing to pair them up.
+  // Block-shaped DOM — also what a block still looks like right after
+  // clicking "Inline" (see above), so wantsInlineOutput controls only the
+  // *separator* between tag and body (none, for a single inline line, vs a
+  // newline for the usual multi-line block syntax), never which children
+  // this reads.
   //
   // The condition itself is read from the .j-head's .j-cond-text span, not
   // from this node's own data-cond: the visual editor (openBlockModal/
   // onBlockApply in TemplateEditor.vue) only ever keeps .j-cond-text's
   // data-cond up to date (on both initial creation and edits), the same way
   // the elif branch condition below is read from its own .j-cond-text.
+  const wantsInlineOutput = node.classList.contains('inline') || node.getAttribute('data-layout') === 'inline';
+  const sep = wantsInlineOutput ? '' : '\n';
   const headCond = node.querySelector(':scope > .j-head .j-cond-text')?.getAttribute('data-cond');
-  let out = `{% ${type} ${headCond ?? node.getAttribute('data-cond') ?? ''} %}\n`;
+  let out = `{% ${type} ${headCond ?? node.getAttribute('data-cond') ?? ''} %}${sep}`;
   node.childNodes.forEach((child) => {
     if (child.nodeType !== Node.ELEMENT_NODE) return;
     if (child.classList.contains('j-content')) {
       const body = branchBodyToMarkdown(td, child);
-      if (body) out += body + '\n';
+      if (body) out += body + sep;
     } else if (child.classList.contains('j-branch')) {
       const branchType = child.getAttribute('data-type');
       if (branchType === 'else') {
-        out += '{% else %}\n';
+        out += `{% else %}${sep}`;
       } else {
         const cond = child.querySelector('.j-cond-text')?.getAttribute('data-cond') || '';
-        out += `{% elif ${cond} %}\n`;
+        out += `{% elif ${cond} %}${sep}`;
       }
     }
   });
@@ -265,8 +278,17 @@ const btnToBlockHtml = () => `<button class="j-btn-mini btn-to-block" style="bac
 const btnTrashHtml = (title) => `<button class="j-btn-mini btn-trash" style="background-color:var(--color-danger);color:white;border:none;display:inline-flex;align-items:center;justify-content:center;" title="${title}">${ICON_TRASH}</button>`;
 const btnBranchTrashHtml = () => '<button class="j-btn-mini btn-branch-trash" style="background-color:var(--color-danger);color:white;border:none;display:inline-flex;align-items:center;justify-content:center;" title="Elimina la branca">' + ICON_TRASH + '</button>';
 
-const forHeadHtml = (cond) => `<div class="j-head" data-type="for"><div style="display:flex;align-items:center;gap:4px;">${ICON_LOOP} <span style="font-weight:700;color:var(--color-primary);">PER CADA:</span> <span class="j-cond-text" data-cond="${cond}">${cond}</span></div><div class="j-actions">${btnLayoutHtml()}${btnTrashHtml('Elimina el bucle')}</div></div>`;
-const ifHeadHtml = (cond) => `<div class="j-head" data-type="if"><div style="display:flex;align-items:center;gap:4px;">${ICON_IF} <span style="font-weight:700;color:#b45309;">SI:</span> <span class="j-cond-text" data-cond="${cond}">${cond}</span></div><div class="j-actions">${btnLayoutHtml()}<button class="j-btn-mini btn-elif" title="Afegeix branca O SI (ELIF)">+ ELIF</button><button class="j-btn-mini btn-else" title="Afegeix branca EN CAS CONTRARI (ELSE)">+ ELSE</button>${btnTrashHtml('Elimina el condicional')}</div></div>`;
+// The label and condition text next to this sit inside .j-head > div:first-
+// child > span, hidden by CSS until the block has focus-within (see
+// TemplateEditor.vue's collapse-to-icon styling) — this button is a plain
+// <button>, not a <span>, so that CSS rule leaves it alone and it stays
+// visible even when the block is collapsed. Without it, a collapsed
+// block's condition becomes unreachable: the only other way to edit it is
+// clicking the (now-hidden) condition text itself.
+const btnHeadEditHtml = () => `<button class="j-btn-mini j-head-edit-btn" style="background:none;border:none;color:inherit;padding:0;display:inline-flex;align-items:center;cursor:pointer;" title="Edita la condició">${ICON_EDIT}</button>`;
+
+const forHeadHtml = (cond) => `<div class="j-head" data-type="for"><div style="display:flex;align-items:center;gap:4px;">${ICON_LOOP}${btnHeadEditHtml()} <span style="font-weight:700;color:var(--color-primary);">PER CADA:</span> <span class="j-cond-text" data-cond="${cond}">${cond}</span></div><div class="j-actions">${btnLayoutHtml()}${btnTrashHtml('Elimina el bucle')}</div></div>`;
+const ifHeadHtml = (cond) => `<div class="j-head" data-type="if"><div style="display:flex;align-items:center;gap:4px;">${ICON_IF}${btnHeadEditHtml()} <span style="font-weight:700;color:#b45309;">SI:</span> <span class="j-cond-text" data-cond="${cond}">${cond}</span></div><div class="j-actions">${btnLayoutHtml()}<button class="j-btn-mini btn-elif" title="Afegeix branca O SI (ELIF)">+ ELIF</button><button class="j-btn-mini btn-else" title="Afegeix branca EN CAS CONTRARI (ELSE)">+ ELSE</button>${btnTrashHtml('Elimina el condicional')}</div></div>`;
 
 // Builds the interactive .jinja-block HTML for a block-layout for/if, given its
 // branches ([{ keyword: 'for'|'if'|'elif'|'else', cond, body }]) and a function

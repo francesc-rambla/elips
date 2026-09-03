@@ -1349,7 +1349,9 @@ const onBlockApply = (expr) => {
       block.innerHTML = `
         <div class="j-head" data-type="${blockType.value}">
           <div style="display:flex;align-items:center;gap:4px;">
-            ${isFor ? '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg> <span style="font-weight:700;color:var(--color-primary);">PER CADA:</span>' : '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> <span style="font-weight:700;color:#b45309;">SI:</span>'} 
+            ${isFor ? '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>' : '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>'}
+            <button class="j-btn-mini j-head-edit-btn" style="background:none;border:none;color:inherit;padding:0;display:inline-flex;align-items:center;cursor:pointer;" title="Edita la condició"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+            ${isFor ? '<span style="font-weight:700;color:var(--color-primary);">PER CADA:</span>' : '<span style="font-weight:700;color:#b45309;">SI:</span>'}
             <span class="j-cond-text" data-cond="${expr}">${expr}</span>
           </div>
           <div class="j-actions">
@@ -1362,11 +1364,16 @@ const onBlockApply = (expr) => {
         <div class="j-footer"><span>${isFor ? 'FINAL BUCLE' : 'FINAL CONDICIONAL'}</span></div>
       `;
       
-      block.querySelector('.j-cond-text').onclick = (e) => {
+      const newCondText = block.querySelector('.j-cond-text');
+      newCondText.onclick = (e) => {
         e.stopPropagation();
         openBlockModal(blockType.value, e.target);
       };
-      
+      block.querySelector('.j-head-edit-btn').onclick = (e) => {
+        e.stopPropagation();
+        openBlockModal(blockType.value, newCondText);
+      };
+
       block.querySelector('.btn-trash').onclick = () => {
         block.remove();
         syncVisualToCode();
@@ -1418,6 +1425,17 @@ const onBlockApply = (expr) => {
       }
       ensureTrailingEditableLine(canvasRef.value);
       syncVisualToCode();
+      // A newly-inserted block is hand-built HTML with only a handful of its
+      // buttons wired directly above (.j-cond-text, .j-head-edit-btn,
+      // .btn-trash, .btn-elif/.btn-else) — .btn-layout in particular was
+      // never one of them, so clicking "Inline" on a block that had never
+      // otherwise triggered a full re-render silently did nothing (no
+      // handler at all). Following up with syncCodeToVisual() rebuilds the
+      // canvas from the now-current source, which re-wires every button the
+      // same way an existing block's already are — syncCodeToVisual()
+      // already preserves the caret for exactly this "still-focused,
+      // in-place edit" case.
+      syncCodeToVisual();
     }
   }
   isBlockModalOpen.value = false;
@@ -1666,7 +1684,18 @@ const syncCodeToVisual = () => {
             openBlockModal(type, e.target);
           };
         }
-        
+
+        // The label/condition are hidden until the block has focus-within
+        // (collapsed-to-icon styling) — this button stays visible even then,
+        // so there's always a way in to edit the condition.
+        const headEditBtn = block.querySelector('.j-head-edit-btn');
+        if (headEditBtn && condText) {
+          headEditBtn.onclick = (e) => {
+            e.stopPropagation();
+            openBlockModal(type, condText);
+          };
+        }
+
         const trashBtn = block.querySelector('.btn-trash');
         if (trashBtn) {
           trashBtn.onclick = () => {
@@ -2204,6 +2233,58 @@ const getCaretCharacterOffsetWithin = (element) => {
 };
 
 // Helper to set character offset inside contenteditable
+// A table with a row/column loop (DYNAMIC_TABLE/TRANSPOSED_TABLE) or a
+// .jinja-block is serialized to Markdown by a custom turndown rule that
+// reads the *whole* element's structure from scratch (dynamicTableToMarkdown,
+// transposedTableToMarkdown, jinjaBlockToMarkdown in
+// useMarkdownJinjaCompiler.js) rather than concatenating each child's own
+// independently-converted text. Handed a *partial* DOM clone (as
+// sourceOffsetFromVisualCaret's prefix-range technique does), these rules
+// don't know the clone is incomplete — they still emit a fully-formed block,
+// unconditionally closed with {% endfor %}/{% endif %}/<!-- ..._END --> —
+// so a position landing inside one of these doesn't just approximate, it
+// can come out wildly wrong. Treated as atomic here too, snapping to
+// whichever edge of the *whole* table/block is closer.
+const getPositionAtomicAncestor = (node) => {
+  const chip = getParentAtomicChip(node);
+  if (chip) return chip;
+  let curr = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  while (curr && curr !== canvasRef.value) {
+    if (curr.classList?.contains('jinja-block')) return curr;
+    if (curr.tagName === 'TABLE' && (curr.querySelector('[data-jinja-for]') || curr.querySelector('[data-jinja-col-loop]'))) return curr;
+    curr = curr.parentElement;
+  }
+  return null;
+};
+
+// Chips are short enough that "inside" isn't a meaningful position anyway
+// (contenteditable="false" — a real cursor can never land there even though
+// the Range API technically allows constructing one there); tables/blocks
+// are treated the same way for the reason above, at the cost of losing
+// precision *within* one (landing at its start or end rather than the exact
+// row/cell) in exchange for never landing somewhere nonsensical. Given a
+// (node, offset) pair that might fall inside either, returns the nearest
+// position just before/after the whole element instead; anything else
+// passes through unchanged.
+const snapOutOfAtomicChip = (node, offset) => {
+  const special = getPositionAtomicAncestor(node);
+  if (!special || !special.parentNode) return { node, offset };
+  let withinOffset = 0;
+  if (node.nodeType === Node.TEXT_NODE) {
+    const r = document.createRange();
+    r.selectNodeContents(special);
+    r.setEnd(node, Math.min(offset, node.length));
+    withinOffset = r.toString().length;
+  } else if (offset > 0) {
+    withinOffset = (special.textContent || '').length;
+  }
+  const totalLen = (special.textContent || '').length;
+  const closerToStart = withinOffset <= totalLen / 2;
+  const parent = special.parentNode;
+  const specialIndex = Array.prototype.indexOf.call(parent.childNodes, special);
+  return { node: parent, offset: closerToStart ? specialIndex : specialIndex + 1 };
+};
+
 const setCaretCharacterOffsetWithin = (element, offset) => {
   if (!element || offset <= 0) return;
   let charCount = 0;
@@ -2214,13 +2295,15 @@ const setCaretCharacterOffsetWithin = (element, offset) => {
   const nodeStack = [element];
   let node;
   let found = false;
+  let targetNode = null;
+  let targetOffset = 0;
 
   while (!found && (node = nodeStack.pop())) {
     if (node.nodeType === Node.TEXT_NODE) {
       const nextCharCount = charCount + node.length;
       if (offset <= nextCharCount) {
-        range.setStart(node, offset - charCount);
-        range.collapse(true);
+        targetNode = node;
+        targetOffset = offset - charCount;
         found = true;
       }
       charCount = nextCharCount;
@@ -2233,6 +2316,10 @@ const setCaretCharacterOffsetWithin = (element, offset) => {
   }
 
   if (found) {
+    const snapped = snapOutOfAtomicChip(targetNode, targetOffset);
+    range.setStart(snapped.node, snapped.offset);
+    range.collapse(true);
+
     const sel = window.getSelection();
     if (sel) {
       sel.removeAllRanges();
@@ -2260,25 +2347,47 @@ const sourceOffsetFromVisualCaret = () => {
     range = savedRange;
   }
   if (!range) return 0;
+  const snapped = snapOutOfAtomicChip(range.startContainer, range.startOffset);
   const prefixRange = document.createRange();
   prefixRange.selectNodeContents(canvasRef.value);
-  prefixRange.setEnd(range.startContainer, range.startOffset);
+  prefixRange.setEnd(snapped.node, snapped.offset);
   return htmlToMarkdown(prefixRange.cloneContents()).length;
 };
 
 // The inverse: approximates where in the rendered visual canvas a given
-// offset within editorText (source) lands, by compiling just the text up to
-// that offset and measuring how much rendered text it produces. Assumes
-// canvasRef already holds the *full*, correctly rendered document — only
-// the measured prefix length varies.
+// offset within editorText (source) lands. Compiling *just the prefix* up
+// to that offset (the first version of this function) breaks down for any
+// multi-line construct that needs its own closing marker to parse at all —
+// a source offset inside a {% for %}...{% endfor %} loop, a DYNAMIC_TABLE/
+// TRANSPOSED_TABLE block, or a math block truncates before the closing
+// {% endfor %}/<!-- ..._END --> the prefix never reaches, so it renders as
+// something wildly different (often empty) rather than "the same document,
+// cut short". Instead, splice a unique marker into the *full* text (whose
+// structure is always complete) and find where markdown-it/htmlToMarkdown
+// placed it in the rendered text — accurate whenever the marker lands in
+// ordinary text or inside a {{ variable }} expression (it becomes part of
+// the chip's own label, which still contains the marker string); falls back
+// to the coarser prefix-length approximation only if the marker doesn't
+// survive intact (e.g. it landed inside a {% tag %} or an HTML comment).
+const VISUAL_CARET_MARKER = '◈JCURSORMARK◈';
+
 const visualCaretFromSourceOffset = (offset) => {
   if (!canvasRef.value) return;
-  const prefixText = (editorText.value || '').slice(0, offset);
+  const fullText = editorText.value || '';
+  const at = Math.min(Math.max(offset, 0), fullText.length);
   let renderedLength = 0;
   try {
+    const markedText = fullText.slice(0, at) + VISUAL_CARET_MARKER + fullText.slice(at);
     const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = compileMarkdownToHtml(prefixText);
-    renderedLength = (tempDiv.textContent || '').length;
+    tempDiv.innerHTML = compileMarkdownToHtml(markedText);
+    const markerIdx = (tempDiv.textContent || '').indexOf(VISUAL_CARET_MARKER);
+    if (markerIdx !== -1) {
+      renderedLength = markerIdx;
+    } else {
+      const prefixDiv = document.createElement('div');
+      prefixDiv.innerHTML = compileMarkdownToHtml(fullText.slice(0, at));
+      renderedLength = (prefixDiv.textContent || '').length;
+    }
   } catch (err) {
     console.warn('Could not estimate visual caret position', err);
     return;
@@ -2371,6 +2480,22 @@ watch(() => editorText.value, () => {
     updateActiveLoopContext();
   }
 });
+
+// TemplateEditor stays mounted for the app's whole lifetime — App.vue only
+// CSS-hides it (an "active" class toggle) when another top-level tab
+// ("Dades", "Previsualització"...) is selected, so onMounted's
+// restoreCaretState() below only ever runs once, at initial page load.
+// Navigating away and back to "Plantilla" otherwise leaves neither editor
+// focused (nothing else does it), so the caret becomes invisible even
+// though its position hasn't actually changed — restore it again exactly
+// as at mount time whenever this tab regains focus.
+if (!props.isCellMode) {
+  watch(() => store.activeTab, (newTab, oldTab) => {
+    if (newTab === 'template' && oldTab !== 'template') {
+      restoreCaretState();
+    }
+  });
+}
 
 onMounted(() => {
   window.__openPandocMetadataModal = openMetadataModal;

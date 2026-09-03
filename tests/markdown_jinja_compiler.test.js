@@ -155,6 +155,23 @@ describe('Markdown -> HTML -> Markdown round-trip stability', () => {
     expect(roundtrip(md)).toBe(md);
   });
 
+  it('serializes a block-shaped jinja-block flagged inline (the moment right after clicking "Inline", before a re-render restructures it)', () => {
+    // TemplateEditor.vue's "Inline"/"Bloc" toggle button only flips the
+    // inline class / data-layout attribute on the *existing* DOM — it does
+    // not itself rebuild .j-head/.j-content into .j-inline-tag/.j-content
+    // pairs (a subsequent syncCodeToVisual() re-render does that, from
+    // *this* function's own output). Regression: jinjaBlockToMarkdown used
+    // to pick its extraction path from the inline flag alone, so a
+    // still-block-shaped-but-inline-flagged node found no .j-inline-tag
+    // children and silently emitted nothing, discarding the whole block.
+    const html = '<div class="jinja-block inline" data-layout="inline" data-type="if">'
+      + '<div class="j-head" data-type="if"><div><span class="j-cond-text" data-cond="a &gt; 0"></span></div><div class="j-actions"></div></div>'
+      + '<div class="j-content">Contingut</div>'
+      + '<div class="j-footer"></div>'
+      + '</div>';
+    expect(htmlToMarkdown(el(html))).toBe('{% if a > 0 %}Contingut{% endif %}');
+  });
+
   it('inline if', () => {
     const md = 'Text abans {% if a %}mig{% endif %} text despres.';
     expect(roundtrip(md)).toBe(md);
