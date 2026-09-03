@@ -28,12 +28,19 @@ const isGenerated = computed(() => !!store.renderedMarkdown);
 
 // Keeps the two preview panes (rendered HTML and raw Markdown) scrolled
 // together — proportionally, not pixel-for-pixel, since the same document
-// renders at very different total heights in each. A guard flag prevents
-// the feedback loop a programmatic scrollTop write would otherwise cause
-// (it fires that pane's own 'scroll' event too).
+// renders at very different total heights in each. Sync only ever runs in
+// ONE direction per user action: FROM the pane the user is actually
+// scrolling (mouse wheel, touch, dragging its scrollbar) TO the other one.
+// The receiving pane's own resulting 'scroll' event is tagged as
+// programmatic (via programmaticScrollEl) and ignored, so it can never
+// itself trigger a sync back — the guard a plain boolean flag gave was
+// only good for the current call stack, not for a scroll event the browser
+// dispatches on a later frame, which is what let both panes end up
+// fighting each other and scrolling indefinitely.
 const htmlPaneRef = ref(null);
 const mdPaneRef = ref(null);
-let isSyncingPreviewScroll = false;
+let manuallyScrolledEl = null;
+let programmaticScrollEl = null;
 
 const getScrollFraction = (el) => {
   if (!el) return 0;
@@ -44,18 +51,25 @@ const getScrollFraction = (el) => {
 const setScrollFraction = (el, fraction) => {
   if (!el) return;
   const max = el.scrollHeight - el.clientHeight;
-  el.scrollTop = max > 0 ? fraction * max : 0;
+  const target = max > 0 ? Math.round(fraction * max) : 0;
+  if (target === el.scrollTop) return; // no 'scroll' event will fire, nothing to guard
+  programmaticScrollEl = el;
+  el.scrollTop = target;
 };
 
-const syncPreviewScroll = (fromEl, toEl) => {
-  if (isSyncingPreviewScroll) return;
-  isSyncingPreviewScroll = true;
-  setScrollFraction(toEl, getScrollFraction(fromEl));
-  requestAnimationFrame(() => { isSyncingPreviewScroll = false; });
+const markManuallyScrolled = (el) => { manuallyScrolledEl = el; };
+
+const onPreviewPaneScroll = (el, otherEl) => {
+  if (programmaticScrollEl === el) {
+    programmaticScrollEl = null;
+    return;
+  }
+  if (manuallyScrolledEl !== el) return;
+  setScrollFraction(otherEl, getScrollFraction(el));
 };
 
-const onHtmlPaneScroll = () => syncPreviewScroll(htmlPaneRef.value, mdPaneRef.value);
-const onMdPaneScroll = () => syncPreviewScroll(mdPaneRef.value, htmlPaneRef.value);
+const onHtmlPaneScroll = () => onPreviewPaneScroll(htmlPaneRef.value, mdPaneRef.value);
+const onMdPaneScroll = () => onPreviewPaneScroll(mdPaneRef.value, htmlPaneRef.value);
 
 const parseYamlHeader = (rawYaml) => {
   const meta = {};
@@ -200,7 +214,7 @@ const copyMd = () => {
         <span style="font-size: 0.75rem; color: var(--color-success)">Previsualització HTML (Interactiva)</span>
       </div>
       
-      <div ref="htmlPaneRef" class="preview-body markdown-preview" id="previewHtml" @click="handlePreviewClick" @scroll="onHtmlPaneScroll">
+      <div ref="htmlPaneRef" class="preview-body markdown-preview" id="previewHtml" @click="handlePreviewClick" @scroll="onHtmlPaneScroll" @wheel="markManuallyScrolled(htmlPaneRef)" @touchstart="markManuallyScrolled(htmlPaneRef)" @mousedown="markManuallyScrolled(htmlPaneRef)">
         <div v-if="!isGenerated" style="text-align:center; padding:5rem 1rem; color:var(--text-muted)">
           <p>No hi ha cap document generat encara.</p>
           <p style="font-size:0.8rem; margin-top:0.5rem">Fes clic al botó "Genera Documents" al panell esquerre.</p>
@@ -230,6 +244,9 @@ const copyMd = () => {
         :value="store.cleanMarkdown || store.renderedMarkdown"
         placeholder="El markdown generat apareixerà aquí..."
         @scroll="onMdPaneScroll"
+        @wheel="markManuallyScrolled(mdPaneRef)"
+        @touchstart="markManuallyScrolled(mdPaneRef)"
+        @mousedown="markManuallyScrolled(mdPaneRef)"
       ></textarea>
     </div>
   </div>

@@ -32,6 +32,50 @@ def sanitize_empty_jinja_tags(src):
     src = re.sub(r'\\{\\%\\s*\\%\\}', '', src)
     return src
 
+_INLINE_TRAILING_BLOCK_TAG_RE = re.compile(
+    r'\{%-?\s*(for|if|elif|else|endfor|endif)\b(?:(?!%\}).)*?(-?%\}|\+%\})'
+)
+_INLINE_VAR_TAG_RE = re.compile(r'\{\{.*?\}\}')
+
+def protect_inline_trailing_block_tags(template_src):
+    """
+    trim_blocks=True strips the newline immediately after any {% ... %}
+    tag — correct when the tag stands alone on its own line (e.g. a
+    DYNAMIC_TABLE's {% for %}/{% endfor %} rows), but wrong when the tag
+    sits at the end of a line that carries real content of its own (e.g.
+    TRANSPOSED_TABLE's inline per-row `{% for %}...{% endfor %}` loop):
+    there, that line's own trailing newline separates it from the next
+    row/paragraph and must survive. Jinja2 lets a single tag opt out of
+    trim_blocks with a `+` right before its closing `%}`; this scans every
+    line and adds it only where content precedes a tag that closes the
+    line, so existing templates (written before this distinction existed)
+    render correctly without the author having to know this syntax.
+    """
+    if not template_src:
+        return template_src
+    lines = template_src.split('\n')
+    out_lines = []
+    for line in lines:
+        matches = list(_INLINE_TRAILING_BLOCK_TAG_RE.finditer(line))
+        if not matches:
+            out_lines.append(line)
+            continue
+        last = matches[-1]
+        if line[last.end():].strip() != '':
+            out_lines.append(line)
+            continue
+        if last.group(2) in ('-%}', '+%}'):
+            out_lines.append(line)
+            continue
+        before_tag = _INLINE_TRAILING_BLOCK_TAG_RE.sub('', line[:last.start()])
+        before_tag = _INLINE_VAR_TAG_RE.sub('', before_tag)
+        if before_tag.strip() == '':
+            out_lines.append(line)
+            continue
+        fixed_tag = last.group(0)[:-2] + '+%}'
+        out_lines.append(line[:last.start()] + fixed_tag + line[last.end():])
+    return '\n'.join(out_lines)
+
 def sanitize_id(s, allow_dots=False):
     s = '' if s is None else str(s)
     s = s.replace(' ', '_')
@@ -2525,6 +2569,11 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
 
         # Clean non-breaking spaces (\u00a0) that might be attached to Jinja2 tags
         tpl_src = tpl_src.replace('\u00a0', ' ')
+
+        # See protect_inline_trailing_block_tags: keeps trim_blocks (below)
+        # from eating row-separating newlines in TRANSPOSED_TABLE's inline
+        # per-row {% for %}...{% endfor %} loops.
+        tpl_src = protect_inline_trailing_block_tags(tpl_src)
 
         def _normalize_markdown_headings(text):
             if not text:

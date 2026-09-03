@@ -314,6 +314,33 @@ class TestExcelPythonEngine(unittest.TestCase):
         self.assertTrue(all(l.startswith('|') for l in table_lines), md)
         self.assertEqual(rest_lines, ['Hi ha partides.'])
 
+    def test_14_trim_blocks_does_not_collapse_transposed_table_rows(self):
+        """Regressió: l'arranjament de trim_blocks del test anterior beneficia les etiquetes
+        {% for %}/{% endfor %} soles a la seva línia (DYNAMIC_TABLE), però una TRANSPOSED_TABLE
+        col·loca el seu bucle {% for %}...{% endfor %} en línia, al final de cada fila amb
+        contingut real -- si trim_blocks també li mengés el salt de línia final, totes les files
+        quedarien enganxades en una sola línia. protect_inline_trailing_block_tags ha de detectar
+        aquest cas i preservar el salt de línia només per aquestes etiquetes."""
+        table_template_path = os.path.join(self.tmp_dir, "transposed_table_template.md.j2")
+        with open(table_template_path, "w", encoding="utf-8") as f:
+            f.write(
+                "<!-- TRANSPOSED_TABLE_START -->\n"
+                "| Partida | {% for part in pres.parts %}{{ part.nom_partida }} | {% endfor %}\n"
+                "| Import | {% for part in pres.parts %}{{ part.import }} | {% endfor %}\n"
+                "<!-- TRANSPOSED_TABLE_END -->\n"
+            )
+        result = json.loads(self.engine.render_md_two_pass_with_report(self.fixture_path, table_template_path))
+        self.assertTrue(result["success"], result.get("traceback"))
+        md = result["markdown"]
+
+        lines = [l for l in md.splitlines() if l.strip()]
+        row_lines = [l for l in lines if l.startswith('|')]
+        self.assertEqual(len(row_lines), 2, "Cada fila transposada ha d'ocupar la seva pròpia línia: " + repr(md))
+        self.assertTrue(row_lines[0].startswith('| Partida |'), row_lines[0])
+        self.assertTrue(row_lines[1].startswith('| Import |'), row_lines[1])
+        self.assertIn("Equips de sobretaula", row_lines[0])
+        self.assertIn("Portàtils", row_lines[0])
+
 
 if __name__ == "__main__":
     unittest.main()
