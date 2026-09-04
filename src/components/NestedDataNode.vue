@@ -23,7 +23,7 @@ import { useWorkspaceStore } from '../stores/workspace';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { isPrimitive, isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
 import { builtinFunctions, useFormulaAutocomplete } from '../composables/useFormulaAutocomplete';
-import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, saveGroupConfig as saveGroupConfigShared } from '../composables/useGroupMetadata';
+import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, saveGroupConfig as saveGroupConfigShared } from '../composables/useGroupMetadata';
 import VisualGridEditorModal from './VisualGridEditorModal.vue';
 import GroupConfigModal from './GroupConfigModal.vue';
 import TemplateEditor from './TemplateEditor.vue';
@@ -52,7 +52,7 @@ const props = defineProps({
 });
 
 const store = useWorkspaceStore();
-const { evaluateComputedFields, saveExcelData } = useWasmEngines();
+const { evaluateComputedFields, saveExcelData, analyzeMirrorPattern, applyMirrorColumn } = useWasmEngines();
 
 // Base utility helpers
 const cleanPath = (p) => {
@@ -134,7 +134,7 @@ const effectiveFields = computed(() => {
     return schemaFields;
   }
   if (items.value.length > 0 && typeof items.value[0] === 'object' && items.value[0] !== null) {
-    return Object.keys(items.value[0]).filter(k => k !== '_hierarchy_schema' && isPrimitive(items.value[0][k]));
+    return Object.keys(items.value[0]).filter(k => !isInternalMetadataKey(k) && isPrimitive(items.value[0][k]));
   }
   return [];
 });
@@ -299,15 +299,15 @@ const updatePercentageValue = (targetObj, key, eventVal) => {
 const getPrimitiveFields = (item) => {
   if (!item || typeof item !== 'object') return {};
   const res = {};
-  
+
   effectiveFields.value.forEach(f => {
-    if (f !== '_hierarchy_schema') {
+    if (!isInternalMetadataKey(f)) {
       res[f] = item[f] !== undefined ? item[f] : '';
     }
   });
 
   Object.keys(item).forEach(k => {
-    if (k !== '_hierarchy_schema' && isPrimitive(item[k]) && !(k in res)) {
+    if (!isInternalMetadataKey(k) && isPrimitive(item[k]) && !(k in res)) {
       res[k] = item[k];
     }
   });
@@ -904,16 +904,19 @@ const evaluateItemTitleFormula = (formulaStr, item, groupName, fallback) => {
   return resolveToken(trimmed);
 };
 
-const handleSaveGroupConfig = (data) => {
+const handleSaveGroupConfig = async (data) => {
   // legacyGroupNames: [props.arrayKey] clears any entries mistakenly saved
   // under the short local key (before the 2026-09-01 fix), so re-saving
   // a group also heals data written by the old, buggy version.
-  saveGroupConfigShared(store, {
+  await saveGroupConfigShared(store, {
     groupPath: fullPath.value,
     legacyGroupNames: [props.arrayKey],
     data,
+    ensureFieldKeys: true,
     saveExcelData,
     evaluateComputedFields,
+    analyzeMirrorPattern,
+    applyMirrorColumn,
   });
   isConfigModalOpen.value = false;
 };

@@ -48,6 +48,21 @@ export function findElementMetadata(store, groupPath, elementName) {
   ) || null;
 }
 
+/**
+ * True for a key that stores internal app bookkeeping rather than an actual
+ * user-facing data field — this codebase's convention (see TemplateEditor.vue's
+ * `isInternalMetadataKey`, from `useLoopContext.js`) is that any key starting
+ * with `_` is internal (`_group_label`, a group's title/layout header row;
+ * `_hierarchy_schema`; `_sheet_info`; `_path`; …), alongside the editor_metadata
+ * list itself. Both DataInspector.vue (root-level KV groups) and
+ * NestedDataNode.vue (nested groups) use this so none of these ever render as
+ * if they were a real field in the "Dades" tab form.
+ */
+export function isInternalMetadataKey(key) {
+  if (typeof key !== 'string' || !key) return false;
+  return key.startsWith('_') || key === 'editor_metadata' || key === 'editormetadata';
+}
+
 /** True if the field's metadata marks it as calculated (Computed type, calcFn, or a row-level formula). */
 export function isFieldCalculated(store, groupPath, elementName) {
   const meta = findElementMetadata(store, groupPath, elementName);
@@ -96,6 +111,37 @@ export function groupLabel(store, groupName, extraGroupNames = []) {
 }
 
 /**
+ * Walks `root` (normally `store.excelJsonData`) following the dotted schema
+ * path `pathParts` (e.g. `['pres', 'parts', 'activitats']`) and returns every
+ * node found there — an array walks into EVERY item at that hop, so a
+ * repeating parent (`pres.parts`) yields one result per row for a path
+ * nested inside it (`pres.parts.activitats`), not just the first. Used to
+ * find every place a group's real data lives so a config save can seed newly
+ * configured fields into all of them, mirroring how `editor_metadata` is
+ * already shared by group name across every sibling row.
+ */
+function collectNodesAtSchemaPath(root, pathParts) {
+  const results = [];
+  const walk = (node, parts) => {
+    if (!node || typeof node !== 'object') return;
+    if (parts.length === 0) {
+      results.push(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      node.forEach(item => walk(item, parts));
+      return;
+    }
+    const [head, ...rest] = parts;
+    if (head in node) {
+      walk(node[head], rest);
+    }
+  };
+  walk(root, pathParts);
+  return results;
+}
+
+/**
  * Replaces a group's editor_metadata entries with the output of
  * GroupConfigModal's save event: a `_group_label` header row (layout, item
  * title formula, group label) plus one row per configured field.
@@ -105,16 +151,67 @@ export function groupLabel(store, groupName, extraGroupNames = []) {
  * makes re-saving a group self-heal any entries mistakenly saved under that
  * key before the 2026-09-01 fix.
  *
- * `ensureKvKeys`, when true, adds empty string values to `store.excelJsonData`
- * for any newly-configured field not yet present on a KV (object, not array)
- * group — DataInspector.vue needs this for root-level KV sheets;
- * NestedDataNode.vue's groups are always backed by real data already.
+ * `ensureFieldKeys`, when true, makes sure every newly-configured field
+ * actually exists somewhere in `store.excelJsonData`, not just as
+ * editor_metadata rows — otherwise the "configuration" has nothing to attach
+ * to and silently has no visible effect. This matters for:
+ *   - a KV (object, not array) group: adds an empty string value for any
+ *     configured field not yet a key of it (DataInspector.vue's root-level
+ *     KV sheets always needed this).
+ *   - a tabular (array) group that ALREADY has rows: adds an empty string
+ *     value for any configured field missing from each existing row.
+ *   - a tabular group that is BRAND NEW (still an empty array, as it is
+ *     right after being created via "Nou Conjunt"): seeds one row with the
+ *     configured fields, since with zero rows there is nothing for
+ *     `effectiveFields`/`getPrimitiveFields` (NestedDataNode.vue) to derive
+ *     column names from, and the freshly-defined columns would otherwise
+ *     never appear anywhere in the "Dades" tab (the bug fixed 2026-09-04:
+ *     configuring an EXISTING nested table worked because it already had
+ *     real rows to hang field names off of; creating one from scratch and
+ *     configuring it did not, because nothing ever wrote the new fields
+ *     into the data tree for a table with no rows yet).
+ * `groupPath` may be a dotted nested path (e.g. `pres.parts.activitats`); a
+ * tabular group nested inside a repeating parent is looked up under EVERY
+ * matching parent row, not just the first, matching the same
+ * shared-schema-across-siblings guarantee `editor_metadata` already has.
  *
  * `saveExcelData`/`evaluateComputedFields` are the corresponding functions
  * from `useWasmEngines()`; passed in rather than imported so this module has
  * no dependency on Pyodide being initialized.
+ *
+ * `analyzeMirrorPattern`/`applyMirrorColumn` (also from `useWasmEngines()`),
+ * when passed, are used for any field in `data.configList` that is genuinely
+ * NEW (not already a key of the group's real data, checked before any of the
+ * above mutates it): if the sheet's
+ * existing columns turn out to be a simple cell-by-cell mirror of another
+ * sheet (`=SourceSheet!Cell` formulas), the user is asked whether to ALSO add
+ * the new column to that source sheet, replicating the formula convention —
+ * otherwise the OUT_ sheet's new column would silently be left disconnected
+ * from wherever the group's real data actually lives (see bug report:
+ * OUT_nomconjunt mirroring a `nomconjunt` sheet). When the pattern looks like
+ * a mirror but is too ambiguous to replicate safely (mixed source sheets, a
+ * non-formula cell, ...), the user is warned instead and nothing is written
+ * automatically — they are told to add the column directly in the
+ * spreadsheet. A sheet with no formulas at all (the ordinary case) triggers
+ * neither prompt.
  */
-export function saveGroupConfig(store, { groupPath, legacyGroupNames = [], data, ensureKvKeys = false, saveExcelData, evaluateComputedFields }) {
+export async function saveGroupConfig(store, { groupPath, legacyGroupNames = [], data, ensureFieldKeys = false, saveExcelData, evaluateComputedFields, analyzeMirrorPattern, applyMirrorColumn }) {
+  // "Newly added" is judged against the REAL data the group already has, not
+  // against editor_metadata — a group configured for the first time (no prior
+  // metadata at all, e.g. a sheet freshly uploaded from an existing Excel
+  // file) would otherwise have every one of its already-populated columns
+  // misreported as "new" just because none of them had a metadata row yet.
+  const groupNodes = (store.excelJsonData && groupPath) ? collectNodesAtSchemaPath(store.excelJsonData, groupPath.split('.')) : [];
+  const preExistingKeys = new Set();
+  groupNodes.forEach(node => {
+    if (Array.isArray(node)) {
+      node.forEach(row => { if (row && typeof row === 'object' && !Array.isArray(row)) Object.keys(row).forEach(k => preExistingKeys.add(k)); });
+    } else if (node && typeof node === 'object') {
+      Object.keys(node).forEach(k => preExistingKeys.add(k));
+    }
+  });
+  const newlyAddedFields = data.configList.filter(item => !preExistingKeys.has(item.element)).map(item => item.element);
+
   store.editorMetadata = store.editorMetadata.filter(m => m.group !== groupPath && !legacyGroupNames.includes(m.group));
 
   const groupMeta = {
@@ -179,14 +276,85 @@ export function saveGroupConfig(store, { groupPath, legacyGroupNames = [], data,
     store.editorMetadata.push(meta);
   });
 
-  if (ensureKvKeys && store.excelJsonData && store.excelJsonData[groupPath]) {
-    const sheetData = store.excelJsonData[groupPath];
-    if (typeof sheetData === 'object' && !Array.isArray(sheetData)) {
-      data.configList.forEach(item => {
-        if (!(item.element in sheetData)) {
-          sheetData[item.element] = '';
+  if (ensureFieldKeys && store.excelJsonData && groupPath) {
+    // groupNodes was already computed above (before any config was applied)
+    // to tell new fields from existing ones — the same live references are
+    // still valid to mutate here, since nothing in between replaced them.
+    groupNodes.forEach(sheetData => {
+      if (Array.isArray(sheetData)) {
+        if (sheetData.length === 0) {
+          // Brand-new tabular group: seed one row so the configured fields
+          // exist somewhere, instead of the config being invisible.
+          const seedRow = {};
+          data.configList.forEach(item => { seedRow[item.element] = ''; });
+          if (Object.keys(seedRow).length > 0) sheetData.push(seedRow);
+        } else {
+          sheetData.forEach(row => {
+            if (row && typeof row === 'object' && !Array.isArray(row)) {
+              data.configList.forEach(item => {
+                if (!(item.element in row)) row[item.element] = '';
+              });
+            }
+          });
         }
-      });
+      } else if (sheetData && typeof sheetData === 'object') {
+        data.configList.forEach(item => {
+          if (!(item.element in sheetData)) {
+            sheetData[item.element] = '';
+          }
+        });
+      }
+    });
+  }
+
+  // Reasons analyze_mirror_pattern (engine.py) returns when the sheet clearly
+  // WAS attempting a formula-based mirror but not cleanly enough to replicate
+  // automatically — as opposed to 'sheet_not_found'/'no_data_rows'/
+  // 'no_formulas_found'/'no_excel_file', which just mean "not a mirror sheet
+  // at all" (the overwhelming majority case) and should stay silent.
+  const AMBIGUOUS_MIRROR_REASONS = new Set([
+    'multiple_or_no_source_sheets',
+    'non_formula_or_complex_cell',
+    'unparseable_formula',
+    'unparseable_cell_ref',
+    'column_maps_to_multiple_source_columns',
+    'inconsistent_row_offset',
+    'duplicate_source_column_mapping',
+  ]);
+
+  if (newlyAddedFields.length > 0 && analyzeMirrorPattern) {
+    try {
+      const analysis = await analyzeMirrorPattern(groupPath);
+      if (analysis.is_mirror) {
+        const fieldsLabel = newlyAddedFields.join(', ');
+        const confirmed = window.confirm(
+          `El full d'aquest grup sembla ser un mirall del full '${analysis.source_sheet}' ` +
+          `(les seves columnes existents són fórmules que hi apunten).\n\n` +
+          `Vols afegir també el/s camp/s nou/s (${fieldsLabel}) al full '${analysis.source_sheet}', ` +
+          `replicant aquesta mateixa fórmula, perquè quedin enllaçats?`
+        );
+        if (confirmed && applyMirrorColumn) {
+          for (const fieldName of newlyAddedFields) {
+            const result = await applyMirrorColumn(groupPath, fieldName);
+            if (result.applied) {
+              store.addLog(`Camp '${fieldName}' afegit també al full '${result.source_sheet}' (columna ${result.source_col}), enllaçat des de '${groupPath}' (columna ${result.out_col}).`, 'success');
+            } else {
+              store.addLog(`No s'ha pogut afegir el camp '${fieldName}' al full font: ${result.reason}. Afegeix-lo manualment al full de càlcul.`, 'warning');
+            }
+          }
+        }
+      } else if (AMBIGUOUS_MIRROR_REASONS.has(analysis.reason)) {
+        window.alert(
+          `Aquest full sembla ser (parcialment) un mirall d'un altre full mitjançant fórmules, ` +
+          `però el patró no és prou clar o uniforme perquè elips pugui afegir-hi automàticament ` +
+          `la/les nova/ves columna/es (${newlyAddedFields.join(', ')}).\n\n` +
+          `Afegeix aquesta columna directament al full de càlcul si també ha d'estar enllaçada.`
+        );
+        store.addLog(`El camp/s nou/s (${newlyAddedFields.join(', ')}) de '${groupPath}' no s'ha/n pogut enllaçar automàticament amb el full font (motiu: ${analysis.reason}).`, 'warning');
+      }
+    } catch (e) {
+      // Never let a mirror-detection failure block saving the actual configuration.
+      store.addLog(`No s'ha pogut analitzar si '${groupPath}' és un mirall d'un altre full: ${e.message || e}`, 'warning');
     }
   }
 

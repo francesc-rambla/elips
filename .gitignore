@@ -7,4 +7,5 @@ __pycache__/
 
 # Generated test fixtures (produced by tests/fixtures/generate_*.{py,mjs})
 tests/fixtures/elips_test_fixture.xlsx
+tests/fixtures/elips_mirror_test_fixture.xlsx
 tests/fixtures/elips_test_project.zip

@@ -19,6 +19,7 @@
 import puppeteer from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -50,7 +51,9 @@ async function runE2ETests() {
 
   // Handle prompt dialogs dynamically
   let promptVal = 'nom_organ';
+  const dialogsSeen = [];
   page.on('dialog', async dialog => {
+    dialogsSeen.push({ type: dialog.type(), message: dialog.message() });
     if (dialog.type() === 'prompt') {
       await dialog.accept(promptVal);
     } else if (dialog.type() === 'confirm') {
@@ -240,6 +243,123 @@ async function runE2ETests() {
     } else {
       throw new Error("No s'ha trobat la pestanya General després de carregar la fixture generada");
     }
+
+    // 6. Regression (2026-09-04): adding a new column to a group whose OUT_
+    // sheet is a simple cell-by-cell mirror of another sheet (via
+    // `=OtherSheet!Cell` formulas) must ask the user whether to ALSO add the
+    // new column to that source sheet, replicating the same formula — instead
+    // of silently leaving it disconnected from the sheet that actually holds
+    // the group's real data. Uses tests/fixtures/elips_mirror_test_fixture.xlsx
+    // (OUT_nomconjunt mirrors nomconjunt), matching the exact scenario from
+    // the bug report.
+    console.log("➡️ 6. Provant la detecció de mirall en afegir una nova columna (OUT_nomconjunt / nomconjunt)...");
+    const mirrorFixtureFile = path.resolve(__dirname, 'fixtures', 'elips_mirror_test_fixture.xlsx');
+    if (!fs.existsSync(mirrorFixtureFile)) {
+      throw new Error(`Fixture no trobada a ${mirrorFixtureFile}. Executa primer: python3 tests/fixtures/generate_workbook.py`);
+    }
+
+    await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button.tab-btn'));
+      const uploadBtn = buttons.find(b => b.textContent.includes('Fitxers') || b.textContent.includes('Carregar'));
+      if (uploadBtn) uploadBtn.click();
+    });
+    await new Promise(r => setTimeout(r, 600));
+
+    const mirrorFileInput = await page.$('input[type="file"][accept*=".xlsx"]');
+    if (!mirrorFileInput) {
+      throw new Error("No s'ha trobat l'input de càrrega d'Excel (.xlsx) per a la fixture de mirall");
+    }
+    await mirrorFileInput.uploadFile(mirrorFixtureFile);
+    await new Promise(r => setTimeout(r, 1000));
+
+    await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('.modal-overlay button'));
+      const overwriteBtn = btns.find(b => b.innerText.includes('Opció B') || b.innerText.includes('sobreescriure'));
+      if (overwriteBtn) overwriteBtn.click();
+    });
+    await new Promise(r => setTimeout(r, 4500));
+
+    await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button.tab-btn'));
+      const dataBtn = buttons.find(b => b.textContent.includes('Dades'));
+      if (dataBtn) dataBtn.click();
+    });
+    await new Promise(r => setTimeout(r, 1200));
+
+    // Open "Configura Tipus" for the 'nomconjunt' group.
+    await page.evaluate(() => {
+      const headers = Array.from(document.querySelectorAll('*')).filter(el => el.children.length === 0 && el.textContent.trim() === 'nomconjunt');
+      let btn = null;
+      for (const h of headers) {
+        let node = h;
+        for (let i = 0; i < 6 && node; i++) {
+          const candidate = node.querySelector && Array.from(node.querySelectorAll('button')).find(b => b.textContent.includes('Configura'));
+          if (candidate) { btn = candidate; break; }
+          node = node.parentElement;
+        }
+        if (btn) break;
+      }
+      if (btn) btn.click();
+    });
+    await new Promise(r => setTimeout(r, 500));
+
+    if (!(await page.$('.modal-overlay input.data-input[placeholder="Nom visible del grup..."]'))) {
+      throw new Error("No s'ha obert el modal de configuració per a 'nomconjunt'");
+    }
+
+    dialogsSeen.length = 0;
+    promptVal = 'preu';
+    await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll('.modal-overlay button')).find(b => b.textContent.includes('Afegir camp/clau al grup'));
+      if (btn) btn.click();
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    await page.evaluate(() => {
+      const saveBtn = Array.from(document.querySelectorAll('.modal-overlay button')).find(b => b.textContent.trim() === 'Desa Configuració');
+      if (saveBtn) saveBtn.click();
+    });
+    await new Promise(r => setTimeout(r, 2500));
+
+    const mirrorConfirm = dialogsSeen.find(d => d.type === 'confirm' && d.message.includes('mirall'));
+    if (!mirrorConfirm) {
+      throw new Error(`No s'ha mostrat cap confirmació de mirall en afegir el camp 'preu': ${JSON.stringify(dialogsSeen)}`);
+    }
+    console.log("  ✓ Confirmació de mirall mostrada:", JSON.stringify(mirrorConfirm.message));
+
+    const mirrorExcelBase64 = await page.evaluate(async () => {
+      if (!window.store.excelFile) return null;
+      const buf = await window.store.excelFile.arrayBuffer();
+      let binary = '';
+      const bytes = new Uint8Array(buf);
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    });
+    if (!mirrorExcelBase64) {
+      throw new Error("No s'ha pogut recuperar el fitxer Excel resultant (window.store.excelFile) després de desar la configuració");
+    }
+    const resultXlsxPath = path.resolve(__dirname, '..', '.tmp_mirror_result_e2e.xlsx');
+    fs.writeFileSync(resultXlsxPath, Buffer.from(mirrorExcelBase64, 'base64'));
+
+    try {
+      const pyCheck = `
+import sys
+from openpyxl import load_workbook
+wb = load_workbook(sys.argv[1])
+src = wb["nomconjunt"]
+out = wb["OUT_nomconjunt"]
+assert src.cell(1, 4).value == "preu", f"Capçalera 'preu' no trobada al full font (C1={src.cell(1,4).value})"
+assert out.cell(1, 4).value == "preu", f"Capçalera 'preu' no trobada al full OUT_ (C1={out.cell(1,4).value})"
+assert out.cell(2, 4).value == "='nomconjunt'!D2", f"Fórmula de mirall inesperada: {out.cell(2,4).value}"
+assert out.cell(3, 4).value == "='nomconjunt'!D3", f"Fórmula de mirall inesperada: {out.cell(3,4).value}"
+print("MIRROR_COLUMN_VERIFIED_OK")
+`;
+      execFileSync('python3', ['-c', pyCheck, resultXlsxPath], { encoding: 'utf-8' });
+    } finally {
+      fs.unlinkSync(resultXlsxPath);
+    }
+
+    console.log("  ✓ La columna nova 'preu' s'ha afegit també al full font 'nomconjunt' (D1), enllaçada des de 'OUT_nomconjunt' (D2/D3) amb la mateixa convenció de fórmula -- verificat llegint el .xlsx resultant amb openpyxl.");
 
     console.log("\n🎉 TOTES LES PROVES END-TO-END HAN PASSAT AMB ÈXIT EN NAVEGADOR HEADLESS!");
   } catch (err) {

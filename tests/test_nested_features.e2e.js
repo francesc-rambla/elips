@@ -64,6 +64,10 @@ async function testNestedFeatures() {
           {
             titol: 'Part A - Desenvolupament',
             import: '50000',
+            // Regression fixture for the '_group_label' leak bug (2026-09-04):
+            // an internal bookkeeping key ending up on the item itself, the
+            // way it would if it had round-tripped through a group-title save.
+            _group_label: 'Parts',
             activitats: [
               { desc: 'Backend', preu: 30000 },
               { desc: 'Frontend', preu: 20000 }
@@ -72,6 +76,7 @@ async function testNestedFeatures() {
           {
             titol: 'Part B - Disseny i QA',
             import: '25000',
+            _group_label: 'Parts',
             activitats: [
               { desc: 'UI/UX', preu: 15000 },
               { desc: 'Testing', preu: 10000 }
@@ -93,6 +98,12 @@ async function testNestedFeatures() {
     window.store.excelFileName = 'pressupost.xlsx';
     window.store.editorMetadata = data.editor_metadata;
     window.store.excelJsonData = data;
+    // sheetInfo is what makes 'pres.parts' selectable as a parent in the
+    // "Nou Conjunt" (new sheet/group) modal used by step 8 below.
+    window.store.sheetInfo = [
+      { raw_name: 'OUT_pres', prefix: 'OUT_', clean_name: 'pres', parent_path: '', full_path: 'pres', kind: 'kv', headers: [], parent_ref_key: '', child_ref_key: '' },
+      { raw_name: 'OUT_pres.parts', prefix: 'OUT_', clean_name: 'pres.parts', parent_path: 'pres', full_path: 'pres.parts', kind: 'tabular', headers: ['titol', 'import'], parent_ref_key: '', child_ref_key: '' },
+    ];
     window.store.activeTab = 'data';
     if (window.store.dataActions?.setViewMode) {
       window.store.dataActions.setViewMode('complete');
@@ -120,6 +131,21 @@ async function testNestedFeatures() {
     throw new Error(`La fórmula del títol no s'ha avaluat correctament! Trobats: ${JSON.stringify(cardHeadersText)}`);
   }
   console.log("  ✓ Títol calculat correctament amb moneda localitzada:", cardHeadersText[0]);
+
+  // 1b. Regression: an internal '_group_label' key present on an item (as it
+  // would be if it had leaked in via a group-title save) must never render as
+  // a regular field in that item's own form — it is a hidden/internal key,
+  // like other underscore-prefixed keys.
+  console.log("➡️ 1b. Verificant que '_group_label' no es renderitza com a camp normal...");
+  const firstCardFieldsText = await page.evaluate(() => {
+    const firstCard = document.querySelector('.nested-card-item');
+    const bodyDiv = firstCard?.querySelector('div[style*="padding-top"]');
+    return bodyDiv ? bodyDiv.innerText : (firstCard ? firstCard.innerText : '');
+  });
+  if (firstCardFieldsText.includes('_group_label') || firstCardFieldsText.includes('Parts del Pressupost')) {
+    throw new Error(`La clau interna '_group_label' s'ha renderitzat com un camp normal! Contingut: ${JSON.stringify(firstCardFieldsText)}`);
+  }
+  console.log("  ✓ '_group_label' es manté ocult del formulari de l'element.");
 
   // 2. Verify Accordion Collapse / Expand
   console.log("➡️ 2. Verificant Col·lapse / Desplegament Acordió...");
@@ -416,8 +442,89 @@ async function testNestedFeatures() {
   }
   console.log("  ✓ La configuració de la sub-taula aniuada s'aplica a totes les files (grup compartit 'pres.parts.activitats').");
 
+  // 8. Regression (2026-09-04): configuring an EXISTING nested sub-table works
+  // (steps above already prove this for 'activitats'), but creating a BRAND
+  // NEW one from scratch and then configuring its fields silently had no
+  // effect: saveGroupConfig only ever wrote editor_metadata, and effectiveFields
+  // (which the "Dades" tab and "add row" both derive column names from) falls
+  // back to reading real row data when there is no schema yet — with zero
+  // rows in a freshly created table, there was nothing to read, so the
+  // configured fields never appeared anywhere.
+  console.log("➡️ 8. Verificant que crear una taula aniuada NOVA i configurar-hi camps sí que persisteix...");
+
+  await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Nou Conjunt'));
+    if (btn) btn.click();
+  });
+  await new Promise(r => setTimeout(r, 300));
+  await page.type('#newSheetNameInput', 'detalls');
+  await page.select('#newSheetKindSelect', 'sub_table');
+  await new Promise(r => setTimeout(r, 200));
+  await page.select('#newSheetParentSelect', 'pres.parts');
+  await new Promise(r => setTimeout(r, 200));
+  await page.click('#newSheetConfirmBtn');
+  await new Promise(r => setTimeout(r, 800));
+
+  const afterCreate = await page.evaluate(() => JSON.parse(JSON.stringify(window.store.excelJsonData.pres.parts)));
+  if (!afterCreate.every(p => Array.isArray(p.detalls) && p.detalls.length === 0)) {
+    throw new Error(`La nova sub-taula 'detalls' no s'ha creat buida a cada fila de 'parts': ${JSON.stringify(afterCreate)}`);
+  }
+
+  // Open "Configura Tipus" for the freshly created (still empty) 'detalls' sub-table.
+  await page.evaluate(() => {
+    const gears = Array.from(document.querySelectorAll('button[title="Configura tipus de dades i disposició per a aquest grup"]'));
+    const target = gears.find(g => (g.closest('.nested-hierarchy-container')?.querySelector('h5')?.textContent || '').includes('detalls'));
+    if (target) target.click();
+  });
+  await new Promise(r => setTimeout(r, 500));
+
+  // Answer the two "new field name" prompts triggered by the modal's own
+  // "Afegir camp/clau al grup" button (a plain window.prompt()), then save.
+  const fieldNames = ['concepte', 'preu'];
+  page.removeAllListeners('dialog');
+  page.on('dialog', async (dialog) => {
+    if (dialog.type() === 'prompt' && fieldNames.length > 0) {
+      await dialog.accept(fieldNames.shift());
+    } else {
+      await dialog.accept();
+    }
+  });
+
+  await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('.modal-overlay button')).find(b => b.textContent.includes('Afegir camp/clau al grup'));
+    if (btn) btn.click();
+  });
+  await new Promise(r => setTimeout(r, 300));
+  await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('.modal-overlay button')).find(b => b.textContent.includes('Afegir camp/clau al grup'));
+    if (btn) btn.click();
+  });
+  await new Promise(r => setTimeout(r, 300));
+
+  await page.evaluate(() => {
+    const saveBtn = Array.from(document.querySelectorAll('.modal-overlay button')).find(b => b.textContent.trim() === 'Desa Configuració');
+    if (saveBtn) saveBtn.click();
+  });
+  await new Promise(r => setTimeout(r, 800));
+
+  const afterConfig = await page.evaluate(() => JSON.parse(JSON.stringify(window.store.excelJsonData.pres.parts)));
+  console.log("  'detalls' a cada fila de 'parts' després de configurar:", JSON.stringify(afterConfig.map(p => p.detalls)));
+  if (!afterConfig.every(p => Array.isArray(p.detalls) && p.detalls.length === 1 && 'concepte' in p.detalls[0] && 'preu' in p.detalls[0])) {
+    throw new Error(`Els camps configurats per a la taula aniuada NOVA 'detalls' no s'han desat a les dades de cap fila: ${JSON.stringify(afterConfig)}`);
+  }
+
+  const detallsSectionText = await page.evaluate(() => {
+    const containers = Array.from(document.querySelectorAll('.nested-hierarchy-container'));
+    const target = containers.find(c => (c.querySelector('h5')?.textContent || '').includes('detalls'));
+    return target ? target.innerText : '';
+  });
+  if (!detallsSectionText.includes('concepte') || !detallsSectionText.includes('preu')) {
+    throw new Error(`Els camps 'concepte'/'preu' de la taula NOVA 'detalls' no es renderitzen al formulari: ${JSON.stringify(detallsSectionText)}`);
+  }
+  console.log("  ✓ La configuració d'una taula aniuada NOVA es desa i es renderitza correctament.");
+
   await browser.close();
-  console.log("🎉 TOTES LES PROVES DE TÍTOL PER FÓRMULA, ACORDIÓ, REORDENACIÓ, ETIQUETES ANIUADES, CAMPS CALCULATS I CONFIGURACIÓ COMPARTIDA HAN PASSAT AMB ÈXIT!");
+  console.log("🎉 TOTES LES PROVES DE TÍTOL PER FÓRMULA, ACORDIÓ, REORDENACIÓ, ETIQUETES ANIUADES, CAMPS CALCULATS, CONFIGURACIÓ COMPARTIDA I TAULA NOVA HAN PASSAT AMB ÈXIT!");
 }
 
 testNestedFeatures().catch(err => {

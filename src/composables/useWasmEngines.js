@@ -437,6 +437,58 @@ orphan_count
     return new Blob([excelBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   };
 
+  // Makes sure /work/in.xlsx exists in the Pyodide virtual FS, restoring it
+  // from store.excelFile when needed (same recovery step saveExcelData/
+  // renderMarkdown already do). Returns false when there is genuinely no
+  // Excel workbook to inspect yet (a from-scratch project).
+  const ensureVirtualExcelExists = async () => {
+    if (!_pyodide) throw new Error("Pyodide no s'ha inicialitzat.");
+    ensureWorkDir();
+    try {
+      _pyodide.FS.stat('/work/in.xlsx');
+      return true;
+    } catch (_) {}
+    if (store.excelFile) {
+      try {
+        const buffer = await store.excelFile.arrayBuffer();
+        _pyodide.FS.writeFile('/work/in.xlsx', new Uint8Array(buffer));
+        return true;
+      } catch (err) {
+        store.addLog(`Error al restaurar fitxer Excel virtual: ${err.message}`, 'warning');
+      }
+    }
+    return false;
+  };
+
+  // Detects whether `sheetName`'s existing columns are a simple cell-by-cell
+  // mirror of another sheet via `=SourceSheet!Cell` formulas (see
+  // analyze_mirror_pattern in engine.py) — used before adding a new field to
+  // a group, to decide whether to offer replicating it into the source sheet
+  // too. Returns { is_mirror: false, reason: 'no_excel_file' } when there is
+  // no real workbook yet to analyze (nothing to mirror in that case).
+  const analyzeMirrorPattern = async (sheetName) => {
+    const hasExcel = await ensureVirtualExcelExists();
+    if (!hasExcel) return { is_mirror: false, reason: 'no_excel_file' };
+    const fn = _pyodide.globals.get('analyze_mirror_pattern');
+    const resultStr = fn('/work/in.xlsx', sheetName);
+    fn.destroy();
+    return JSON.parse(resultStr);
+  };
+
+  // Applies a previously-analyzed (and user-approved) mirror pattern: adds
+  // `newFieldName` as a new column in both the source sheet and `sheetName`
+  // (as a formula replicating the existing convention). Writes the result
+  // back into /work/in.xlsx so the caller's subsequent saveExcelData() call
+  // builds on top of it instead of the pre-mirror workbook.
+  const applyMirrorColumn = async (sheetName, newFieldName) => {
+    const hasExcel = await ensureVirtualExcelExists();
+    if (!hasExcel) return { applied: false, reason: 'no_excel_file' };
+    const fn = _pyodide.globals.get('apply_mirror_column');
+    const resultStr = fn('/work/in.xlsx', sheetName, newFieldName, '/work/in.xlsx');
+    fn.destroy();
+    return JSON.parse(resultStr);
+  };
+
   const hydrateModelWithForeignKeys = (rootData, editorMetadata) => {
     if (!rootData || typeof rootData !== 'object') return rootData;
     const metaList = editorMetadata || rootData.editor_metadata || [];
@@ -687,6 +739,8 @@ orphan_count
     saveExcelHierarchy,
     evaluateComputedFields,
     writeVirtualExcel,
+    analyzeMirrorPattern,
+    applyMirrorColumn,
     isLoading
   };
 }

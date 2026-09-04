@@ -22,7 +22,7 @@ import { useWorkspaceStore } from '../stores/workspace';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { isPrimitive, isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
 import { builtinFunctions, useFormulaAutocomplete } from '../composables/useFormulaAutocomplete';
-import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, saveGroupConfig as saveGroupConfigShared } from '../composables/useGroupMetadata';
+import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, saveGroupConfig as saveGroupConfigShared } from '../composables/useGroupMetadata';
 import NestedDataNode from './NestedDataNode.vue';
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
@@ -30,7 +30,7 @@ import { latexSymbols } from './latexSymbols';
 import { runGlobalAutoAdjust } from '../main';
 
 const store = useWorkspaceStore();
-const { saveExcelData, evaluateComputedFields } = useWasmEngines();
+const { saveExcelData, evaluateComputedFields, analyzeMirrorPattern, applyMirrorColumn } = useWasmEngines();
 const showJsonView = ref(false);
 const openSheets = ref({});
 const savingExcel = ref(false);
@@ -128,7 +128,7 @@ const toggleSheet = (name) => {
 const getKvPrimitiveEntries = (sheetData) => {
   if (!sheetData || typeof sheetData !== 'object' || Array.isArray(sheetData)) return {};
   const res = {};
-  Object.keys(sheetData).filter(k => isPrimitive(sheetData[k])).forEach(k => {
+  Object.keys(sheetData).filter(k => !isInternalMetadataKey(k) && isPrimitive(sheetData[k])).forEach(k => {
     res[k] = sheetData[k];
   });
   return res;
@@ -137,7 +137,7 @@ const getKvPrimitiveEntries = (sheetData) => {
 // Agrupa i ordena els camps primitius d'un full KV en files segons la configuració manual (gridRow/gridOrder) per construir el layout de l'acordió
 const getKvRowBlocks = (sheetData, groupName = '') => {
   if (!sheetData || typeof sheetData !== 'object' || Array.isArray(sheetData)) return [];
-  const keys = Object.keys(sheetData).filter(k => isPrimitive(sheetData[k]));
+  const keys = Object.keys(sheetData).filter(k => !isInternalMetadataKey(k) && isPrimitive(sheetData[k]));
   
   const items = keys.map(key => {
     const meta = getElementMetadata(groupName, key) || {};
@@ -1054,7 +1054,7 @@ const openGroupConfig = (groupName, sheetData) => {
   groupLabelInput.value = currentGroupLabel !== groupName ? currentGroupLabel : '';
 
   const isKv = getSheetType(sheetData) === 'kv';
-  const elements = isKv ? Object.keys(sheetData) : getTabularColumns(groupName, sheetData);
+  const elements = isKv ? Object.keys(sheetData).filter(k => !isInternalMetadataKey(k)) : getTabularColumns(groupName, sheetData);
   
   groupConfigList.value = elements.map(el => {
     const meta = getElementMetadata(groupName, el) || { type: 'Text' };
@@ -1160,13 +1160,15 @@ const moveTabularRowDown = (name, idx) => {
 };
 
 // Embolcall sobre saveGroupConfigShared de useGroupMetadata.js amb el grup actualment en edició
-const handleSaveGroupConfig = (data) => {
-  saveGroupConfigShared(store, {
+const handleSaveGroupConfig = async (data) => {
+  await saveGroupConfigShared(store, {
     groupPath: activeConfigGroup.value,
     data,
-    ensureKvKeys: true,
+    ensureFieldKeys: true,
     saveExcelData,
     evaluateComputedFields,
+    analyzeMirrorPattern,
+    applyMirrorColumn,
   });
   isConfigModalOpen.value = false;
 };

@@ -34,7 +34,7 @@ import unittest
 import importlib.util
 from unittest import mock
 
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURES_DIR = os.path.join(REPO_ROOT, "tests", "fixtures")
@@ -375,6 +375,109 @@ class TestExcelPythonEngine(unittest.TestCase):
         # enllaç, generant <a ...><a ...>A1</a></a>).
         codi_segment = html.split("Codi: ", 1)[1].split(" | Nom:", 1)[0]
         self.assertEqual(codi_segment.count("<a "), 1, "Enllaç HTML aniuat detectat: " + codi_segment)
+
+    def test_16_mirror_pattern_detected_and_new_column_replicated_to_source(self):
+        """analyze_mirror_pattern/apply_mirror_column: quan un full OUT_ existent és un mirall
+        cel-a-cel d'un altre full (totes les cel·les existents són fórmules =full!cel·la que
+        apunten a UN sol full font, una columna OUT_ per columna font, amb el mateix desplaçament
+        de fila), s'ha de detectar correctament i, en aplicar-lo, la nova columna s'ha d'afegir
+        TANT al full font (capçalera) com al full OUT_ (com a fórmula que hi apunta), replicant
+        exactament la mateixa convenció -- en lloc de deixar la nova columna òrfena/desconnectada
+        del full que realment conté les dades (bug reportat: OUT_nomconjunt mirall de 'nomconjunt')."""
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "nomconjunt"
+        ws.append(["nom", "descripcio"])
+        ws.append(["Article U", "Descripció U"])
+        ws.append(["Article Dos", "Descripció Dos"])
+
+        ws_out = wb.create_sheet("OUT_nomconjunt")
+        ws_out.append(["nom", "descripcio"])
+        ws_out.append(["=nomconjunt!A2", "=nomconjunt!B2"])
+        ws_out.append(["=nomconjunt!A3", "=nomconjunt!B3"])
+
+        mirror_path = os.path.join(self.tmp_dir, "mirror.xlsx")
+        wb.save(mirror_path)
+
+        analysis = json.loads(self.engine.analyze_mirror_pattern(mirror_path, "nomconjunt"))
+        self.assertTrue(analysis["is_mirror"], analysis)
+        self.assertEqual(analysis["source_sheet"], "nomconjunt")
+        self.assertEqual(analysis["row_offset"], 0)
+        self.assertEqual(analysis["next_source_col"], "C")
+
+        applied_path = os.path.join(self.tmp_dir, "mirror_applied.xlsx")
+        apply_result = json.loads(self.engine.apply_mirror_column(mirror_path, "nomconjunt", "preu", applied_path))
+        self.assertTrue(apply_result["applied"], apply_result)
+
+        wb_check = load_workbook(applied_path)
+        self.assertEqual(wb_check["nomconjunt"].cell(1, 3).value, "preu")
+        self.assertEqual(wb_check["OUT_nomconjunt"].cell(1, 3).value, "preu")
+        self.assertEqual(wb_check["OUT_nomconjunt"].cell(2, 3).value, "='nomconjunt'!C2")
+        self.assertEqual(wb_check["OUT_nomconjunt"].cell(3, 3).value, "='nomconjunt'!C3")
+
+        # A value written through the mirror formula must land in the SOURCE
+        # sheet, not overwrite the OUT_ sheet's formula (write_cell_value's
+        # existing link-chain traversal, exercised end-to-end here).
+        data = self.engine.excel_to_json(applied_path)["data"]
+        data["nomconjunt"][0]["preu"] = "123"
+        roundtrip_path = os.path.join(self.tmp_dir, "mirror_roundtrip.xlsx")
+        self.engine.update_excel_from_json(applied_path, json.dumps(data), roundtrip_path)
+        wb_rt = load_workbook(roundtrip_path)
+        self.assertEqual(wb_rt["nomconjunt"].cell(2, 3).value, 123)
+        self.assertEqual(wb_rt["OUT_nomconjunt"].cell(2, 3).value, "='nomconjunt'!C2")
+
+    def test_17_mirror_pattern_rejects_ambiguous_or_mixed_patterns(self):
+        """analyze_mirror_pattern ha de NEGAR-SE (is_mirror: false) a proposar una replicació
+        automàtica quan el patró no és net i inequívoc: columnes que apunten a fulls font
+        diferents, o una cel·la que no és una fórmula simple d'enllaç -- en aquests casos
+        l'usuari ha d'afegir la columna manualment al full de càlcul."""
+        wb_mixed = Workbook()
+        ws = wb_mixed.active
+        ws.title = "font_a"
+        ws.append(["x"])
+        ws.append(["1"])
+        ws_b = wb_mixed.create_sheet("font_b")
+        ws_b.append(["y"])
+        ws_b.append(["2"])
+        ws_mixed_out = wb_mixed.create_sheet("OUT_barreja")
+        ws_mixed_out.append(["colx", "coly"])
+        ws_mixed_out.append(["=font_a!A2", "=font_b!A2"])
+        mixed_path = os.path.join(self.tmp_dir, "mixed.xlsx")
+        wb_mixed.save(mixed_path)
+
+        mixed_result = json.loads(self.engine.analyze_mirror_pattern(mixed_path, "barreja"))
+        self.assertFalse(mixed_result["is_mirror"])
+        self.assertEqual(mixed_result["reason"], "multiple_or_no_source_sheets")
+
+        wb_plain = Workbook()
+        ws = wb_plain.active
+        ws.title = "font_c"
+        ws.append(["x"])
+        ws.append(["1"])
+        ws_plain_out = wb_plain.create_sheet("OUT_plana")
+        ws_plain_out.append(["colx"])
+        ws_plain_out.append(["=font_c!A2"])
+        ws_plain_out.append(["un valor literal, no una fórmula"])
+        plain_path = os.path.join(self.tmp_dir, "plain.xlsx")
+        wb_plain.save(plain_path)
+
+        plain_result = json.loads(self.engine.analyze_mirror_pattern(plain_path, "plana"))
+        self.assertFalse(plain_result["is_mirror"])
+        self.assertEqual(plain_result["reason"], "non_formula_or_complex_cell")
+
+        # A sheet with no formulas at all (the ordinary case) is not a mirror
+        # either, but for a completely different, unremarkable reason -- this
+        # is what should stay silent in the app rather than warn the user.
+        wb_ordinary = Workbook()
+        ws = wb_ordinary.active
+        ws.title = "OUT_normal"
+        ws.append(["a", "b"])
+        ws.append(["1", "2"])
+        ordinary_path = os.path.join(self.tmp_dir, "ordinary.xlsx")
+        wb_ordinary.save(ordinary_path)
+        ordinary_result = json.loads(self.engine.analyze_mirror_pattern(ordinary_path, "normal"))
+        self.assertFalse(ordinary_result["is_mirror"])
+        self.assertEqual(ordinary_result["reason"], "no_formulas_found")
 
 
 if __name__ == "__main__":

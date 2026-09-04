@@ -204,11 +204,45 @@ def build_workbook():
     return wb
 
 
+MIRROR_OUTPUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "elips_mirror_test_fixture.xlsx")
+
+
+def build_mirror_workbook():
+    """A second, tiny fixture used only by the "add a new field/column"
+    Excel-mirror-detection e2e test (see e2e_browser.e2e.js): ``OUT_nomconjunt``
+    is a cell-by-cell mirror of ``nomconjunt`` via simple ``=nomconjunt!Cell``
+    link formulas in every existing column — the scenario the bug report
+    described (adding a new column via the app must not silently leave it
+    disconnected from the sheet that actually holds the data)."""
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    ws = wb.create_sheet("nomconjunt")
+    _write_rows(ws, [
+        ["nom", "descripcio", "codi"],
+        ["Article U", "Descripció U", "A1"],
+        ["Article Dos", "Descripció Dos", "A2"],
+    ])
+
+    ws_out = wb.create_sheet("OUT_nomconjunt")
+    _write_rows(ws_out, [
+        ["nom", "descripcio", "codi"],
+        ["=nomconjunt!A2", "=nomconjunt!B2", "=nomconjunt!C2"],
+        ["=nomconjunt!A3", "=nomconjunt!B3", "=nomconjunt!C3"],
+    ])
+
+    return wb
+
+
 def main():
     out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUTPUT
     wb = build_workbook()
     wb.save(out_path)
     print(f"Fixture generada: {out_path}")
+
+    mirror_wb = build_mirror_workbook()
+    mirror_wb.save(MIRROR_OUTPUT)
+    print(f"Fixture generada: {MIRROR_OUTPUT}")
 
 
 if __name__ == "__main__":
