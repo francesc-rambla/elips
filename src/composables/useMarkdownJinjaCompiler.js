@@ -33,6 +33,24 @@ const stripRawJinjaRef = (raw) => {
   return expr;
 };
 
+// Every chip/block below builds its HTML by interpolating a Jinja2
+// expression (a condition, a variable path, a filter arg...) straight into
+// a template literal — as a data-*="..." attribute value AND/OR as the
+// element's visible text. Both positions are HTML syntax, not plain text:
+// an expression containing '"' (e.g. `general.valor == "valor vàlid"`, or
+// any filter argument written with double quotes) truncates the attribute
+// value at that quote when the string is parsed as HTML, silently
+// dropping everything after it; one containing '<'/'>' (e.g. `{% if x < 5
+// %}`) corrupts the surrounding markup outright. Escaping is safe to apply
+// unconditionally in both positions — for the overwhelmingly common case
+// with none of these characters it's a complete no-op.
+const escapeHtml = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
 // Converts one branch's body (a .j-content element) to Markdown. Falls back to
 // an empty string for a missing/empty node so callers can trim safely.
 const branchBodyToMarkdown = (td, contentEl) => (contentEl ? td.turndown(contentEl).trim() : '');
@@ -169,6 +187,11 @@ const transposedTableToMarkdown = (td, table, loopExpr) => {
 
 let cachedTurndownService = null;
 
+// A "word" character for deciding whether an underscore sits inside a word
+// (Unicode-aware — a plain \w would treat every accented Catalan letter as
+// non-word and over-escape around them).
+const WORD_CHAR_RE = /[\p{L}\p{N}]/u;
+
 const buildTurndownService = () => {
   const td = new TurndownService({
     headingStyle: 'atx',
@@ -177,6 +200,26 @@ const buildTurndownService = () => {
     emDelimiter: '*',
   });
   td.use(turndownGfm);
+
+  // Turndown's default escape() backslash-escapes every '_' in plain text
+  // unconditionally (markdownEscapes has an unanchored /_/g, unlike '-'/'+'/
+  // '#'/etc., which are all anchored to the start of a line) — correct for
+  // text turndown itself might render with underscore emphasis, but this
+  // app's emDelimiter is '*', so a literal '_' reaching a text node is
+  // never turndown's own emphasis syntax, only genuine prose/identifier
+  // text (Catalan words, Excel/Jinja2 field names like "num_expedient")
+  // that this app deals in constantly. Per CommonMark/GFM, an underscore
+  // fully surrounded by word characters can never open/close emphasis
+  // (GFM explicitly disables intraword "_" emphasis), so it needs no
+  // escaping; keep escaping only the ones that could actually be
+  // mistaken for an emphasis delimiter (adjacent to whitespace/punctuation
+  // or string start/end).
+  const defaultEscape = td.escape.bind(td);
+  td.escape = (text) => defaultEscape(text).replace(/\\_/g, (m, offset, s) => {
+    const prev = s[offset - 1];
+    const next = s[offset + 2];
+    return (prev && next && WORD_CHAR_RE.test(prev) && WORD_CHAR_RE.test(next)) ? '_' : m;
+  });
 
   // Safety net: these are pure UI chrome (icons/buttons/condition labels) that
   // should only ever be reached through the dedicated .jinja-block rule below,
@@ -287,8 +330,8 @@ const btnBranchTrashHtml = () => '<button class="j-btn-mini btn-branch-trash" st
 // clicking the (now-hidden) condition text itself.
 const btnHeadEditHtml = () => `<button class="j-btn-mini j-head-edit-btn" style="background:none;border:none;color:inherit;padding:0;display:inline-flex;align-items:center;cursor:pointer;" title="Edita la condició">${ICON_EDIT}</button>`;
 
-const forHeadHtml = (cond) => `<div class="j-head" data-type="for"><div style="display:flex;align-items:center;gap:4px;">${ICON_LOOP}${btnHeadEditHtml()} <span style="font-weight:700;color:var(--color-primary);">PER CADA:</span> <span class="j-cond-text" data-cond="${cond}">${cond}</span></div><div class="j-actions">${btnLayoutHtml()}${btnTrashHtml('Elimina el bucle')}</div></div>`;
-const ifHeadHtml = (cond) => `<div class="j-head" data-type="if"><div style="display:flex;align-items:center;gap:4px;">${ICON_IF}${btnHeadEditHtml()} <span style="font-weight:700;color:#b45309;">SI:</span> <span class="j-cond-text" data-cond="${cond}">${cond}</span></div><div class="j-actions">${btnLayoutHtml()}<button class="j-btn-mini btn-elif" title="Afegeix branca O SI (ELIF)">+ ELIF</button><button class="j-btn-mini btn-else" title="Afegeix branca EN CAS CONTRARI (ELSE)">+ ELSE</button>${btnTrashHtml('Elimina el condicional')}</div></div>`;
+const forHeadHtml = (cond) => { const c = escapeHtml(cond); return `<div class="j-head" data-type="for"><div style="display:flex;align-items:center;gap:4px;">${ICON_LOOP}${btnHeadEditHtml()} <span style="font-weight:700;color:var(--color-primary);">PER CADA:</span> <span class="j-cond-text" data-cond="${c}">${c}</span></div><div class="j-actions">${btnLayoutHtml()}${btnTrashHtml('Elimina el bucle')}</div></div>`; };
+const ifHeadHtml = (cond) => { const c = escapeHtml(cond); return `<div class="j-head" data-type="if"><div style="display:flex;align-items:center;gap:4px;">${ICON_IF}${btnHeadEditHtml()} <span style="font-weight:700;color:#b45309;">SI:</span> <span class="j-cond-text" data-cond="${c}">${c}</span></div><div class="j-actions">${btnLayoutHtml()}<button class="j-btn-mini btn-elif" title="Afegeix branca O SI (ELIF)">+ ELIF</button><button class="j-btn-mini btn-else" title="Afegeix branca EN CAS CONTRARI (ELSE)">+ ELSE</button>${btnTrashHtml('Elimina el condicional')}</div></div>`; };
 
 // Builds the interactive .jinja-block HTML for a block-layout for/if, given its
 // branches ([{ keyword: 'for'|'if'|'elif'|'else', cond, body }]) and a function
@@ -296,14 +339,15 @@ const ifHeadHtml = (cond) => `<div class="j-head" data-type="if"><div style="dis
 const buildJinjaBlockHtml = (type, branches, compileFn) => {
   const openCond = branches[0].cond;
   const openHead = type === 'for' ? forHeadHtml(openCond) : ifHeadHtml(openCond);
-  let html = `<div class="jinja-block" contenteditable="false" data-layout="block" data-type="${type}" data-cond="${openCond}">${openHead}<div class="j-content" contenteditable="true">${compileFn(branches[0].body)}</div>`;
+  let html = `<div class="jinja-block" contenteditable="false" data-layout="block" data-type="${type}" data-cond="${escapeHtml(openCond)}">${openHead}<div class="j-content" contenteditable="true">${compileFn(branches[0].body)}</div>`;
 
   for (let i = 1; i < branches.length; i++) {
     const b = branches[i];
     if (b.keyword === 'else') {
       html += `<div class="j-branch" data-type="else"><div style="display:flex;align-items:center;gap:4px;"><span style="font-weight:700;color:#b45309;">EN CAS CONTRARI</span></div>${btnBranchTrashHtml()}</div>`;
     } else {
-      html += `<div class="j-branch" data-type="elif"><div style="display:flex;align-items:center;gap:4px;"><span style="font-weight:700;color:#b45309;">O SI:</span> <span class="j-cond-text" data-cond="${b.cond}">${b.cond}</span></div>${btnBranchTrashHtml()}</div>`;
+      const bc = escapeHtml(b.cond);
+      html += `<div class="j-branch" data-type="elif"><div style="display:flex;align-items:center;gap:4px;"><span style="font-weight:700;color:#b45309;">O SI:</span> <span class="j-cond-text" data-cond="${bc}">${bc}</span></div>${btnBranchTrashHtml()}</div>`;
     }
     html += `<div class="j-content" contenteditable="true">${compileFn(b.body)}</div>`;
   }
@@ -322,10 +366,13 @@ const buildJinjaBlockHtml = (type, branches, compileFn) => {
 // in TemplateEditor.vue), so it doesn't take up space until needed.
 const buildInlineJinjaHtml = (type, branches, compileInline) => {
   const icon = type === 'for' ? ICON_LOOP : ICON_IF;
-  const inlineTag = (tagText) =>
-    `<span class="j-inline-tag" contenteditable="false" title="${tagText} — Fes clic per passar a BLOC"><span class="j-inline-tag-icon">${icon}</span><span class="j-inline-tag-text">${tagText}</span></span>`;
+  // tagText is placed both as a title="..." attribute and as visible text
+  // content below — build it from the raw (unescaped) condition, then
+  // escape the whole rendered tag once so both positions get a
+  // consistently-escaped value.
+  const inlineTag = (tagText) => { const t = escapeHtml(tagText); return `<span class="j-inline-tag" contenteditable="false" title="${t} — Fes clic per passar a BLOC"><span class="j-inline-tag-icon">${icon}</span><span class="j-inline-tag-text">${t}</span></span>`; };
 
-  let html = `<span class="jinja-block inline" contenteditable="false" data-layout="inline" data-type="${type}" data-cond="${branches[0].cond}">`;
+  let html = `<span class="jinja-block inline" contenteditable="false" data-layout="inline" data-type="${type}" data-cond="${escapeHtml(branches[0].cond)}">`;
   branches.forEach((b, i) => {
     const tagText = i === 0
       ? `{% ${type} ${b.cond} %}`
@@ -584,7 +631,7 @@ const extractCommentTables = (text, { findBestKeyMatch, findColHeaderKeyMatch, r
     let html = tableEditButtonHtml() + '<table><thead><tr><th data-align="left">Dada</th>';
     const headJinjaMatch = lines[0].match(/\{\{\s*([^}]+)\s*\}\}/);
     const headChipRaw = headJinjaMatch ? headJinjaMatch[1].trim() : `${loopVar}.${colHeader}`;
-    html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${headChipRaw}">${resolveFieldLabel(headChipRaw)}</span></th></tr></thead><tbody>`;
+    html += `<th data-align="center" style="text-align: center;" data-jinja-col-loop="${escapeHtml(loopExpr)}"><span class="j-var-chip" contenteditable="false" data-raw="${escapeHtml(headChipRaw)}">${escapeHtml(resolveFieldLabel(headChipRaw))}</span></th></tr></thead><tbody>`;
 
     const bodyLines = lines.slice(2);
     const parsedRowKeys = [...rowKeys];
@@ -596,7 +643,7 @@ const extractCommentTables = (text, { findBestKeyMatch, findColHeaderKeyMatch, r
       const jinjaMatch = bl.match(/\{\{\s*([^}]+)\s*\}\}/);
       const cellChipRaw = jinjaMatch ? jinjaMatch[1].trim() : (key.includes('.') ? key : `${loopVar}.${key}`);
 
-      html += `<tr><td>${rowLabel}</td><td style="text-align: left;" data-jinja-col-loop="${loopExpr}"><span class="j-var-chip" contenteditable="false" data-raw="${cellChipRaw}">${resolveFieldLabel(cellChipRaw)}</span></td></tr>`;
+      html += `<tr><td>${escapeHtml(rowLabel)}</td><td style="text-align: left;" data-jinja-col-loop="${escapeHtml(loopExpr)}"><span class="j-var-chip" contenteditable="false" data-raw="${escapeHtml(cellChipRaw)}">${escapeHtml(resolveFieldLabel(cellChipRaw))}</span></td></tr>`;
     });
     html += '</tbody></table>';
     return stash(html);
@@ -619,19 +666,32 @@ const extractCommentTables = (text, { findBestKeyMatch, findColHeaderKeyMatch, r
     const headers = splitTableLine(headerLine);
     const aligns = dividerLine ? splitTableLine(dividerLine).map(alignFromDivider) : [];
     const cellToHtml = (cell, align, labelFn = resolveFieldLabel) => {
-      const chipHtml = cell.replace(/\{\{\s*(.*?)\s*\}\}/g, (m, v) => {
-        const raw = v.trim();
-        return `<span class="j-var-chip" contenteditable="false" data-raw="${raw}">${labelFn(raw)}</span>`;
-      });
+      // Escape the literal text surrounding each {{ }} match and the raw
+      // expression/label inside it separately (rather than escaping the
+      // whole cell up front and then matching {{ }} against the result) —
+      // otherwise a raw expression already containing an HTML entity from a
+      // first escaping pass (e.g. '"' -> '&quot;') would be escaped a
+      // second time by the per-match step, mangling it (-> '&amp;quot;').
+      const cellJinjaRe = /\{\{\s*(.*?)\s*\}\}/g;
+      let chipHtml = '';
+      let lastIndex = 0;
+      let m;
+      while ((m = cellJinjaRe.exec(cell)) !== null) {
+        chipHtml += escapeHtml(cell.slice(lastIndex, m.index));
+        const raw = m[1].trim();
+        chipHtml += `<span class="j-var-chip" contenteditable="false" data-raw="${escapeHtml(raw)}">${escapeHtml(labelFn(raw))}</span>`;
+        lastIndex = m.index + m[0].length;
+      }
+      chipHtml += escapeHtml(cell.slice(lastIndex));
       return `<td style="text-align: ${align};">${chipHtml}</td>`;
     };
 
     let html = tableEditButtonHtml() + '<table><thead><tr>';
     headers.forEach((h, idx) => {
       const align = aligns[idx] || 'left';
-      html += `<th data-align="${align}" style="text-align: ${align};">${h}</th>`;
+      html += `<th data-align="${align}" style="text-align: ${align};">${escapeHtml(h)}</th>`;
     });
-    html += `</tr></thead><tbody><tr class="j-row-loop" data-jinja-for="${loopExpr}">`;
+    html += `</tr></thead><tbody><tr class="j-row-loop" data-jinja-for="${escapeHtml(loopExpr)}">`;
     if (bodyLine) {
       splitTableLine(bodyLine).forEach((cell, idx) => html += cellToHtml(cell, aligns[idx] || 'left'));
     }
@@ -657,10 +717,10 @@ const extractMath = (text) => {
       const cleanExpr = expr.replace(/\{\{\s*([^}]+)\s*\}\}/g, (m, p1) => `\\text{[${p1.trim().replace(/_/g, '\\_')}]}`);
       html = katex.renderToString(cleanExpr, { displayMode: type === 'display', throwOnError: false });
     } catch (_) {
-      html = expr;
+      html = escapeHtml(expr);
     }
     const tag = type === 'display' ? 'div' : 'span';
-    blocks.push(`<${tag} class="latex-chip ${type}-math" contenteditable="false" data-type="${type}" data-expr="${expr}">${html}</${tag}>`);
+    blocks.push(`<${tag} class="latex-chip ${type}-math" contenteditable="false" data-type="${type}" data-expr="${escapeHtml(expr)}">${html}</${tag}>`);
     return placeholder('JM', blocks.length - 1);
   };
   let out = text.replace(/\$\$(.*?)\$\$/gs, (m, expr) => render(expr.trim(), 'display'));
@@ -752,9 +812,9 @@ export function useMarkdownJinjaCompiler({ store, activeLoopStack, hasCheckedTem
     const rawAttr = `${expr}${filter ? '|' + filter : ''}`;
 
     if (!isDefined && hasCheckedTemplate.value) {
-      return `<span class="j-var-chip undefined-var" contenteditable="false" data-raw="${rawAttr}" title="⚠️ Atenció: La variable '${expr}' no està definida a l'esquema de dades!"><span class="warn-icon">⚠️</span>${displayLabel}</span>`;
+      return `<span class="j-var-chip undefined-var" contenteditable="false" data-raw="${escapeHtml(rawAttr)}" title="⚠️ Atenció: La variable '${escapeHtml(expr)}' no està definida a l'esquema de dades!"><span class="warn-icon">⚠️</span>${escapeHtml(displayLabel)}</span>`;
     }
-    return `<span class="j-var-chip" contenteditable="false" data-raw="${rawAttr}">${displayLabel}</span>`;
+    return `<span class="j-var-chip" contenteditable="false" data-raw="${escapeHtml(rawAttr)}">${escapeHtml(displayLabel)}</span>`;
   };
 
   const convertJinjaToChips = (text, loopStack = []) => text.replace(/\{\{\s*(.*?)\s*\}\}/g, (m, v) => createJinjaVarChip(v, loopStack));

@@ -325,4 +325,43 @@ describe('Markdown -> HTML -> Markdown round-trip stability', () => {
     const dataLine = backToMarkdown.split('\n').find((l) => l.includes('Costos directes'));
     expect(dataLine).toBe('| Costos directes | {{ pres.perc|percent }} | {{ pres.costos|coin }} |');
   });
+
+  it('preserves a double-quoted string literal in an IF condition across a round-trip', () => {
+    // Regression: the condition was interpolated into data-cond="${cond}"
+    // (and the chip equivalent, data-raw="${rawAttr}") completely
+    // unescaped. A literal '"' inside the expression — routine for a
+    // string-literal comparison like general.valor == "valor vàlid" — closed
+    // the HTML attribute early when the browser parsed it, silently
+    // truncating everything after the quote the moment the block was first
+    // rendered; jinjaBlockToMarkdown then read that already-truncated
+    // data-cond back out, so the loss only became visible on the next
+    // canvas->source sync (tab switch, reload, ...), not immediately.
+    const md = '{% if general.valor == "valor vàlid" %}\nText\n{% endif %}';
+    const html = makeCompiler().compileMarkdownToHtml(md);
+    expect(el(html).querySelector('.j-cond-text').getAttribute('data-cond')).toBe('general.valor == "valor vàlid"');
+    expect(htmlToMarkdown(el(html))).toBe(md);
+  });
+
+  it('preserves a double-quoted filter argument in a variable chip across a round-trip', () => {
+    const md = '{{ general.valor|default("Sense dades") }}';
+    const html = makeCompiler().compileMarkdownToHtml(md);
+    expect(el(html).querySelector('.j-var-chip').getAttribute('data-raw')).toBe('general.valor|default("Sense dades")');
+    expect(htmlToMarkdown(el(html))).toBe(md);
+  });
+
+  it('does not backslash-escape an underscore sitting inside a word (Catalan prose, Excel/Jinja2 field names)', () => {
+    // Regression: turndown's default escape() backslash-escapes every '_'
+    // unconditionally, unlike '-'/'+'/'#'/etc. (only escaped at the start of
+    // a line) — technically safe for turndown's own emphasis output, but
+    // this app sets emDelimiter: '*', so a literal '_' reaching a text node
+    // is never turndown's own syntax, only genuine prose/identifier text
+    // (e.g. "num_expedient") that should round-trip untouched. Genuinely
+    // ambiguous placements (flanking whitespace/punctuation, so markdown-it
+    // could otherwise re-parse it as emphasis) must still be escaped.
+    expect(htmlToMarkdown(el('<p>Text amb num_expedient i preu_amb_iva normals.</p>')))
+      .toBe('Text amb num_expedient i preu_amb_iva normals.');
+    expect(htmlToMarkdown(el('<p>café_amb_accents_ok</p>'))).toBe('café_amb_accents_ok');
+    expect(htmlToMarkdown(el('<p>_start i end_ i hello _world_ test</p>')))
+      .toBe('\\_start i end\\_ i hello \\_world\\_ test');
+  });
 });
