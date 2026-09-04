@@ -297,6 +297,21 @@ orphan_count
     return JSON.parse(payloadStr);
   };
 
+  // Evaluates a single Jinja2 expression (a variable path plus an optional
+  // filter chain) against a JSON sample context — used by the template
+  // editor's variable modal to preview what a filter chain actually
+  // produces. Unlike renderMarkdown, this never touches the Pyodide
+  // filesystem or the real Excel data: sampleCtx is whatever the caller
+  // built (root data plus, when relevant, a sample row bound to an active
+  // loop's iterator name), kept small and disposable on purpose.
+  const previewExpression = async (sampleCtx, exprStr) => {
+    if (!_pyodide) throw new Error("Pyodide no s'ha inicialitzat.");
+    const fn = _pyodide.globals.get('render_expression_preview');
+    const resultStr = fn(JSON.stringify(sampleCtx), exprStr);
+    fn.destroy();
+    return JSON.parse(resultStr);
+  };
+
   const compileDocx = async (markdownText, refDocBuffer, extraFilesMap) => {
     if (!_pandoc) throw new Error("Pandoc no s'ha inicialitzat.");
     
@@ -666,6 +681,7 @@ orphan_count
     initEngines,
     parseExcel,
     renderMarkdown,
+    previewExpression,
     compileDocx,
     saveExcelData,
     saveExcelHierarchy,

@@ -162,11 +162,12 @@ defineExpose({ apply });
           </div>
 
           <div v-else style="position: relative; margin-bottom: 0.5rem;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input
               type="text"
               v-model="browserSearchQuery"
-              placeholder="🔎 Cerca un camp o una taula..."
-              style="width: 100%; padding: 5px 24px 5px 8px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.75rem; background: var(--bg-primary); color: var(--text-primary); box-sizing: border-box;"
+              placeholder="Cerca un camp o una taula..."
+              style="width: 100%; padding: 5px 24px 5px 26px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.75rem; background: var(--bg-primary); color: var(--text-primary); box-sizing: border-box;"
             >
             <button
               v-if="browserSearchQuery"

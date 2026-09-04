@@ -22,6 +22,7 @@ import { useWorkspaceStore } from '../stores/workspace';
 import { isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
 import { useLoopContext } from '../composables/useLoopContext';
 import { useMarkdownJinjaCompiler, htmlToMarkdown } from '../composables/useMarkdownJinjaCompiler';
+import { useWasmEngines } from '../composables/useWasmEngines';
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
 import SpecialCharPickerModal from './template-editor/SpecialCharPickerModal.vue';
@@ -38,6 +39,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'generate']);
 
 const store = useWorkspaceStore();
+const { previewExpression } = useWasmEngines();
 const activeEditorTab = ref('visual'); // 'visual' or 'code'
 
 const editorText = ref(props.isCellMode ? (props.modelValue || '') : (store.templateText || props.modelValue || ''));
@@ -163,46 +165,51 @@ const modalExpr = ref('');
 // in prose documents; anything not listed here can still be typed by hand
 // via the 'custom' step, which round-trips through the parser below like
 // any other step.
+const ROUND_METHOD_OPTIONS = [
+  { value: 'common', label: 'Comú (arrodoniment normal)' },
+  { value: 'ceil', label: 'Sostre (sempre cap amunt)' },
+  { value: 'floor', label: 'Terra (sempre cap avall)' },
+];
 const FILTER_CATALOG = [
-  { name: 'coin', label: '💶 coin — Format Moneda (ex: 15.250,50 €)', group: 'Formats numèrics i moneda', params: [] },
-  { name: 'number', label: '🔢 number — Format Numèric', group: 'Formats numèrics i moneda', params: [{ key: 'precision', label: 'Decimals', type: 'number', default: '2' }] },
-  { name: 'percent', label: '％ percent — Format Percentatge', group: 'Formats numèrics i moneda', params: [{ key: 'precision', label: 'Decimals', type: 'number', default: '2' }] },
-  { name: 'words', label: '🔤 words — Número a Text en Català (ex: 3 -> tres)', group: 'Formats numèrics i moneda', params: [] },
-  { name: 'round', label: 'round — Arrodoneix un número', group: 'Formats numèrics i moneda', params: [{ key: 'precision', label: 'Decimals', type: 'number', default: '0' }] },
+  { name: 'coin', label: 'coin — Format Moneda (ex: 15.250,50 €)', group: 'Formats numèrics i moneda', params: [] },
+  { name: 'number', label: 'number — Format Numèric', group: 'Formats numèrics i moneda', params: [{ key: 'precision', label: 'Decimals', type: 'number', default: '2' }] },
+  { name: 'percent', label: 'percent — Format Percentatge', group: 'Formats numèrics i moneda', params: [{ key: 'precision', label: 'Decimals', type: 'number', default: '2' }] },
+  { name: 'words', label: 'words — Número a Text en Català (ex: 3 -> tres)', group: 'Formats numèrics i moneda', params: [] },
+  { name: 'round', label: 'round — Arrodoneix un número', group: 'Formats numèrics i moneda', params: [{ key: 'precision', label: 'Decimals', type: 'number', default: '0' }, { key: 'method', label: 'Mètode', type: 'select', options: ROUND_METHOD_OPTIONS, default: 'common' }] },
   { name: 'abs', label: 'abs — Valor absolut', group: 'Formats numèrics i moneda', params: [] },
-  { name: 'int', label: 'int — Converteix a número enter', group: 'Formats numèrics i moneda', params: [] },
-  { name: 'float', label: 'float — Converteix a número decimal', group: 'Formats numèrics i moneda', params: [] },
+  { name: 'int', label: 'int — Converteix a número enter', group: 'Formats numèrics i moneda', params: [{ key: 'default', label: 'Valor si no es pot convertir', type: 'number', default: '0' }] },
+  { name: 'float', label: 'float — Converteix a número decimal', group: 'Formats numèrics i moneda', params: [{ key: 'default', label: 'Valor si no es pot convertir', type: 'number', default: '0' }] },
 
-  { name: 'prefix', label: "🔤 prefix — Apostrofació Automàtica (de / d')", group: 'Gramàtica i text en català', params: [{ key: 'fallback', label: 'Prefix Normal', default: 'de' }, { key: 'elided', label: "Prefix Apostrofat", default: "d'" }] },
+  { name: 'prefix', label: "prefix — Apostrofació Automàtica (de / d')", group: 'Gramàtica i text en català', params: [{ key: 'fallback', label: 'Prefix Normal', default: 'de' }, { key: 'elided', label: "Prefix Apostrofat", default: "d'" }] },
   { name: 'cert', label: 'cert — Interpreta com a booleà CERT', group: 'Gramàtica i text en català', params: [] },
   { name: 'fals', label: 'fals — Interpreta com a booleà FALS', group: 'Gramàtica i text en català', params: [] },
-  { name: 'upper', label: '🔠 upper — Tot Majúscules', group: 'Gramàtica i text en català', params: [] },
-  { name: 'lower', label: '🔡 lower — Tot Minúscules', group: 'Gramàtica i text en català', params: [] },
+  { name: 'upper', label: 'upper — Tot Majúscules', group: 'Gramàtica i text en català', params: [] },
+  { name: 'lower', label: 'lower — Tot Minúscules', group: 'Gramàtica i text en català', params: [] },
   { name: 'capitalize', label: 'capitalize — Primera lletra majúscula', group: 'Gramàtica i text en català', params: [] },
   { name: 'title', label: 'title — Majúscula per cada paraula', group: 'Gramàtica i text en català', params: [] },
-  { name: 'trim', label: '✂️ trim — Eliminar espais en blanc', group: 'Gramàtica i text en català', params: [] },
-  { name: 'replace', label: '🔄 replace — Reemplaçar text', group: 'Gramàtica i text en català', params: [{ key: 'old', label: 'Text a Cercar', default: '' }, { key: 'new', label: 'Nou Text', default: '' }] },
-  { name: 'truncate', label: 'truncate — Escurça el text', group: 'Gramàtica i text en català', params: [{ key: 'length', label: 'Longitud màxima', type: 'number', default: '255' }] },
-  { name: 'wordwrap', label: 'wordwrap — Ajusta salts de línia', group: 'Gramàtica i text en català', params: [{ key: 'width', label: 'Amplada (caràcters)', type: 'number', default: '79' }] },
+  { name: 'trim', label: 'trim — Eliminar espais en blanc', group: 'Gramàtica i text en català', params: [] },
+  { name: 'replace', label: 'replace — Reemplaçar text', group: 'Gramàtica i text en català', params: [{ key: 'old', label: 'Text a Cercar', default: '' }, { key: 'new', label: 'Nou Text', default: '' }, { key: 'count', label: 'Màxim de reemplaços (buit = tots)', type: 'number', default: '', omitIfEmpty: true }] },
+  { name: 'truncate', label: 'truncate — Escurça el text', group: 'Gramàtica i text en català', params: [{ key: 'length', label: 'Longitud màxima', type: 'number', default: '255' }, { key: 'end', label: 'Sufix', default: '...' }, { key: 'killwords', label: 'Talla paraules a mig camí', type: 'boolean', default: false }] },
+  { name: 'wordwrap', label: 'wordwrap — Ajusta salts de línia', group: 'Gramàtica i text en català', params: [{ key: 'width', label: 'Amplada (caràcters)', type: 'number', default: '79' }, { key: 'break_long_words', label: 'Talla paraules més llargues que l\'amplada', type: 'boolean', default: true }] },
   { name: 'striptags', label: 'striptags — Elimina etiquetes HTML', group: 'Gramàtica i text en català', params: [] },
   { name: 'wordcount', label: 'wordcount — Compta paraules', group: 'Gramàtica i text en català', params: [] },
 
-  { name: 'sort', label: '↕️ sort — Ordena una llista', group: 'Llistes i sub-taules', params: [{ key: 'field', label: 'Camp (buit = pel valor)', default: '' }] },
-  { name: 'where', label: '🔎 where — Filtra registres per criteri', group: 'Llistes i sub-taules', params: [{ key: 'raw', label: "Criteri (ex: actiu=True)", raw: true }] },
-  { name: 'length', label: '📏 length — Compta caràcters o elements', group: 'Llistes i sub-taules', params: [] },
+  { name: 'sort', label: 'sort — Ordena una llista', group: 'Llistes i sub-taules', params: [{ key: 'by', label: "Camp (buit = pel valor; '-camp' per ordre descendent)", default: '' }] },
+  { name: 'where', label: 'where — Filtra registres per criteri', group: 'Llistes i sub-taules', params: [{ key: 'raw', label: "Criteri (ex: actiu=True)", raw: true }] },
+  { name: 'length', label: 'length — Compta caràcters o elements', group: 'Llistes i sub-taules', params: [] },
   { name: 'first', label: 'first — Primer element', group: 'Llistes i sub-taules', params: [] },
   { name: 'last', label: 'last — Últim element', group: 'Llistes i sub-taules', params: [] },
-  { name: 'join', label: 'join — Uneix una llista en text', group: 'Llistes i sub-taules', params: [{ key: 'sep', label: 'Separador', default: ', ' }] },
-  { name: 'min', label: 'min — Valor mínim', group: 'Llistes i sub-taules', params: [] },
-  { name: 'max', label: 'max — Valor màxim', group: 'Llistes i sub-taules', params: [] },
-  { name: 'sum', label: 'sum — Suma els valors', group: 'Llistes i sub-taules', params: [] },
-  { name: 'unique', label: 'unique — Elimina duplicats', group: 'Llistes i sub-taules', params: [] },
+  { name: 'join', label: 'join — Uneix una llista en text', group: 'Llistes i sub-taules', params: [{ key: 'd', label: 'Separador', default: ', ' }, { key: 'attribute', label: 'Camp a extreure (buit = element sencer)', default: '', omitIfEmpty: true }] },
+  { name: 'min', label: 'min — Valor mínim', group: 'Llistes i sub-taules', params: [{ key: 'attribute', label: 'Camp a comparar (buit = el valor)', default: '', omitIfEmpty: true }] },
+  { name: 'max', label: 'max — Valor màxim', group: 'Llistes i sub-taules', params: [{ key: 'attribute', label: 'Camp a comparar (buit = el valor)', default: '', omitIfEmpty: true }] },
+  { name: 'sum', label: 'sum — Suma els valors', group: 'Llistes i sub-taules', params: [{ key: 'attribute', label: 'Camp a sumar (buit = el valor)', default: '', omitIfEmpty: true }, { key: 'start', label: 'Valor inicial', type: 'number', default: '0' }] },
+  { name: 'unique', label: 'unique — Elimina duplicats', group: 'Llistes i sub-taules', params: [{ key: 'attribute', label: 'Camp a comparar (buit = el valor)', default: '', omitIfEmpty: true }] },
   { name: 'reverse', label: "reverse — Inverteix l'ordre", group: 'Llistes i sub-taules', params: [] },
 
-  { name: 'default', label: '❓ default — Valor alternatiu si està buit', group: 'Control i altres', params: [{ key: 'value', label: 'Text o valor si la variable és buida', default: 'Sense dades' }] },
+  { name: 'default', label: 'default — Valor alternatiu si està buit', group: 'Control i altres', params: [{ key: 'default_value', label: 'Text o valor si la variable és buida', default: 'Sense dades' }, { key: 'boolean', label: "També si el valor és fals/0/buit (no només indefinit)", type: 'boolean', default: false }] },
   { name: 'string', label: 'string — Converteix a text', group: 'Control i altres', params: [] },
   { name: 'safe', label: 'safe — No escapar HTML', group: 'Control i altres', params: [] },
-  { name: 'custom', label: '✏️ Lliure — escriu el filtre manualment', group: 'Control i altres', params: [{ key: 'raw', label: 'Filtre complet (nom i arguments)', placeholder: "selectattr('actiu')", raw: true }] },
+  { name: 'custom', label: 'Lliure — escriu el filtre manualment', group: 'Control i altres', params: [{ key: 'raw', label: 'Filtre complet (nom i arguments)', placeholder: "selectattr('actiu')", raw: true }] },
 ];
 const FILTER_GROUPS = ['Formats numèrics i moneda', 'Gramàtica i text en català', 'Llistes i sub-taules', 'Control i altres'];
 const FILTER_DEFS = Object.fromEntries(FILTER_CATALOG.map(f => [f.name, f]));
@@ -215,9 +222,11 @@ const filterParamDefs = (name) => FILTER_DEFS[name]?.params || [];
 const filterChain = ref([]); // [{ id, name, params: {...} }]
 let filterChainIdSeq = 0;
 
+const paramDefaultForUi = (p) => (p.type === 'boolean' ? p.default === true : (p.default ?? ''));
+
 const onFilterStepNameChange = (item) => {
   const params = {};
-  filterParamDefs(item.name).forEach((p) => { params[p.key] = p.default ?? ''; });
+  filterParamDefs(item.name).forEach((p) => { params[p.key] = paramDefaultForUi(p); });
   item.params = params;
 };
 
@@ -238,6 +247,20 @@ const moveFilterChainStep = (id, dir) => {
   filterChain.value = arr;
 };
 
+// A param's JS value -> the Jinja2/Python literal text it's written as.
+// Keyword args (key=literal) are used for every multi-param filter, rather
+// than positional ones: the keyword name IS the underlying Python
+// function's real parameter name (kept in sync with engine.py/Jinja2's own
+// filter signatures), so params can be added/reordered in the catalog
+// without the meaning of an existing template silently shifting to a
+// different position — and it lets a boolean/select param stay unambiguous
+// without inventing a placeholder value for every earlier positional slot.
+const formatParamLiteral = (v, p) => {
+  if (p.type === 'number') return String(v);
+  if (p.type === 'boolean') return (v === true || v === 'true') ? 'True' : 'False';
+  return `'${String(v).replace(/'/g, "\\'")}'`;
+};
+
 const buildFilterExprForStep = (item) => {
   const def = FILTER_DEFS[item.name];
   if (!def) return '';
@@ -247,13 +270,19 @@ const buildFilterExprForStep = (item) => {
     const v = (item.params[def.params[0].key] ?? '').trim();
     return v ? `${item.name}(${v})` : item.name;
   }
-  const argsStr = def.params.map((p) => {
-    let v = item.params[p.key];
-    if (v === undefined || v === null || v === '') v = p.default ?? '';
-    if (p.type === 'number') return v;
-    return `'${String(v).replace(/'/g, "\\'")}'`;
-  }).join(', ');
-  return `${item.name}(${argsStr})`;
+  const argParts = [];
+  def.params.forEach((p) => {
+    const raw = item.params[p.key];
+    const isEmpty = raw === undefined || raw === null || raw === '';
+    // omitIfEmpty params (e.g. join's optional `attribute`) map to Jinja2's
+    // own None default when left blank — emitting an explicit '' instead
+    // would be a different, wrong value (Jinja2 would try `getattr(x, '')`
+    // rather than "no attribute at all"), so the kwarg is skipped entirely.
+    if (isEmpty && p.omitIfEmpty) return;
+    const v = isEmpty ? (p.default ?? '') : raw;
+    argParts.push(`${p.key}=${formatParamLiteral(v, p)}`);
+  });
+  return `${item.name}(${argParts.join(', ')})`;
 };
 
 const computedModalFilter = computed(() => {
@@ -289,6 +318,13 @@ const splitTopLevel = (s, sep) => {
   return parts.map((p) => p.trim());
 };
 
+const parseParamLiteral = (raw, p) => {
+  if (p.type === 'boolean') return /^true$/i.test(raw);
+  if (p.type === 'number') return raw;
+  const qm = raw.match(/^(['"])([\s\S]*)\1$/);
+  return qm ? qm[2] : raw;
+};
+
 const parseFilterStep = (piece) => {
   const m = piece.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\((.*)\))?$/s);
   if (!m || !FILTER_DEFS[m[1]]) return { id: ++filterChainIdSeq, name: 'custom', params: { raw: piece } };
@@ -299,18 +335,25 @@ const parseFilterStep = (piece) => {
   if (def.params.length === 1 && def.params[0].raw) {
     return { id: ++filterChainIdSeq, name, params: { [def.params[0].key]: argsStr ?? '' } };
   }
-  const argParts = splitTopLevel(argsStr || '', ',');
+
   const params = {};
-  def.params.forEach((p, i) => {
-    let v = argParts[i];
-    if (v === undefined) { params[p.key] = p.default ?? ''; return; }
-    v = v.trim();
-    if (p.type !== 'number') {
-      const qm = v.match(/^(['"])([\s\S]*)\1$/);
-      v = qm ? qm[2] : v;
-    }
-    params[p.key] = v;
+  def.params.forEach((p) => { params[p.key] = paramDefaultForUi(p); });
+
+  // Accepts BOTH the keyword-argument style this modal now writes
+  // (name='X') and plain positional args (how earlier versions of this
+  // modal wrote them, or how anyone hand-typing Jinja2 would) — a
+  // positional arg is assigned to whichever param sits at that same index
+  // in the catalog, exactly like calling the underlying Python function.
+  splitTopLevel(argsStr || '', ',').forEach((part, i) => {
+    if (!part) return;
+    const kw = part.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([\s\S]*)$/);
+    const matchedParam = kw && def.params.find((p) => p.key === kw[1]);
+    const p = matchedParam || def.params[i];
+    if (!p) return;
+    const rawVal = matchedParam ? kw[2] : part;
+    params[p.key] = parseParamLiteral(rawVal.trim(), p);
   });
+
   return { id: ++filterChainIdSeq, name, params };
 };
 
@@ -493,6 +536,87 @@ const {
   getSavedRange: () => savedRange,
 });
 
+// Live preview of the variable modal's expression + filter chain, evaluated
+// for real against sample data via the already-running Pyodide/Jinja2
+// engine (see render_expression_preview in engine.py) rather than
+// reimplementing every filter's semantics in JS. Best-effort by nature: if
+// the expression references a loop iterator (e.g. `part.import`), that
+// iterator is bound to the FIRST row of whichever array the active
+// `{% for %}` stack says it iterates — a real document would run the
+// filter once per row, this only ever shows one sample. A filter can also
+// legitimately resolve to a list rather than a scalar (e.g. `parts | sort
+// (...)`, or the bare variable itself before any reducing filter is
+// applied) — that's rendered as a compact "N elements: ..." summary rather
+// than Python's stringified repr.
+const filterPreviewState = ref({ status: 'idle', text: '' }); // status: idle | loading | engine-not-ready | error | ok
+let filterPreviewDebounceTimer = null;
+let filterPreviewRequestId = 0;
+
+const buildSamplePreviewContext = () => {
+  const base = (store.excelJsonData && typeof store.excelJsonData === 'object') ? store.excelJsonData : {};
+  const ctx = { ...base };
+  for (const loopCtx of activeLoopStack.value) {
+    const arr = resolvePath(base, loopCtx.arrayPath, activeLoopStack.value) || findAnyArrayByName(base, loopCtx.arrayPath);
+    if (Array.isArray(arr) && arr.length > 0 && arr[0] && typeof arr[0] === 'object') {
+      ctx[loopCtx.iterator] = arr[0];
+    }
+  }
+  return ctx;
+};
+
+const formatPreviewValue = (v) => {
+  if (v === null || v === undefined) return '(buit)';
+  if (Array.isArray(v)) {
+    if (v.length === 0) return '(llista buida)';
+    const items = v.slice(0, 5).map((it) => (it && typeof it === 'object') ? JSON.stringify(it) : String(it));
+    const suffix = v.length > 5 ? ` … i ${v.length - 5} més` : '';
+    return `${v.length} element${v.length === 1 ? '' : 's'}: ${items.join(', ')}${suffix}`;
+  }
+  if (typeof v === 'object') return JSON.stringify(v);
+  if (typeof v === 'boolean') return v ? 'Cert' : 'Fals';
+  if (v === '') return '(text buit)';
+  return String(v);
+};
+
+const runFilterPreview = async () => {
+  const expr = modalExpr.value.trim();
+  if (!expr) { filterPreviewState.value = { status: 'idle', text: '' }; return; }
+  if (!store.enginesReady) { filterPreviewState.value = { status: 'engine-not-ready', text: "El motor de plantilles encara s'està carregant..." }; return; }
+
+  const filter = computedModalFilter.value.trim();
+  const fullExpr = filter ? `${expr} | ${filter}` : expr;
+  const myRequestId = ++filterPreviewRequestId;
+  filterPreviewState.value = { status: 'loading', text: '' };
+  try {
+    const sampleCtx = buildSamplePreviewContext();
+    const result = await previewExpression(sampleCtx, fullExpr);
+    if (myRequestId !== filterPreviewRequestId) return; // a newer request has already superseded this one
+    filterPreviewState.value = result.success
+      ? { status: 'ok', text: formatPreviewValue(result.result) }
+      : { status: 'error', text: result.error };
+  } catch (e) {
+    if (myRequestId !== filterPreviewRequestId) return;
+    filterPreviewState.value = { status: 'error', text: e?.message || String(e) };
+  }
+};
+
+const scheduleFilterPreview = () => {
+  if (filterPreviewDebounceTimer) clearTimeout(filterPreviewDebounceTimer);
+  filterPreviewDebounceTimer = setTimeout(runFilterPreview, 300);
+};
+
+watch([modalExpr, filterChain], () => {
+  if (isVarModalOpen.value) scheduleFilterPreview();
+}, { deep: true });
+
+watch(isVarModalOpen, (open) => {
+  if (open) {
+    scheduleFilterPreview();
+  } else {
+    if (filterPreviewDebounceTimer) clearTimeout(filterPreviewDebounceTimer);
+    filterPreviewState.value = { status: 'idle', text: '' };
+  }
+});
 
 // Metadata label resolution helpers for template chips and variable tree
 const getFieldCustomLabel = (keyName) => {
@@ -2993,11 +3117,12 @@ onUnmounted(() => {
       <!-- Search box: models routinely have many fields several levels deep,
            so scrolling the tree to find one is impractical. -->
       <div v-if="store.excelJsonData" style="position: relative; margin-bottom: 0.5rem;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input
           type="text"
           v-model="varSearchQuery"
-          placeholder="🔎 Cerca un camp o una taula..."
-          style="width: 100%; padding: 6px 26px 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); font-size: 0.78rem; background: var(--bg-primary); color: var(--text-primary); box-sizing: border-box;"
+          placeholder="Cerca un camp o una taula..."
+          style="width: 100%; padding: 6px 26px 6px 28px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); font-size: 0.78rem; background: var(--bg-primary); color: var(--text-primary); box-sizing: border-box;"
         >
         <button
           v-if="varSearchQuery"
@@ -3189,14 +3314,27 @@ onUnmounted(() => {
                       <option v-for="f in groupedFilterCatalog[group]" :key="f.name" :value="f.name">{{ f.label }}</option>
                     </optgroup>
                   </select>
-                  <button type="button" class="btn-icon-only" title="Mou amunt" :disabled="idx === 0" @click="moveFilterChainStep(item.id, -1)" style="border: none; background: none; cursor: pointer; opacity: 0.75;">⬆️</button>
-                  <button type="button" class="btn-icon-only" title="Mou avall" :disabled="idx === filterChain.length - 1" @click="moveFilterChainStep(item.id, 1)" style="border: none; background: none; cursor: pointer; opacity: 0.75;">⬇️</button>
-                  <button type="button" class="btn-icon-only" title="Elimina aquest filtre" @click="removeFilterChainStep(item.id)" style="border: none; background: none; cursor: pointer; color: var(--color-danger);">🗑️</button>
+                  <button type="button" class="btn-icon-only" title="Mou amunt" :disabled="idx === 0" @click="moveFilterChainStep(item.id, -1)" style="border: none; background: none; cursor: pointer; opacity: 0.75; display: inline-flex; align-items: center;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                  </button>
+                  <button type="button" class="btn-icon-only" title="Mou avall" :disabled="idx === filterChain.length - 1" @click="moveFilterChainStep(item.id, 1)" style="border: none; background: none; cursor: pointer; opacity: 0.75; display: inline-flex; align-items: center;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                  </button>
+                  <button type="button" class="btn-icon-only" title="Elimina aquest filtre" @click="removeFilterChainStep(item.id)" style="border: none; background: none; cursor: pointer; color: var(--color-danger); display: inline-flex; align-items: center;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
                 </div>
                 <div v-if="filterParamDefs(item.name).length" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px;">
                   <div v-for="p in filterParamDefs(item.name)" :key="p.key">
-                    <label style="font-size: 0.7rem; color: var(--text-muted); display: block;">{{ p.label }}</label>
-                    <input :type="p.type === 'number' ? 'number' : 'text'" v-model="item.params[p.key]" :placeholder="p.placeholder || p.default || ''" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
+                    <label v-if="p.type !== 'boolean'" style="font-size: 0.7rem; color: var(--text-muted); display: block;">{{ p.label }}</label>
+                    <label v-if="p.type === 'boolean'" style="font-size: 0.75rem; color: var(--text-primary); display: flex; align-items: center; gap: 5px; margin-top: 4px; cursor: pointer;">
+                      <input type="checkbox" v-model="item.params[p.key]">
+                      {{ p.label }}
+                    </label>
+                    <select v-else-if="p.type === 'select'" v-model="item.params[p.key]" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
+                      <option v-for="opt in p.options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                    </select>
+                    <input v-else :type="p.type === 'number' ? 'number' : 'text'" v-model="item.params[p.key]" :placeholder="p.placeholder || p.default || ''" style="width: 100%; padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono);">
                   </div>
                 </div>
               </div>
@@ -3208,6 +3346,20 @@ onUnmounted(() => {
           <div style="padding: 8px 12px; background: rgba(0, 122, 255, 0.08); border: 1px solid rgba(0, 122, 255, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: space-between;">
             <span style="font-size: 0.72rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase;">Vista Prèvia Jinja2:</span>
             <code style="font-family: var(--font-mono); font-size: 0.82rem; font-weight: bold; color: var(--text-primary);">&#123;&#123; {{ modalExpr || 'variable' }}{{ computedModalFilter ? ' | ' + computedModalFilter : '' }} &#125;&#125;</code>
+          </div>
+
+          <!-- Live Result Preview: evaluates against real sample data via
+               the Pyodide/Jinja2 engine, not a JS reimplementation. -->
+          <div
+            v-if="filterPreviewState.status !== 'idle'"
+            style="padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); display: flex; align-items: flex-start; gap: 8px;"
+            :style="filterPreviewState.status === 'error' ? 'background: var(--color-warning-light, #fffbeb); border-color: var(--color-warning, #f59e0b);' : 'background: var(--bg-tertiary, #f8f9fa);'"
+          >
+            <span style="font-size: 0.72rem; font-weight: bold; text-transform: uppercase; white-space: nowrap; padding-top: 1px;" :style="filterPreviewState.status === 'error' ? 'color: var(--color-warning-hover, #d97706);' : 'color: var(--text-secondary);'">Resultat:</span>
+            <span v-if="filterPreviewState.status === 'loading'" style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">Calculant...</span>
+            <span v-else-if="filterPreviewState.status === 'engine-not-ready'" style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">{{ filterPreviewState.text }}</span>
+            <span v-else-if="filterPreviewState.status === 'error'" style="font-size: 0.78rem; color: var(--color-warning-hover, #d97706);" :title="filterPreviewState.text">No es pot previsualitzar aquí: {{ filterPreviewState.text }}</span>
+            <span v-else style="font-size: 0.82rem; font-family: var(--font-mono); color: var(--text-primary); word-break: break-word;">{{ filterPreviewState.text }}</span>
           </div>
         </div>
         <div class="modal-footer" style="margin-top: 1rem;">

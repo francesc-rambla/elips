@@ -2299,6 +2299,71 @@ def filter_cert(value):
 def filter_fals(value):
     return not is_excel_true(value)
 
+def _register_common_filters(env):
+    """Wires elips' own Jinja2 filters/tests/globals onto an Environment.
+    Shared by the two main render passes and by render_expression_preview
+    so a filter behaves identically in the real document and in the
+    variable modal's live preview."""
+    env.filters['coin'] = filter_coin
+    env.filters['number'] = filter_number
+    env.filters['percent'] = filter_percent
+    env.filters['percentatge'] = filter_percent
+    env.filters['porcentaje'] = filter_percent
+    env.filters['pct'] = filter_percent
+    env.filters['words'] = filter_words
+    env.filters['prefix'] = filter_prefix
+    env.filters['sort'] = filter_sort
+    env.filters['filter'] = filter_where
+    env.filters['where'] = filter_where
+    env.filters['CERT'] = filter_cert
+    env.filters['cert'] = filter_cert
+    env.filters['FALS'] = filter_fals
+    env.filters['fals'] = filter_fals
+    env.filters['IS_CERT'] = filter_cert
+    env.filters['is_cert'] = filter_cert
+    env.filters['IS_FALS'] = filter_fals
+    env.filters['is_fals'] = filter_fals
+    env.tests['CERT'] = filter_cert
+    env.tests['cert'] = filter_cert
+    env.tests['FALS'] = filter_fals
+    env.tests['fals'] = filter_fals
+    env.tests['is_cert'] = filter_cert
+    env.tests['is_fals'] = filter_fals
+    env.globals['TRUE'] = True
+    env.globals['FALSE'] = False
+    env.globals['true'] = True
+    env.globals['false'] = False
+    env.globals['CERT'] = filter_cert
+    env.globals['FALS'] = filter_fals
+    env.globals['cert'] = filter_cert
+    env.globals['fals'] = filter_fals
+    env.globals['is_excel_true'] = is_excel_true
+
+def render_expression_preview(ctx_json, expr_str):
+    """Evaluates a single Jinja2 expression (a variable path plus an
+    optional filter chain, e.g. "pres.parts | sum(attribute='import')")
+    against a JSON sample context — used by the template editor's variable
+    modal to show a live preview of what a filter chain actually produces,
+    without needing to render a whole document. Returns the real Python
+    value (not stringified), so the caller can tell a scalar apart from a
+    list/dict result. Never raises: any failure (bad path, wrong filter
+    arity, an iterator not present in the sample context, ...) comes back
+    as {success: False, error} instead, since a preview is best-effort by
+    nature — the expression may reference loop iterators the caller could
+    only approximate with a sample row.
+    """
+    try:
+        ctx = json.loads(ctx_json)
+        if not isinstance(ctx, dict):
+            ctx = {}
+        env = Environment(undefined=StrictUndefined, autoescape=False)
+        _register_common_filters(env)
+        compiled = env.compile_expression(expr_str, undefined_to_none=False)
+        result = compiled(**ctx)
+        return json.dumps({'success': True, 'result': result}, default=_custom_json_default, ensure_ascii=False)
+    except Exception as ex:
+        return json.dumps({'success': False, 'error': str(ex)}, ensure_ascii=False)
+
 def render_json_text(excel_path, date_format='iso', strict=False):
     doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
     return json.dumps(doc, ensure_ascii=False, default=_custom_json_default)
@@ -2601,40 +2666,7 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         # its rows (a blank line ends a table) and adds unwanted spacing
         # around conditionally-included paragraphs.
         env_clean = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
-        env_clean.filters['coin'] = filter_coin
-        env_clean.filters['number'] = filter_number
-        env_clean.filters['percent'] = filter_percent
-        env_clean.filters['percentatge'] = filter_percent
-        env_clean.filters['porcentaje'] = filter_percent
-        env_clean.filters['pct'] = filter_percent
-        env_clean.filters['words'] = filter_words
-        env_clean.filters['prefix'] = filter_prefix
-        env_clean.filters['sort'] = filter_sort
-        env_clean.filters['filter'] = filter_where
-        env_clean.filters['where'] = filter_where
-        env_clean.filters['CERT'] = filter_cert
-        env_clean.filters['cert'] = filter_cert
-        env_clean.filters['FALS'] = filter_fals
-        env_clean.filters['fals'] = filter_fals
-        env_clean.filters['IS_CERT'] = filter_cert
-        env_clean.filters['is_cert'] = filter_cert
-        env_clean.filters['IS_FALS'] = filter_fals
-        env_clean.filters['is_fals'] = filter_fals
-        env_clean.tests['CERT'] = filter_cert
-        env_clean.tests['cert'] = filter_cert
-        env_clean.tests['FALS'] = filter_fals
-        env_clean.tests['fals'] = filter_fals
-        env_clean.tests['is_cert'] = filter_cert
-        env_clean.tests['is_fals'] = filter_fals
-        env_clean.globals['TRUE'] = True
-        env_clean.globals['FALSE'] = False
-        env_clean.globals['true'] = True
-        env_clean.globals['false'] = False
-        env_clean.globals['CERT'] = filter_cert
-        env_clean.globals['FALS'] = filter_fals
-        env_clean.globals['cert'] = filter_cert
-        env_clean.globals['fals'] = filter_fals
-        env_clean.globals['is_excel_true'] = is_excel_true
+        _register_common_filters(env_clean)
 
         out1_clean, issues1 = render_with_recovery(env_clean, tpl_src, clean_ctx, 'primera')
         if '{{' in out1_clean or '{%' in out1_clean:
@@ -2651,40 +2683,7 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
 
         # trim_blocks/lstrip_blocks=True: see env_clean above.
         env_html = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
-        env_html.filters['coin'] = filter_coin
-        env_html.filters['number'] = filter_number
-        env_html.filters['percent'] = filter_percent
-        env_html.filters['percentatge'] = filter_percent
-        env_html.filters['porcentaje'] = filter_percent
-        env_html.filters['pct'] = filter_percent
-        env_html.filters['words'] = filter_words
-        env_html.filters['prefix'] = filter_prefix
-        env_html.filters['sort'] = filter_sort
-        env_html.filters['filter'] = filter_where
-        env_html.filters['where'] = filter_where
-        env_html.filters['CERT'] = filter_cert
-        env_html.filters['cert'] = filter_cert
-        env_html.filters['FALS'] = filter_fals
-        env_html.filters['fals'] = filter_fals
-        env_html.filters['IS_CERT'] = filter_cert
-        env_html.filters['is_cert'] = filter_cert
-        env_html.filters['IS_FALS'] = filter_fals
-        env_html.filters['is_fals'] = filter_fals
-        env_html.tests['CERT'] = filter_cert
-        env_html.tests['cert'] = filter_cert
-        env_html.tests['FALS'] = filter_fals
-        env_html.tests['fals'] = filter_fals
-        env_html.tests['is_cert'] = filter_cert
-        env_html.tests['is_fals'] = filter_fals
-        env_html.globals['TRUE'] = True
-        env_html.globals['FALSE'] = False
-        env_html.globals['true'] = True
-        env_html.globals['false'] = False
-        env_html.globals['CERT'] = filter_cert
-        env_html.globals['FALS'] = filter_fals
-        env_html.globals['cert'] = filter_cert
-        env_html.globals['fals'] = filter_fals
-        env_html.globals['is_excel_true'] = is_excel_true
+        _register_common_filters(env_html)
 
         out1_html, _ = render_with_recovery(env_html, tpl_src, html_ctx, 'primera_html')
         if '{{' in out1_html or '{%' in out1_html:
