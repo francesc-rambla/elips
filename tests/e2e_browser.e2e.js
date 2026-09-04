@@ -27,14 +27,14 @@ const __dirname = path.dirname(__filename);
 
 async function runE2ETests() {
   console.log("🚀 Iniciant proves End-to-End en navegador headless (Puppeteer)...");
-  
+
   const browser = await puppeteer.launch({
     headless: 'new',
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
   });
 
   const page = await browser.newPage();
-  
+
   // Capture browser logs (filter out math font warnings)
   page.on('console', msg => {
     const text = msg.text();
@@ -67,7 +67,7 @@ async function runE2ETests() {
     // 1. Load application
     console.log("➡️ 1. Carregant aplicació web a http://localhost:8000/index.html...");
     await page.goto('http://localhost:8000/index.html', { waitUntil: 'networkidle2', timeout: 30000 });
-    
+
     // Wait for WASM engines to initialize
     console.log("➡️ 2. Esperant inicialització de motors WASM (Pyodide + Pandoc)...");
     await page.waitForFunction(() => {
@@ -81,7 +81,7 @@ async function runE2ETests() {
 
     // 2. Test Key/Value key addition & persistence in empty project
     console.log("➡️ 3. Test de creació d'estructura de dades des de zero (sense Excel)...");
-    
+
     // Switch to Data tab
     await page.evaluate(() => {
       const btn = Array.from(document.querySelectorAll('button.tab-btn')).find(b => b.textContent.includes('Dades'));
@@ -244,15 +244,90 @@ async function runE2ETests() {
       throw new Error("No s'ha trobat la pestanya General després de carregar la fixture generada");
     }
 
-    // 6. Regression (2026-09-04): adding a new column to a group whose OUT_
+    // 6. Regression (2026-09-04): "Afegeix fila" on an independent/root-level
+    // tabular sheet (OUT_Mesa, from the fixture already loaded above -- 4 real
+    // rows, no trailing ghost rows, no nested children) let a user add ONE row
+    // but a second click did nothing further. Cause: initVisibleRows recomputed
+    // its "hide trailing blank rows" heuristic on every excelJsonData
+    // reassignment (including the one addTabularRow itself triggers), which
+    // immediately re-hid the just-added (necessarily blank) row and left
+    // addTabularRow stuck re-revealing/re-hiding that same single row forever.
+    console.log("➡️ 6. Provant que 'Afegeix fila' funciona repetidament en una taula tabular independent (OUT_Mesa)...");
+
+    const mesaLenBefore = await page.evaluate(() => window.store.excelJsonData.Mesa.length);
+    for (let i = 0; i < 3; i++) {
+      // Multiple "Afegeix fila" buttons exist (one per tabular sheet); find the one under the Mesa section specifically.
+      const clicked = await page.evaluate(() => {
+        const headers = Array.from(document.querySelectorAll('*')).filter(el => el.children.length === 0 && el.textContent.trim() === 'Mesa');
+        for (const h of headers) {
+          let node = h;
+          for (let i = 0; i < 8 && node; i++) {
+            const btn = node.querySelector && Array.from(node.querySelectorAll('button')).find(b => b.title === 'Afegeix una nova fila a la taula');
+            if (btn) { btn.click(); return true; }
+            node = node.parentElement;
+          }
+        }
+        return false;
+      });
+      if (!clicked) throw new Error(`No s'ha trobat el botó "Afegeix fila" per a OUT_Mesa (intent ${i + 1})`);
+      await new Promise(r => setTimeout(r, 500));
+    }
+    const mesaLenAfter = await page.evaluate(() => window.store.excelJsonData.Mesa.length);
+    const mesaRenderedRows = await page.evaluate(() => document.querySelectorAll('tr[id^="data-row-Mesa-"]').length);
+    console.log(`  Mesa: ${mesaLenBefore} files -> ${mesaLenAfter} files (3 clics), ${mesaRenderedRows} files renderitzades`);
+    if (mesaLenAfter !== mesaLenBefore + 3) {
+      throw new Error(`3 clics a "Afegeix fila" haurien d'afegir 3 files noves (${mesaLenBefore} -> ${mesaLenBefore + 3}), però ha quedat en ${mesaLenAfter}`);
+    }
+    if (mesaRenderedRows !== mesaLenAfter) {
+      throw new Error(`Totes les ${mesaLenAfter} files haurien d'estar renderitzades (i visibles), però només se'n renderitzen ${mesaRenderedRows}`);
+    }
+    console.log("  ✓ 'Afegeix fila' afegeix i mostra una fila nova cada vegada, no només la primera.");
+
+    // 7. Regression (2026-09-04): a ROOT-level ("independent") tabular sheet
+    // whose rows have a nested child table (OUT_Criteris -> OUT_Criteris.Subcriteris,
+    // from the same fixture) used to render as a flat table showing only its
+    // own primitive columns (id/descripcio/puntuacio) -- the nested Subcriteris
+    // data was completely invisible/inaccessible. It must instead render this
+    // level as key-value cards with the nested table as a terminal item,
+    // exactly like NestedDataNode.vue already does for a tabular group nested
+    // inside a KV parent.
+    console.log("➡️ 7. Provant que una taula arrel amb relació aniuada (OUT_Criteris -> Subcriteris) es mostra com a targetes KV amb la taula filla com a ítem terminal...");
+    const criterisInfo = await page.evaluate(() => {
+      const headers = Array.from(document.querySelectorAll('*')).filter(el => el.children.length === 0 && el.textContent.trim() === 'Criteris');
+      let container = null;
+      for (const h of headers) {
+        let node = h;
+        for (let i = 0; i < 8 && node; i++) {
+          if (node.querySelector && node.querySelector('.nested-card-item, table.inspector-table')) { container = node; break; }
+          node = node.parentElement;
+        }
+        if (container) break;
+      }
+      return {
+        found: !!container,
+        hasCards: container ? container.querySelectorAll('.nested-card-item').length : 0,
+        text: container ? container.innerText.slice(0, 600) : '',
+      };
+    });
+    console.log('  Criteris container found:', criterisInfo.found, '| targetes:', criterisInfo.hasCards);
+    if (!criterisInfo.found || criterisInfo.hasCards === 0) {
+      throw new Error(`'Criteris' (amb fill 'Subcriteris') hauria de renderitzar-se com a targetes clau-valor: ${JSON.stringify(criterisInfo)}`);
+    }
+    if (!criterisInfo.text.includes('Subcriteris')) {
+      throw new Error(`La taula filla 'Subcriteris' hauria d'aparèixer com a ítem terminal dins de cada targeta: ${JSON.stringify(criterisInfo.text)}`);
+    }
+    console.log("  ✓ 'Criteris' es mostra com a targetes clau-valor amb 'Subcriteris' com a taula terminal aniuada.");
+
+    // 8. Regression (2026-09-04): adding a new column to a group whose OUT_
     // sheet is a simple cell-by-cell mirror of another sheet (via
     // `=OtherSheet!Cell` formulas) must ask the user whether to ALSO add the
     // new column to that source sheet, replicating the same formula — instead
     // of silently leaving it disconnected from the sheet that actually holds
     // the group's real data. Uses tests/fixtures/elips_mirror_test_fixture.xlsx
     // (OUT_nomconjunt mirrors nomconjunt), matching the exact scenario from
-    // the bug report.
-    console.log("➡️ 6. Provant la detecció de mirall en afegir una nova columna (OUT_nomconjunt / nomconjunt)...");
+    // the bug report. This REPLACES the currently loaded project's Excel file
+    // with a different, smaller one -- must run last.
+    console.log("➡️ 8. Provant la detecció de mirall en afegir una nova columna (OUT_nomconjunt / nomconjunt)...");
     const mirrorFixtureFile = path.resolve(__dirname, 'fixtures', 'elips_mirror_test_fixture.xlsx');
     if (!fs.existsSync(mirrorFixtureFile)) {
       throw new Error(`Fixture no trobada a ${mirrorFixtureFile}. Executa primer: python3 tests/fixtures/generate_workbook.py`);

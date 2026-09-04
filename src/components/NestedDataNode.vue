@@ -23,7 +23,7 @@ import { useWorkspaceStore } from '../stores/workspace';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { isPrimitive, isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
 import { builtinFunctions, useFormulaAutocomplete } from '../composables/useFormulaAutocomplete';
-import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, saveGroupConfig as saveGroupConfigShared } from '../composables/useGroupMetadata';
+import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, groupFieldElements, saveGroupConfig as saveGroupConfigShared } from '../composables/useGroupMetadata';
 import VisualGridEditorModal from './VisualGridEditorModal.vue';
 import GroupConfigModal from './GroupConfigModal.vue';
 import TemplateEditor from './TemplateEditor.vue';
@@ -128,15 +128,32 @@ const items = computed(() => {
   return props.parentObj[props.arrayKey];
 });
 
+// The group's column DEFINITION must not depend on whether it currently has
+// any data rows (bug reported 2026-09-04) — so editor_metadata (the fields
+// the user explicitly configured via "Configura Tipus") is the primary,
+// authoritative source, independent of data. It is merged (union, preserving
+// first-seen order) with the Excel-derived schema and any real data's own
+// keys rather than replacing them outright, so a freshly-imported sheet
+// nobody has configured in the app yet (no editor_metadata rows) still shows
+// its real columns exactly as before.
 const effectiveFields = computed(() => {
-  const schemaFields = nodeSchema.value.fields || [];
-  if (schemaFields.length > 0) {
-    return schemaFields;
-  }
+  const result = [];
+  const seen = new Set();
+  const addAll = (arr) => {
+    (arr || []).forEach(f => {
+      if (f && !seen.has(f)) {
+        seen.add(f);
+        result.push(f);
+      }
+    });
+  };
+
+  addAll(groupFieldElements(store, fullPath.value, [props.arrayKey]));
+  addAll(nodeSchema.value.fields);
   if (items.value.length > 0 && typeof items.value[0] === 'object' && items.value[0] !== null) {
-    return Object.keys(items.value[0]).filter(k => !isInternalMetadataKey(k) && isPrimitive(items.value[0][k]));
+    addAll(Object.keys(items.value[0]).filter(k => !isInternalMetadataKey(k) && isPrimitive(items.value[0][k])));
   }
-  return [];
+  return result;
 });
 
 let evalDebounceTimer = null;

@@ -442,15 +442,17 @@ async function testNestedFeatures() {
   }
   console.log("  ✓ La configuració de la sub-taula aniuada s'aplica a totes les files (grup compartit 'pres.parts.activitats').");
 
-  // 8. Regression (2026-09-04): configuring an EXISTING nested sub-table works
-  // (steps above already prove this for 'activitats'), but creating a BRAND
-  // NEW one from scratch and then configuring its fields silently had no
-  // effect: saveGroupConfig only ever wrote editor_metadata, and effectiveFields
-  // (which the "Dades" tab and "add row" both derive column names from) falls
-  // back to reading real row data when there is no schema yet — with zero
-  // rows in a freshly created table, there was nothing to read, so the
-  // configured fields never appeared anywhere.
-  console.log("➡️ 8. Verificant que crear una taula aniuada NOVA i configurar-hi camps sí que persisteix...");
+  // 8. Regression (2026-09-04, refined 2026-09-04 per Francesc's follow-up):
+  // configuring an EXISTING nested sub-table works (steps above already
+  // prove this for 'activitats'), but creating a BRAND NEW one from scratch
+  // and then configuring its fields used to have no visible effect at all
+  // (the columns never appeared anywhere with zero rows). The FIRST fix for
+  // that seeded a fake row just so the columns had "somewhere to live" — but
+  // Francesc pointed out that is architecturally backwards: a group's column
+  // DEFINITION must live in editor_metadata itself, independent of whether
+  // any data rows exist, so a freshly configured table with 0 rows must
+  // still know its own columns AND keep showing 0 rows (no phantom row).
+  console.log("➡️ 8. Verificant que crear una taula aniuada NOVA i configurar-hi camps sí que persisteix (sense fila fantasma)...");
 
   await page.evaluate(() => {
     const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Nou Conjunt'));
@@ -507,10 +509,12 @@ async function testNestedFeatures() {
   });
   await new Promise(r => setTimeout(r, 800));
 
+  // The structure must NOT depend on data: 'detalls' stays EMPTY on every
+  // row (no phantom row fabricated just so the columns exist somewhere).
   const afterConfig = await page.evaluate(() => JSON.parse(JSON.stringify(window.store.excelJsonData.pres.parts)));
   console.log("  'detalls' a cada fila de 'parts' després de configurar:", JSON.stringify(afterConfig.map(p => p.detalls)));
-  if (!afterConfig.every(p => Array.isArray(p.detalls) && p.detalls.length === 1 && 'concepte' in p.detalls[0] && 'preu' in p.detalls[0])) {
-    throw new Error(`Els camps configurats per a la taula aniuada NOVA 'detalls' no s'han desat a les dades de cap fila: ${JSON.stringify(afterConfig)}`);
+  if (!afterConfig.every(p => Array.isArray(p.detalls) && p.detalls.length === 0)) {
+    throw new Error(`'detalls' hauria de continuar buida a totes les files (sense fila fantasma): ${JSON.stringify(afterConfig)}`);
   }
 
   const detallsSectionText = await page.evaluate(() => {
@@ -518,10 +522,50 @@ async function testNestedFeatures() {
     const target = containers.find(c => (c.querySelector('h5')?.textContent || '').includes('detalls'));
     return target ? target.innerText : '';
   });
-  if (!detallsSectionText.includes('concepte') || !detallsSectionText.includes('preu')) {
-    throw new Error(`Els camps 'concepte'/'preu' de la taula NOVA 'detalls' no es renderitzen al formulari: ${JSON.stringify(detallsSectionText)}`);
+  if (!detallsSectionText.includes('(0 registres)')) {
+    throw new Error(`La secció 'detalls' hauria de continuar mostrant 0 registres: ${JSON.stringify(detallsSectionText)}`);
   }
-  console.log("  ✓ La configuració d'una taula aniuada NOVA es desa i es renderitza correctament.");
+
+  // Reopening "Configura Tipus" must show the fields already configured,
+  // proving the schema survives independently of the (still empty) data.
+  await page.evaluate(() => {
+    const gears = Array.from(document.querySelectorAll('button[title="Configura tipus de dades i disposició per a aquest grup"]'));
+    const target = gears.find(g => (g.closest('.nested-hierarchy-container')?.querySelector('h5')?.textContent || '').includes('detalls'));
+    if (target) target.click();
+  });
+  await new Promise(r => setTimeout(r, 500));
+  // Several modals in this component share the ".modal-overlay" class (the
+  // group-config one, the "move element" one, ...); target the group-config
+  // modal specifically via its own group-label input, as elsewhere in this
+  // file, rather than the first ".modal-overlay" found in the DOM.
+  const reopenedModalHasFields = await page.evaluate(() => {
+    const groupLabelInput = document.querySelector('.modal-overlay input.data-input[placeholder="Nom visible del grup..."]');
+    const modal = groupLabelInput ? groupLabelInput.closest('.modal-content') : null;
+    return !!modal && modal.innerText.includes('concepte') && modal.innerText.includes('preu');
+  });
+  if (!reopenedModalHasFields) {
+    throw new Error("En reobrir 'Configura Tipus' per a 'detalls' no es mostren els camps ja configurats (concepte/preu)");
+  }
+  await page.evaluate(() => {
+    const closeBtn = Array.from(document.querySelectorAll('.modal-overlay .modal-header button')).find(b => b.textContent.includes('×'));
+    if (closeBtn) closeBtn.click();
+  });
+  await new Promise(r => setTimeout(r, 300));
+
+  // Clicking "Afegeix detalls" must create a row shaped by the CONFIGURED
+  // fields, not a generic 'valor' fallback (which is what effectiveFields
+  // falls back to when it has no schema/data to derive columns from).
+  await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button')).find(b => (b.title || '').includes('Afegeix detalls'));
+    if (btn) btn.click();
+  });
+  await new Promise(r => setTimeout(r, 500));
+  const afterAddRow = await page.evaluate(() => JSON.parse(JSON.stringify(window.store.excelJsonData.pres.parts)));
+  const rowsWithData = afterAddRow.filter(p => p.detalls.length > 0);
+  if (rowsWithData.length !== 1 || !('concepte' in rowsWithData[0].detalls[0]) || !('preu' in rowsWithData[0].detalls[0])) {
+    throw new Error(`La fila afegida a 'detalls' no té els camps configurats (concepte/preu): ${JSON.stringify(afterAddRow)}`);
+  }
+  console.log("  ✓ La configuració d'una taula aniuada NOVA persisteix (0 registres, sense fila fantasma) i la fila afegida després usa els camps configurats.");
 
   await browser.close();
   console.log("🎉 TOTES LES PROVES DE TÍTOL PER FÓRMULA, ACORDIÓ, REORDENACIÓ, ETIQUETES ANIUADES, CAMPS CALCULATS, CONFIGURACIÓ COMPARTIDA I TAULA NOVA HAN PASSAT AMB ÈXIT!");

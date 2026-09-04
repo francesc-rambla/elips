@@ -49,6 +49,39 @@ export function findElementMetadata(store, groupPath, elementName) {
 }
 
 /**
+ * Lists the field names EXPLICITLY configured for a group via GroupConfigModal
+ * (one editor_metadata row per field, excluding the group's own `_group_label`
+ * header row) — this is the group's schema/column *definition*, independent of
+ * whether any actual data rows exist for it. `extraGroupNames` adds extra
+ * acceptable spellings to match (NestedDataNode.vue passes its own short
+ * `arrayKey` alongside the full dotted path, same tolerance `groupLabel` above
+ * already has).
+ *
+ * Used by NestedDataNode.vue's `effectiveFields` so a tabular group's columns
+ * are known as soon as they are configured, even with zero rows — a brand
+ * new nested table used to have no way to know its own columns until a row
+ * existed to derive them from, which is exactly backwards (bug reported
+ * 2026-09-04: "l'estructura de dades s'ha d'emmagatzemar de forma independent
+ * a les dades").
+ */
+export function groupFieldElements(store, groupPath, extraGroupNames = []) {
+  if (!store.editorMetadata || !groupPath) return [];
+  const shortName = groupPath.split('.').pop();
+  const candidates = [groupPath, shortName, ...extraGroupNames];
+  const seen = new Set();
+  const result = [];
+  store.editorMetadata.forEach(m => {
+    if (m && candidates.includes(m.group) && !m.isGroupHeader && m.element && !isInternalMetadataKey(m.element)) {
+      if (!seen.has(m.element)) {
+        seen.add(m.element);
+        result.push(m.element);
+      }
+    }
+  });
+  return result;
+}
+
+/**
  * True for a key that stores internal app bookkeeping rather than an actual
  * user-facing data field — this codebase's convention (see TemplateEditor.vue's
  * `isInternalMetadataKey`, from `useLoopContext.js`) is that any key starting
@@ -151,25 +184,20 @@ function collectNodesAtSchemaPath(root, pathParts) {
  * makes re-saving a group self-heal any entries mistakenly saved under that
  * key before the 2026-09-01 fix.
  *
- * `ensureFieldKeys`, when true, makes sure every newly-configured field
- * actually exists somewhere in `store.excelJsonData`, not just as
- * editor_metadata rows — otherwise the "configuration" has nothing to attach
- * to and silently has no visible effect. This matters for:
- *   - a KV (object, not array) group: adds an empty string value for any
- *     configured field not yet a key of it (DataInspector.vue's root-level
- *     KV sheets always needed this).
- *   - a tabular (array) group that ALREADY has rows: adds an empty string
- *     value for any configured field missing from each existing row.
- *   - a tabular group that is BRAND NEW (still an empty array, as it is
- *     right after being created via "Nou Conjunt"): seeds one row with the
- *     configured fields, since with zero rows there is nothing for
- *     `effectiveFields`/`getPrimitiveFields` (NestedDataNode.vue) to derive
- *     column names from, and the freshly-defined columns would otherwise
- *     never appear anywhere in the "Dades" tab (the bug fixed 2026-09-04:
- *     configuring an EXISTING nested table worked because it already had
- *     real rows to hang field names off of; creating one from scratch and
- *     configuring it did not, because nothing ever wrote the new fields
- *     into the data tree for a table with no rows yet).
+ * `ensureFieldKeys`, when true, backfills every newly-configured field as an
+ * empty string on data that already exists — a KV (object, not array)
+ * group's own keys, or every existing row of a tabular (array) group —
+ * so already-entered rows immediately show the new field as an editable
+ * blank instead of it being absent from that row's own object. A tabular
+ * group with ZERO rows is deliberately left with zero rows: its column
+ * DEFINITION lives in editor_metadata itself now (see
+ * `groupFieldElements`/`effectiveFields` in NestedDataNode.vue), independent
+ * of whether any data exists for it, so there is nothing left to "backfill"
+ * for an empty group — no data row needs to be fabricated just to give the
+ * columns somewhere to be discovered from (the bug fixed 2026-09-04:
+ * "l'estructura de dades s'ha d'emmagatzemar de forma independent a les
+ * dades" — a table with 0 rows must still know its own columns, and must
+ * still render as having 0 rows).
  * `groupPath` may be a dotted nested path (e.g. `pres.parts.activitats`); a
  * tabular group nested inside a repeating parent is looked up under EVERY
  * matching parent row, not just the first, matching the same
@@ -280,23 +308,27 @@ export async function saveGroupConfig(store, { groupPath, legacyGroupNames = [],
     // groupNodes was already computed above (before any config was applied)
     // to tell new fields from existing ones — the same live references are
     // still valid to mutate here, since nothing in between replaced them.
+    //
+    // A tabular (array) group's column DEFINITION now comes from
+    // editor_metadata itself (see groupFieldElements/effectiveFields in
+    // NestedDataNode.vue), independent of whether it has any rows — so a
+    // brand-new, still-empty tabular group is intentionally left with ZERO
+    // rows here rather than seeded with a fake one just so the columns had
+    // somewhere to "live" (that hack, previously needed because the column
+    // list used to be derived from row data, produced a phantom row the user
+    // never asked for; bug reported 2026-09-04: "la definició no pot
+    // dependre del fet que hi hagi o no dades"). Existing rows still get any
+    // newly-configured field backfilled, so already-entered data keeps
+    // working with the new field turning up as an editable blank on them.
     groupNodes.forEach(sheetData => {
       if (Array.isArray(sheetData)) {
-        if (sheetData.length === 0) {
-          // Brand-new tabular group: seed one row so the configured fields
-          // exist somewhere, instead of the config being invisible.
-          const seedRow = {};
-          data.configList.forEach(item => { seedRow[item.element] = ''; });
-          if (Object.keys(seedRow).length > 0) sheetData.push(seedRow);
-        } else {
-          sheetData.forEach(row => {
-            if (row && typeof row === 'object' && !Array.isArray(row)) {
-              data.configList.forEach(item => {
-                if (!(item.element in row)) row[item.element] = '';
-              });
-            }
-          });
-        }
+        sheetData.forEach(row => {
+          if (row && typeof row === 'object' && !Array.isArray(row)) {
+            data.configList.forEach(item => {
+              if (!(item.element in row)) row[item.element] = '';
+            });
+          }
+        });
       } else if (sheetData && typeof sheetData === 'object') {
         data.configList.forEach(item => {
           if (!(item.element in sheetData)) {

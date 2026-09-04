@@ -296,6 +296,26 @@ const getTabularColumns = (groupName, sheetData) => {
   return result;
 };
 
+// Detecta si un full tabular ARREL (no aniuat dins d'un grup KV) té una relació
+// aniuada amb una altra taula -- és a dir, si les seves pròpies files contenen
+// una clau amb un array (p.ex. sheetData[i].variants) -- combinant l'esquema
+// jeràrquic declarat amb les claus no primitives realment presents a les dades,
+// exactament com fa childKeys a NestedDataNode.vue per a grups aniuats. Quan
+// és així, aquest full NO s'ha de renderitzar com una taula plana
+// "independent" (perdria l'accés a la taula filla): s'ha de delegar a
+// NestedDataNode, que ja sap mostrar el nivell superior com a targetes
+// clau-valor amb la taula aniuada com a ítem terminal (bug reportat
+// 2026-09-04: "la taula del nivell superior s'hauria de mostrar com si fos
+// una taula intermèdia amb la taula aniuada com a ítem terminal").
+const rootTabularHasNestedChildren = (sheetName, sheetData) => {
+  if (!Array.isArray(sheetData)) return false;
+  const schemaNode = universalFindSchema(sheetName, store.hierarchySchema || {});
+  if (schemaNode && schemaNode.children && Object.keys(schemaNode.children).length > 0) {
+    return true;
+  }
+  return sheetData.some(row => row && typeof row === 'object' && Object.keys(row).some(k => Array.isArray(row[k])));
+};
+
 // Localitza els esquemes de les sub-taules/grups fills directes d'un full, combinant l'esquema jeràrquic declarat amb claus no primitives presents a les dades
 const getTopLevelChildSchemas = (sheetName, sheetData) => {
   const dict = store.hierarchySchema || {};
@@ -444,28 +464,62 @@ const isRowAllZerosOrEmpty = (row) => {
 
 const visibleRowsCount = ref({});
 
-// Calcula quantes files de cada taula cal mostrar inicialment, amagant les files finals buides generades per l'Excel importat
+// Quantes files calen mostrar inicialment per a una taula concreta, amagant les files finals buides/zero generades per l'Excel importat
+const computeInitialVisibleCount = (sheetData) => {
+  let lastNonEmptyIdx = -1;
+  for (let i = sheetData.length - 1; i >= 0; i--) {
+    if (!isRowAllZerosOrEmpty(sheetData[i])) {
+      lastNonEmptyIdx = i;
+      break;
+    }
+  }
+  return sheetData.length > 0 ? Math.max(1, lastNonEmptyIdx + 1) : 0;
+};
+
+// Recalcula TOTS els comptadors de files visibles des de zero amb l'heurística
+// d'amagar files finals buides -- només s'ha d'invocar quan es carrega un
+// projecte/Excel diferent (vegeu el watch sobre excelFileName més avall), MAI
+// en cada edició rutinària: si es tornés a executar després que l'usuari
+// premés "Afegeix fila" (que crea una fila òbviament buida), aquesta mateixa
+// heurística la tornaria a amagar immediatament, fent que qualsevol inserció
+// després de la primera semblés no fer res (regressió detectada 2026-09-04:
+// "permet inserir una fila, però no més").
 const initVisibleRows = () => {
   if (!store.excelJsonData) return;
+  const next = {};
   Object.keys(store.excelJsonData).forEach(sheetName => {
     const sheetData = store.excelJsonData[sheetName];
     if (Array.isArray(sheetData)) {
-      let lastNonEmptyIdx = -1;
-      for (let i = sheetData.length - 1; i >= 0; i--) {
-        if (!isRowAllZerosOrEmpty(sheetData[i])) {
-          lastNonEmptyIdx = i;
-          break;
-        }
-      }
-      const count = sheetData.length > 0 ? Math.max(1, lastNonEmptyIdx + 1) : 0;
-      visibleRowsCount.value[sheetName] = count;
+      next[sheetName] = computeInitialVisibleCount(sheetData);
+    }
+  });
+  visibleRowsCount.value = next;
+};
+
+// Afegeix el comptador inicial NOMÉS per a fulls tabulars que encara no en
+// tinguin (p.ex. un full nou creat amb "Nou Conjunt" durant la sessió) --
+// mai recalcula el d'un full ja existent, que és responsabilitat exclusiva
+// d'addTabularRow/deleteTabularRow a partir d'aquí.
+const ensureVisibleRowsForNewSheets = () => {
+  if (!store.excelJsonData) return;
+  Object.keys(store.excelJsonData).forEach(sheetName => {
+    const sheetData = store.excelJsonData[sheetName];
+    if (Array.isArray(sheetData) && visibleRowsCount.value[sheetName] === undefined) {
+      visibleRowsCount.value[sheetName] = computeInitialVisibleCount(sheetData);
     }
   });
 };
 
-watch(() => store.excelJsonData, () => {
+// excelFileName només canvia quan es carrega un projecte/fitxer Excel diferent
+// (mai en una edició normal de cel·les), així que és el senyal fiable per
+// decidir quan re-executar l'heurística completa d'amagar files finals buides.
+watch(() => store.excelFileName, () => {
   initVisibleRows();
-}, { immediate: true, deep: false });
+}, { immediate: true });
+
+watch(() => store.excelJsonData, () => {
+  ensureVisibleRowsForNewSheets();
+}, { deep: false });
 
 // Afegeix una fila a una taula: reutilitza una fila buida ja existent si n'hi ha, o en crea una de nova amb totes les columnes conegudes
 const addTabularRow = (sheetName, sheetData) => {
@@ -1772,8 +1826,20 @@ onMounted(() => {
                 </button>
               </div>
           </div>
-          <!-- Tabular Preview -->
-          <template v-if="getSheetType(sheetData) === 'tabular'">
+          <!-- Tabular sheet WITH a nested child table: delegate entirely to
+               NestedDataNode, which already renders this shape correctly
+               (this level as key-value cards, the nested table as the
+               terminal tabular item) -- the flat "independent" table below
+               has no way to show a row's nested child data at all. -->
+          <template v-if="getSheetType(sheetData) === 'tabular' && rootTabularHasNestedChildren(name, sheetData)">
+            <NestedDataNode
+              :parentObj="store.excelJsonData"
+              :arrayKey="name"
+              :parentPath="''"
+            />
+          </template>
+          <!-- Tabular Preview (independent/leaf table: no nested children) -->
+          <template v-else-if="getSheetType(sheetData) === 'tabular'">
             <div style="overflow-x: auto;">
               <table class="inspector-table">
                 <thead>
