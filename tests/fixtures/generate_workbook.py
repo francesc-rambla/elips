@@ -35,6 +35,10 @@
 - An ``editor_metadata`` sheet covering the main field types (Text, Number,
   Percentage, Date, Boolean, Select static/dynamic, Computed SUM/FORMULA,
   Table) plus grid layout and a dynamic item-title formula.
+- A dynamic Select/foreign-key field (``General.codi``, sourced from
+  ``OUT_detall``) to exercise ``_hydrate_foreign_keys`` resolving a column of
+  the matched row (e.g. ``General.codi.import``) other than the one the
+  dropdown stores.
 
 Run directly to write the fixture to disk:
 
@@ -71,6 +75,18 @@ def build_workbook():
         ["nom_responsable", "Anna Puig Soler"],
         ["pressupost_base", 125000.5],
         ["percentatge_iva", 0.21],
+        ["codi", "A1"],
+    ])
+
+    # --- OUT_detall: small lookup table referenced by General.codi (a
+    # dynamic Select/foreign-key field, see editor_metadata below) so tests
+    # can exercise resolving a non-selected column of the matched row
+    # (e.g. General.codi.import) via _hydrate_foreign_keys. ---
+    ws = wb.create_sheet("OUT_detall")
+    _write_rows(ws, [
+        ["codi", "nom", "import"],
+        ["A1", "Article U", 100],
+        ["A2", "Article Dos", 200],
     ])
 
     # --- OUT_pres: KV sheet with a Clau|Valor header ---
@@ -177,6 +193,7 @@ def build_workbook():
     rows.append(['General', 'pressupost_base', 'Number', '', '', 0, '', '', '', '', '', '', '', '', 2, 2, 0, 'Pressupost base', '', ''])
     rows.append(['General', 'percentatge_iva', 'Percentage', '', '', 0, '', '', '', '', '', '', '', '', 3, 1, 0, 'Percentatge IVA', '', ''])
     rows.append(['General', 'data_redaccio', 'Date', '', '', 0, '', '', '', '', '', '', '', '', 3, 2, 0, 'Data de redacció', '', ''])
+    rows.append(['General', 'codi', 'Select', '', 'dynamic', 0, 'detall', 'nom', 'codi', '', '', '', '', '', 4, 1, 0, 'Codi article', '', ''])
     rows.append(['pres', 'total_pressupostat', 'Computed', '', '', 0, 'pres.parts', '', '', '', 'SUM', 'pres.parts', 'import', '', 1, 1, 1, 'Total pressupostat', '', ''])
     rows.append(['pres.parts', 'proveidor_assignat', 'Select', '', 'dynamic', 0, 'pres.parts', 'nom_partida', 'id_partida', '', '', '', '', '', 4, 1, 1, 'Partida associada', 'vertical', 'CONCAT(nom_partida; " ("; MONEDA(import); ")")'])
     rows.append(['pres.parts.activitats', 'resum', 'Table', '', '', 0, '', '', '', '', '', '', '', '', 1, 1, 1, 'Activitats', 'horizontal', ''])

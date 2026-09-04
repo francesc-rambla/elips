@@ -341,6 +341,41 @@ class TestExcelPythonEngine(unittest.TestCase):
         self.assertIn("Equips de sobretaula", row_lines[0])
         self.assertIn("Portàtils", row_lines[0])
 
+    def test_15_dynamic_select_foreign_key_exposes_other_columns_of_matched_row(self):
+        """Regressió: un camp Select/dynamic (clau forana) ha de continuar imprimint-se com a
+        valor escalar pla (General.codi -> 'A1', ja funcionava) però TAMBÉ ha d'exposar les
+        altres columnes de la fila coincident de la taula referenciada (General.codi.import,
+        General.codi.nom), en AMBDUES passades del renderitzat (Word/markdown net i
+        previsualització HTML amb enllaços). Abans de la correcció, _hydrate_foreign_keys mai
+        s'executava perquè comprovava l'existència de 'editor_metadata' dins de l'arbre de dades
+        DESPRÉS que aquest ja n'hagués estat eliminat (doc.pop('editor_metadata', ...)), de manera
+        que el camp es quedava com un str pla i .import fallava amb 'no such element'."""
+        template_path = os.path.join(self.tmp_dir, "fk_template.md.j2")
+        with open(template_path, "w", encoding="utf-8") as f:
+            f.write("Codi: {{ General.codi }} | Nom: {{ General.codi.nom }} | Import: {{ General.codi.import }}\n")
+
+        result = json.loads(self.engine.render_md_two_pass_with_report(self.fixture_path, template_path))
+        self.assertTrue(result["success"], result.get("traceback"))
+        self.assertEqual(result["issues"], [], "No hi hauria d'haver cap incidència de clau no definida")
+
+        md = result["markdown"]
+        self.assertIn("Codi: A1", md)
+        self.assertIn("Nom: Article U", md)
+        self.assertIn("Import: 100", md)
+
+        html = result["htmlMarkdown"]
+        self.assertIn("Codi: <a", html)
+        self.assertIn(">A1</a>", html)
+        self.assertIn("Nom: <a", html)
+        self.assertIn(">Article U</a>", html)
+        self.assertIn("Import: <a", html)
+        self.assertIn(">100</a>", html)
+        # No enllaços <a> aniuats (bug secundari: TrackedDict.__str__ re-embolicava
+        # el valor escalar de 'Codi', que ja portava el seu propi enllaç, dins d'un segon
+        # enllaç, generant <a ...><a ...>A1</a></a>).
+        codi_segment = html.split("Codi: ", 1)[1].split(" | Nom:", 1)[0]
+        self.assertEqual(codi_segment.count("<a "), 1, "Enllaç HTML aniuat detectat: " + codi_segment)
+
 
 if __name__ == "__main__":
     unittest.main()

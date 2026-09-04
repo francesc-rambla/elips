@@ -1262,7 +1262,14 @@ class TrackedDict(dict):
 
     def __str__(self):
         if '_default_val' in self:
-            val_str = str(self['_default_val'])
+            # Use the raw scalar here, not the wrapped TrackedValue stored in
+            # self['_default_val'] — that one already carries its own
+            # `<a>`-link wrapper (added when the FK row's field values were
+            # wrapped), and re-wrapping its rendered string in another `<a>`
+            # would produce invalid nested anchors in the HTML preview.
+            raw = super().__getitem__('_default_val')
+            raw_val = raw.val if isinstance(raw, TrackedValue) else raw
+            val_str = str(raw_val)
             if getattr(self, 'enable_links', True) and getattr(self, '_path', ''):
                 clean_path = self._path.lstrip('.')
                 return f'<a href="#dades.{clean_path}" class="data-link" title="Anar a la dada: {clean_path}">{val_str}</a>'
@@ -2509,6 +2516,13 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
             raw_data = raw_doc
         doc = _filter_empty_rows(raw_data)
 
+        # Foreign-key hydration (Select/dynamic fields, below) needs the
+        # editor_metadata rows to know which fields are FKs and how to resolve
+        # them — keep a reference to it *before* it gets popped off the tree
+        # that Jinja2 actually sees. It may be replaced with a fresher copy
+        # from /work/in.json below (see the live-state merge).
+        fk_meta_list = doc.get('editor_metadata') or doc.get('editormetadata') or []
+
         # Remove internal metadata keys from main data model so Jinja2 context never sees them as data nodes
         doc.pop('_sheet_info', None)
         doc.pop('editor_metadata', None)
@@ -2531,6 +2545,9 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
                     if isinstance(json_data, dict):
                         if 'data' in json_data and isinstance(json_data['data'], dict):
                             json_data = json_data['data']
+                        live_meta = json_data.get('editor_metadata') or json_data.get('editorMetadata')
+                        if isinstance(live_meta, list) and live_meta:
+                            fk_meta_list = live_meta
                         for k, v in json_data.items():
                             if k.startswith('_') or k in ('editor_metadata', 'editormetadata', '_hierarchy_schema', 'hierarchy_schema'):
                                 continue
@@ -2541,11 +2558,8 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         except Exception:
             pass
 
-        def _hydrate_foreign_keys(doc_dict):
-            if not isinstance(doc_dict, dict) or 'editor_metadata' not in doc_dict:
-                return doc_dict
-            meta_list = doc_dict.get('editor_metadata', [])
-            if not isinstance(meta_list, list):
+        def _hydrate_foreign_keys(doc_dict, meta_list):
+            if not isinstance(doc_dict, dict) or not isinstance(meta_list, list) or not meta_list:
                 return doc_dict
             fk_map = {}
             for meta in meta_list:
@@ -2627,7 +2641,7 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
                     _process_item(sheet_name, sheet_val)
             return doc_dict
 
-        doc = _hydrate_foreign_keys(doc)
+        doc = _hydrate_foreign_keys(doc, fk_meta_list)
 
         with open(template_path, 'r', encoding='utf-8') as f:
             tpl_src = f.read()
