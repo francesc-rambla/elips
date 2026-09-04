@@ -2469,9 +2469,17 @@ const handleGlobalKeyDown = (e) => {
   }
 
   if (!isAnyModalOpen) return;
-  
+
+  // This component can be embedded inside another modal (DataInspector.vue's
+  // cell-text editor), which listens for the SAME Escape/Ctrl+Enter keys on
+  // `window` to close/save ITSELF. Without stopping propagation here, one
+  // Escape press closes both: this component's own modal (e.g. the table
+  // config modal opened from within the cell editor) AND the outer cell
+  // editor modal around it, silently discarding whatever the user was
+  // editing — Escape must only ever close the topmost (innermost) modal.
   if (e.key === 'Escape') {
     e.preventDefault();
+    e.stopImmediatePropagation();
     isVarModalOpen.value = false;
     isBlockModalOpen.value = false;
     isMathModalOpen.value = false;
@@ -2481,18 +2489,23 @@ const handleGlobalKeyDown = (e) => {
   } else if (e.key === 'Enter') {
     if (isVarModalOpen.value) {
       e.preventDefault();
+      e.stopImmediatePropagation();
       applyVariable();
     } else if (isBlockModalOpen.value) {
       e.preventDefault();
+      e.stopImmediatePropagation();
       blockModalRef.value?.apply();
     } else if (isMathModalOpen.value) {
       e.preventDefault();
+      e.stopImmediatePropagation();
       mathModalRef.value?.apply();
     } else if (isTableModalOpen.value) {
       e.preventDefault();
+      e.stopImmediatePropagation();
       tableModalRef.value?.apply();
     } else if (isMetadataModalOpen.value && e.ctrlKey) {
       e.preventDefault();
+      e.stopImmediatePropagation();
       metadataModalRef.value?.apply();
     }
   }

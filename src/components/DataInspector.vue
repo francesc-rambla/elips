@@ -618,7 +618,15 @@ import GroupConfigModal from './GroupConfigModal.vue';
 
 const isCellModalOpen = ref(false);
 const cellTextValue = ref('');
+const cellTextValueAtOpen = ref('');
 const activeCellInfo = ref({ sheet: '', keyOrIdx: '', col: null, isKv: true });
+
+// TemplateEditor emits update:modelValue on every keystroke (see its
+// editorText watcher), so cellTextValue always reflects the live, in-progress
+// edit — comparing it against the value captured the moment the modal opened
+// is exactly "has the user changed anything since then", independent of
+// whether they've clicked "Aplicar" yet.
+const cellEditorHasUnsavedChanges = computed(() => cellTextValue.value !== cellTextValueAtOpen.value);
 
 // Obre l'editor visual de cel·la (Markdown+Jinja2) per a un camp de tipus Text, carregant-hi el valor actual
 const openCellEditor = (sheet, keyOrIdx, col, isKv) => {
@@ -628,10 +636,11 @@ const openCellEditor = (sheet, keyOrIdx, col, isKv) => {
     return;
   }
   activeCellInfo.value = { sheet, keyOrIdx, col, isKv };
-  const val = isKv 
-    ? store.excelJsonData[sheet][keyOrIdx] 
+  const val = isKv
+    ? store.excelJsonData[sheet][keyOrIdx]
     : store.excelJsonData[sheet][keyOrIdx][col];
   cellTextValue.value = String(val || '');
+  cellTextValueAtOpen.value = cellTextValue.value;
   isCellModalOpen.value = true;
 };
 
@@ -647,6 +656,17 @@ const saveCellEditor = () => {
   store.addLog("Cel·la actualitzada correctament.", "success");
 };
 
+// Tanca l'editor de cel·la SENSE desar (botó "Cancel·lar", "×" o Escape) —
+// si hi ha canvis pendents, demana confirmació abans de descartar-los.
+const closeCellEditor = () => {
+  if (cellEditorHasUnsavedChanges.value && !window.confirm(
+    'Tens canvis sense desar en aquest camp. Vols descartar-los i tancar l\'editor?'
+  )) {
+    return;
+  }
+  isCellModalOpen.value = false;
+};
+
 // Gestiona dreceres de teclat (Escape/Enter) per a tots els modals propis d'aquest component, segons quin estigui obert
 const handleDataInspectorModalsKeydown = (e) => {
   if (isNewSheetModalOpen.value) {
@@ -656,17 +676,6 @@ const handleDataInspectorModalsKeydown = (e) => {
     } else if (e.key === 'Enter') {
       e.preventDefault();
       createNewSheet();
-    }
-    return;
-  }
-
-  if (isDataSetsModalOpen.value) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      isDataSetsModalOpen.value = false;
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      saveDataSetsConfig();
     }
     return;
   }
@@ -682,7 +691,7 @@ const handleDataInspectorModalsKeydown = (e) => {
   if (isCellModalOpen.value) {
     if (e.key === 'Escape') {
       e.preventDefault();
-      isCellModalOpen.value = false;
+      closeCellEditor();
     } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       saveCellEditor();
@@ -1560,17 +1569,9 @@ const processPasteModalSubmit = () => {
   }
 };
 
-// Gestiona Escape/Ctrl+Enter dins el modal d'edició de cel·la (tancar o desar)
-const handleCellKeyDown = (e) => {
-  if (!isCellModalOpen.value) return;
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    isCellModalOpen.value = false;
-  } else if (e.key === 'Enter' && e.ctrlKey) {
-    e.preventDefault();
-    saveCellEditor();
-  }
-};
+// Escape/Ctrl+Enter for the cell editor modal is already handled by
+// handleDataInspectorModalsKeydown above — this used to be a second,
+// redundant `window` keydown listener doing the exact same thing.
 
 onMounted(() => {
   store.dataActions = {
@@ -1581,11 +1582,6 @@ onMounted(() => {
     getViewMode: () => viewMode.value,
     getShowJsonView: () => showJsonView.value,
   };
-  window.addEventListener('keydown', handleCellKeyDown);
-});
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleCellKeyDown);
 });
 // Carrega un conjunt de dades i esquema d'exemple (mock) per a proves/demo del component sense necessitat d'importar un Excel
 const loadMockData = () => {
@@ -2328,15 +2324,15 @@ onMounted(() => {
       <div class="modal-content" style="max-width: 1200px; width: 98%; height: 90vh; display: flex; flex-direction: column;">
         <div class="modal-header">
           <h3 style="border: none; padding-bottom: 0; margin: 0;">Editor de Cel·la (Markdown + Jinja2)</h3>
-          <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem;" @click="isCellModalOpen = false">&times;</button>
+          <button class="btn-icon-only" style="border:none; background:none; font-size:1.5rem;" @click="closeCellEditor">&times;</button>
         </div>
-        
+
         <div class="modal-body" style="flex-grow: 1; padding: 0.5rem; overflow: hidden; display: flex; flex-direction: column;">
           <TemplateEditor v-model="cellTextValue" :isCellMode="true" />
         </div>
-        
+
         <div class="modal-footer" style="margin-top: auto;">
-          <button class="btn btn-secondary" style="width: auto;" @click="isCellModalOpen = false">Cancel·lar</button>
+          <button class="btn btn-secondary" style="width: auto;" @click="closeCellEditor">Cancel·lar</button>
           <button class="btn btn-primary" style="width: auto;" @click="saveCellEditor">Aplicar</button>
         </div>
       </div>

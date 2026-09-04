@@ -42,7 +42,8 @@ async function testVisualEditor() {
       console.log('  [Console Error]:', msg.text());
     }
   });
-  page.on('pageerror', (err) => console.log('  [Page Error]:', err.message));
+  let hadPageError = false;
+  page.on('pageerror', (err) => { hadPageError = true; console.log('  [Page Error]:', err.message); });
 
   await page.goto('http://localhost:8000/index.html', { waitUntil: 'networkidle2' });
   await page.evaluate(() => localStorage.clear());
@@ -163,6 +164,68 @@ async function testVisualEditor() {
     throw new Error(`Copiar el xip hauria de posar "{{ part.nom }}" al porta-retalls, s'ha obtingut: ${JSON.stringify(copiedText)}`);
   }
   console.log('  ✓ Copiar des del canvas posa el codi font Markdown/Jinja2 al porta-retalls:', JSON.stringify(copiedText));
+
+  // Regression: DataInspector.vue's cell-text editor modal embeds this same
+  // TemplateEditor (isCellMode), which can itself open an inner modal (e.g.
+  // the table config modal). Escape used to close BOTH at once (both
+  // components listened for it on `window`, and nothing stopped
+  // propagation), discarding whatever the user had just typed; the outer
+  // modal also never asked before discarding unsaved edits on its own.
+  console.log('➡️ 5. Esc dins un modal aniuat (editor de cel·la -> modal de Taula) només tanca el superior, i demana confirmació si hi ha canvis...');
+  const dialogs = [];
+  page.on('dialog', async (dialog) => { dialogs.push(dialog.message()); await dialog.dismiss(); });
+
+  await page.evaluate(() => {
+    window.store.excelJsonData = { General: { descripcio: 'Text inicial' } };
+    window.store.editorMetadata = [{ group: 'General', element: 'descripcio', type: 'Text' }];
+    window.store.activeTab = 'data';
+  });
+  await new Promise((r) => setTimeout(r, 500));
+
+  await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button')).find((b) => b.title === 'Edició complexa en Markdown + Jinja2');
+    if (!btn) throw new Error('Botó d\'edició de cel·la no trobat');
+    btn.click();
+  });
+  await new Promise((r) => setTimeout(r, 300));
+
+  await page.evaluate(() => {
+    const canvas = Array.from(document.querySelectorAll('.editor-textarea[contenteditable="true"]')).find((el) => el.offsetParent !== null);
+    canvas.focus();
+    document.execCommand('insertText', false, ' MODIFICAT');
+  });
+  await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button')).find((b) => b.title === "Insereix taula automàtica des de l'Excel" && b.offsetParent !== null);
+    if (!btn) throw new Error('Botó Taula no trobat');
+    btn.click();
+  });
+  await new Promise((r) => setTimeout(r, 300));
+
+  const visibleModalCount = () => document.querySelectorAll('.modal-overlay').length
+    - Array.from(document.querySelectorAll('.modal-overlay')).filter((o) => getComputedStyle(o).display === 'none').length;
+
+  const countBeforeEscape = await page.evaluate(visibleModalCount);
+  if (countBeforeEscape !== 2) throw new Error(`Esperava 2 modals oberts (cel·la + taula), n'hi ha ${countBeforeEscape}`);
+
+  await page.keyboard.press('Escape');
+  await new Promise((r) => setTimeout(r, 300));
+  const stateAfterFirstEscape = await page.evaluate(() => {
+    const visible = Array.from(document.querySelectorAll('.modal-overlay')).filter((o) => getComputedStyle(o).display !== 'none');
+    return { count: visible.length, hasEditor: visible.some((m) => !!m.querySelector('.editor-textarea')) };
+  });
+  if (stateAfterFirstEscape.count !== 1 || !stateAfterFirstEscape.hasEditor) {
+    throw new Error('El primer Esc hauria d\'haver tancat només el modal de Taula, deixant el de cel·la obert amb els canvis: ' + JSON.stringify(stateAfterFirstEscape));
+  }
+  console.log('  ✓ El primer Esc només tanca el modal de Taula (el superior).');
+
+  await page.keyboard.press('Escape');
+  await new Promise((r) => setTimeout(r, 300));
+  if (dialogs.length !== 1) throw new Error('Esperava un diàleg de confirmació abans de descartar canvis pendents, n\'hi ha ' + dialogs.length);
+  const countAfterDismiss = await page.evaluate(visibleModalCount);
+  if (countAfterDismiss !== 1) throw new Error('El modal de cel·la s\'ha tancat tot i haver cancel·lat la confirmació');
+  console.log('  ✓ Amb canvis pendents, Esc demana confirmació abans de tancar; en cancel·lar-la, el modal roman obert.');
+
+  if (hadPageError) throw new Error('S\'ha produït un error de pàgina no capturat durant aquesta prova.');
 
   await browser.close();
   console.log('🎉 TOTES LES PROVES DE L\'EDITOR VISUAL HAN PASSAT AMB ÈXIT!');
