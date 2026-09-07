@@ -25,7 +25,7 @@ import { useMarkdownJinjaCompiler, htmlToMarkdown } from '../composables/useMark
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { useEditHistory } from '../composables/useEditHistory';
 import { EditorState as CmEditorState } from '@codemirror/state';
-import { EditorView as CmEditorView, keymap as CmKeymap, lineNumbers as CmLineNumbers, Decoration as CmDecoration, ViewPlugin as CmViewPlugin, placeholder as cmPlaceholder } from '@codemirror/view';
+import { EditorView as CmEditorView, keymap as CmKeymap, lineNumbers as CmLineNumbers, Decoration as CmDecoration, ViewPlugin as CmViewPlugin, WidgetType as CmWidgetType, placeholder as cmPlaceholder } from '@codemirror/view';
 import { defaultKeymap as cmDefaultKeymap } from '@codemirror/commands';
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
@@ -400,6 +400,11 @@ let activeEditTableNode = null;
 let savedRange = null;
 let activeEditNode = null;
 let activeBlockForNewBranch = null; // Pointer to block when adding a new ELIF branch
+// {from, to} of the exact "{{ ... }}" span being edited via a VarChipWidget
+// double-click (Phase C of the Visual-editor rewrite), or null when
+// inserting a fresh variable -- a plain text range, not a DOM node like
+// activeEditNode above (which Phase D's block widgets will use instead).
+let activeVarChipRange = null;
 
 const linesCount = computed(() => {
   return editorText.value.split('\n').length;
@@ -564,6 +569,89 @@ const markdownStylePlugin = CmViewPlugin.fromClass(class {
   }
 }, {
   decorations: (v) => v.decorations,
+});
+
+// Phase C of the Visual-editor rewrite: {{ expr | filters }} rendered as an
+// inline chip widget (Decoration.replace, not just styled like
+// jinjaHighlightPlugin's tok-jinja-var) -- the raw "{{ ... }}" text stays
+// exactly where it is in the document underneath, only its on-screen
+// appearance changes. Visual-tab only (Codi keeps showing the raw tag
+// text, same as today). Double-click opens the existing variable modal
+// (openVarModal), now redesigned to take a plain {from, to, raw} text
+// range instead of a DOM node -- applyVariable's edit path dispatches a
+// precise view.dispatch({changes:{from,to,insert}}) over exactly that
+// range, never a DOM write.
+//
+// No eq()/updateDOM() override: every decoration recompute (on any
+// docChanged) rebuilds every chip's DOM from scratch, so the from/to this
+// widget captures for its dblclick handler are always correct for the
+// *current* document -- reusing DOM across recomputes would risk a chip
+// whose closure still points at a stale, pre-edit offset. Harmless
+// performance cost at this app's document sizes.
+//
+// Loop-context-aware "is this variable defined in the schema" checking
+// (the undefined-var warning style) needs cursor-offset-based loop-context
+// resolution, which isn't ready until Phase H (useLoopContext.js still
+// walks canvas DOM ancestors, which no longer exist) -- chips render as
+// plain/defined for now rather than risk false "undefined" warnings on
+// legitimate loop-relative variables like "part.nom".
+// `.` (no `s`/dotall flag) never matches `\n`, so an unterminated `{{` can
+// never greedily swallow a later, unrelated `{{ ... }}` across a line
+// break while the user is mid-typing -- matches the existing single-line
+// assumption already used by convertJinjaToChips in
+// useMarkdownJinjaCompiler.js.
+const VAR_CHIP_RE = /\{\{\s*(.*?)\s*\}\}/g;
+
+class VarChipWidget extends CmWidgetType {
+  constructor(raw, label, from, to) {
+    super();
+    this.raw = raw;
+    this.label = label;
+    this.from = from;
+    this.to = to;
+  }
+  toDOM() {
+    const span = document.createElement('span');
+    span.className = 'j-var-chip';
+    span.textContent = this.label;
+    span.title = `{{ ${this.raw} }}`;
+    span.addEventListener('mousedown', (e) => e.preventDefault());
+    span.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      openVarModal({ from: this.from, to: this.to, raw: this.raw });
+    });
+    return span;
+  }
+  ignoreEvent() { return true; }
+}
+
+const computeVarChipDecorations = (text) => {
+  const decos = [];
+  let m;
+  VAR_CHIP_RE.lastIndex = 0;
+  while ((m = VAR_CHIP_RE.exec(text)) !== null) {
+    const raw = m[1];
+    const label = resolveFieldLabel(raw);
+    decos.push(CmDecoration.replace({ widget: new VarChipWidget(raw, label, m.index, m.index + m[0].length) }).range(m.index, m.index + m[0].length));
+  }
+  return CmDecoration.set(decos, true);
+};
+
+const varChipPlugin = CmViewPlugin.fromClass(class {
+  constructor(view) {
+    this.decorations = computeVarChipDecorations(view.state.doc.toString());
+  }
+  update(update) {
+    if (update.docChanged) {
+      this.decorations = computeVarChipDecorations(update.state.doc.toString());
+    }
+  }
+}, {
+  decorations: (v) => v.decorations,
+  // Skipping over the whole chip on arrow-key motion / backspace-deleting
+  // it as one unit -- the declarative CodeMirror replacement for this
+  // app's old isAtomicChip/getParentAtomicChip manual keydown handling.
+  provide: (plugin) => CmEditorView.atomicRanges.of((view) => view.plugin(plugin)?.decorations || CmDecoration.none),
 });
 
 const jinjaHighlightPlugin = CmViewPlugin.fromClass(class {
@@ -750,7 +838,7 @@ const createCodeMirrorView = () => {
 // widget/decoration extensions here without touching the Codi instance.
 const createVisualCodeMirrorView = () => {
   if (!visualCodeMirrorContainerRef.value || visualCodeMirrorView) return;
-  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
+  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
   visualTextareaRef.value = makeTextareaShim(visualCodeMirrorView);
 };
 
@@ -1264,20 +1352,22 @@ const formatBlock = (headerTag) => {
   formatCodeText('formatBlock', headerTag);
 };
 
-// Variable Modals Trigger
-const openVarModal = (node = null) => {
+// Variable Modal Trigger. `range`, when editing an existing chip, is a
+// plain { from, to, raw } text span (see VarChipWidget) -- not a DOM node
+// like the old canvas-based version of this function took. applyVariable
+// below dispatches the edited result back over exactly that range.
+const openVarModal = (range = null) => {
   saveSelection();
-  activeLoopContext.value = getActiveLoopContext(node);
+  activeLoopContext.value = getActiveLoopContext();
   let rawFilter = '';
-  if (node && node.tagName === 'SPAN') {
-    activeEditNode = node;
-    const raw = node.getAttribute('data-raw') || '';
-    const parts = raw.split('|');
+  if (range) {
+    activeVarChipRange = range;
+    const parts = (range.raw || '').split('|');
     modalExpr.value = parts[0].trim();
     rawFilter = parts.slice(1).join('|').trim();
     modalTitle.value = "Editar Variable";
   } else {
-    activeEditNode = null;
+    activeVarChipRange = null;
     modalExpr.value = '';
     rawFilter = '';
     modalTitle.value = "Inserir Variable";
@@ -1500,28 +1590,34 @@ const onTableApply = (html) => {
   editorText.value = editorText.value.substring(0, start) + insertText + editorText.value.substring(end);
   nextTick(() => el.setSelectionRange(start + insertText.length, start + insertText.length));
 };
-// Inserts/edits a {{ expr | filter }} as a precise text splice into
-// whichever tab's shim is active (Phase A of the Visual-editor rewrite --
-// there is no canvas/chip DOM to write into anymore; Phase C adds the
-// variable-chip *widget* rendered on top of this same raw text).
-// activeEditNode (set only by double-clicking an existing .j-var-chip) is
-// never set today since no such chip exists yet -- always the "insert
-// fresh" path until Phase C.
+// Inserting a new {{ expr | filter }} is a text splice at the cursor
+// (whichever tab's shim is active); editing an EXISTING one (Phase C:
+// double-clicking a VarChipWidget, activeVarChipRange set to its exact
+// {from, to}) dispatches a precise replace directly over that span instead
+// -- always on the Visual view specifically, since chips only render
+// there.
 const applyVariable = () => {
   const expr = modalExpr.value.trim();
   const filter = computedModalFilter.value.trim();
   if (!expr) {
+    activeVarChipRange = null;
     isVarModalOpen.value = false;
     return;
   }
 
   const rawJinja = filter ? `{{ ${expr} | ${filter} }}` : `{{ ${expr} }}`;
-  const el = activeShim();
-  if (el) {
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    editorText.value = editorText.value.substring(0, start) + rawJinja + editorText.value.substring(end);
-    nextTick(() => el.setSelectionRange(start + rawJinja.length, start + rawJinja.length));
+
+  if (activeVarChipRange) {
+    visualCodeMirrorView?.dispatch({ changes: { from: activeVarChipRange.from, to: activeVarChipRange.to, insert: rawJinja } });
+    activeVarChipRange = null;
+  } else {
+    const el = activeShim();
+    if (el) {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      editorText.value = editorText.value.substring(0, start) + rawJinja + editorText.value.substring(end);
+      nextTick(() => el.setSelectionRange(start + rawJinja.length, start + rawJinja.length));
+    }
   }
   isVarModalOpen.value = false;
 };
