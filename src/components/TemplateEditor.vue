@@ -387,6 +387,10 @@ const blockModalInitialForArrayVar = ref('');
 const mathModalInitialExpr = ref('');
 const mathModalInitialType = ref('inline');
 let activeMathNode = null;
+// {from, to} of the exact "$...$"/"$$...$$" span being edited via a Phase E
+// InlineMathWidget/DisplayMathWidget double-click, or null when inserting a
+// fresh formula -- same pattern as activeVarChipRange/activeBlockEditRange.
+let activeMathEditRange = null;
 
 // Table Configuration Modal State
 // Table modal: form state (mode/columns/array/iterator) lives in
@@ -583,11 +587,11 @@ const computeMarkdownStyleDecorations = (text, collapsedRanges = []) => {
 
 const markdownStylePlugin = CmViewPlugin.fromClass(class {
   constructor(view) {
-    this.decorations = computeMarkdownStyleDecorations(view.state.doc.toString(), computeCollapsedJinjaRanges(view.state));
+    this.decorations = computeMarkdownStyleDecorations(view.state.doc.toString(), computeExcludedInlineRanges(view.state));
   }
   update(update) {
     if (update.docChanged || update.startState.field(jinjaExpandedField, false) !== update.state.field(jinjaExpandedField, false)) {
-      this.decorations = computeMarkdownStyleDecorations(update.state.doc.toString(), computeCollapsedJinjaRanges(update.state));
+      this.decorations = computeMarkdownStyleDecorations(update.state.doc.toString(), computeExcludedInlineRanges(update.state));
     }
   }
 }, {
@@ -663,11 +667,11 @@ const computeVarChipDecorations = (text, collapsedRanges = []) => {
 
 const varChipPlugin = CmViewPlugin.fromClass(class {
   constructor(view) {
-    this.decorations = computeVarChipDecorations(view.state.doc.toString(), computeCollapsedJinjaRanges(view.state));
+    this.decorations = computeVarChipDecorations(view.state.doc.toString(), computeExcludedInlineRanges(view.state));
   }
   update(update) {
     if (update.docChanged || update.startState.field(jinjaExpandedField, false) !== update.state.field(jinjaExpandedField, false)) {
-      this.decorations = computeVarChipDecorations(update.state.doc.toString(), computeCollapsedJinjaRanges(update.state));
+      this.decorations = computeVarChipDecorations(update.state.doc.toString(), computeExcludedInlineRanges(update.state));
     }
   }
 }, {
@@ -680,11 +684,11 @@ const varChipPlugin = CmViewPlugin.fromClass(class {
 
 const jinjaHighlightPlugin = CmViewPlugin.fromClass(class {
   constructor(view) {
-    this.decorations = computeHighlightDecorations(view.state.doc.toString(), computeCollapsedJinjaRanges(view.state));
+    this.decorations = computeHighlightDecorations(view.state.doc.toString(), computeExcludedInlineRanges(view.state));
   }
   update(update) {
     if (update.docChanged || update.startState.field(jinjaExpandedField, false) !== update.state.field(jinjaExpandedField, false)) {
-      this.decorations = computeHighlightDecorations(update.state.doc.toString(), computeCollapsedJinjaRanges(update.state));
+      this.decorations = computeHighlightDecorations(update.state.doc.toString(), computeExcludedInlineRanges(update.state));
     }
   }
 }, {
@@ -1249,6 +1253,238 @@ const jinjaBlockField = CmStateField.define({
   ],
 });
 
+// Phase E of the Visual-editor rewrite: the "{% set name = expr %}"
+// single-line assignment chip, and KaTeX math ($...$ inline, $$...$$
+// display).
+
+// Single-line-safe variant of the compiler's own SET_INLINE_RE
+// (useMarkdownJinjaCompiler.js) -- ".*?" (no "s"/dotall flag) can never
+// swallow a later, unrelated tag across a line break while the user is
+// mid-typing, same fix as VAR_CHIP_RE (Phase C).
+const SET_INLINE_CM_RE = /\{%\s*set\s+([A-Za-z_]\w*)\s*=\s*(.*?)\s*%\}/g;
+
+// Rendered collapsed to just its variable name by default (matching the
+// old canvas system's chip); a plain click toggles showing the full
+// "name = expr" -- reusing jinjaExpandedField/toggleJinjaExpandEffect, the
+// exact same view-only, edit-mapped mechanism Phase D uses for macro/set
+// block collapse (keyed by this tag's own `from`, which can never collide
+// with a block-form "{% set name %}" tag's `from` -- they're always
+// different, non-overlapping tags).
+class SetInlineChipWidget extends CmWidgetType {
+  constructor(name, from, to, cond, expanded) {
+    super();
+    this.name = name;
+    this.from = from;
+    this.to = to;
+    this.cond = cond;
+    this.expanded = expanded;
+  }
+  toDOM() {
+    const span = document.createElement('span');
+    span.className = 'j-set-chip';
+    span.title = "Clica per mostrar/amagar l'assignació; doble clic per editar-la";
+    span.textContent = this.expanded ? this.cond.text : this.name;
+    span.addEventListener('mousedown', (e) => e.preventDefault());
+    span.addEventListener('click', (e) => {
+      e.stopPropagation();
+      visualCodeMirrorView?.dispatch({ effects: toggleJinjaExpandEffect.of(this.from) });
+    });
+    span.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      openBlockModalForRange('set-inline', { from: this.cond.from, to: this.cond.to, kind: 'condition', text: this.cond.text });
+    });
+    return span;
+  }
+  ignoreEvent() { return true; }
+}
+
+const computeSetInlineDecorations = (text, expandedSet, excludedRanges) => {
+  const decos = [];
+  let m;
+  SET_INLINE_CM_RE.lastIndex = 0;
+  while ((m = SET_INLINE_CM_RE.exec(text)) !== null) {
+    if (isInsideAnyRange(m.index, excludedRanges)) continue;
+    const from = m.index;
+    const to = from + m[0].length;
+    const cond = parseBlockTagCondition(m[0], 'set', from);
+    if (!cond) continue;
+    decos.push(CmDecoration.replace({ widget: new SetInlineChipWidget(m[1], from, to, cond, expandedSet.has(from)) }).range(from, to));
+  }
+  return CmDecoration.set(decos, true);
+};
+
+const setInlinePlugin = CmViewPlugin.fromClass(class {
+  constructor(view) {
+    this.decorations = computeSetInlineDecorations(view.state.doc.toString(), view.state.field(jinjaExpandedField, false) || new Set(), computeExcludedInlineRanges(view.state));
+  }
+  update(update) {
+    if (update.docChanged || update.startState.field(jinjaExpandedField, false) !== update.state.field(jinjaExpandedField, false)) {
+      this.decorations = computeSetInlineDecorations(update.state.doc.toString(), update.state.field(jinjaExpandedField, false) || new Set(), computeExcludedInlineRanges(update.state));
+    }
+  }
+}, {
+  decorations: (v) => v.decorations,
+  provide: (plugin) => CmEditorView.atomicRanges.of((view) => view.plugin(plugin)?.decorations || CmDecoration.none),
+});
+
+// Renders a math expression via KaTeX, substituting any embedded Jinja2
+// "{{ var }}" with a plain "[var]" placeholder first (KaTeX has no notion
+// of Jinja2) -- ported unchanged from the old canvas system's extractMath.
+// throwOnError:false means KaTeX itself renders a red error message rather
+// than throwing for genuinely invalid TeX; the try/catch is only a last
+// resort against KaTeX throwing anyway (a bug in KaTeX itself, or a
+// pathological input) so a malformed formula degrades to plain text
+// instead of taking the whole decoration pass down with it.
+const renderKatexInto = (el, expr, displayMode) => {
+  try {
+    const cleanExpr = expr.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_m, p1) => `\\text{[${p1.trim().replace(/_/g, '\\_')}]}`);
+    el.innerHTML = katex.renderToString(cleanExpr, { displayMode, throwOnError: false });
+  } catch (_) {
+    el.textContent = expr;
+  }
+};
+
+class InlineMathWidget extends CmWidgetType {
+  constructor(expr, from, to) {
+    super();
+    this.expr = expr;
+    this.from = from;
+    this.to = to;
+  }
+  toDOM() {
+    const span = document.createElement('span');
+    span.className = 'latex-chip inline-math';
+    span.title = `$${this.expr}$`;
+    renderKatexInto(span, this.expr, false);
+    span.addEventListener('mousedown', (e) => e.preventDefault());
+    span.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      openMathModalForRange({ from: this.from, to: this.to, expr: this.expr, type: 'inline' });
+    });
+    return span;
+  }
+  ignoreEvent() { return true; }
+}
+
+// Only "$" pairs whose content is NON-EMPTY become an inline-math widget --
+// a well-formed "$$...$$" display block is naturally seen by this same
+// regex as TWO adjacent empty "$$" pairs (it only ever pairs up 2 dollar
+// signs at a time), which this skips; that keeps inline math from ever
+// stealing/mis-splitting a display block's delimiters even before
+// excludedRanges (computed from computeExcludedInlineRanges, which already
+// carves out clean display-math blocks) is consulted.
+const INLINE_MATH_RE = /\$(.*?)\$/g;
+
+const computeInlineMathDecorations = (text, excludedRanges) => {
+  const decos = [];
+  let m;
+  INLINE_MATH_RE.lastIndex = 0;
+  while ((m = INLINE_MATH_RE.exec(text)) !== null) {
+    if (isInsideAnyRange(m.index, excludedRanges)) continue;
+    const expr = m[1].trim();
+    if (!expr) continue;
+    decos.push(CmDecoration.replace({ widget: new InlineMathWidget(expr, m.index, m.index + m[0].length) }).range(m.index, m.index + m[0].length));
+  }
+  return CmDecoration.set(decos, true);
+};
+
+const inlineMathPlugin = CmViewPlugin.fromClass(class {
+  constructor(view) {
+    this.decorations = computeInlineMathDecorations(view.state.doc.toString(), computeExcludedInlineRanges(view.state));
+  }
+  update(update) {
+    if (update.docChanged || update.startState.field(jinjaExpandedField, false) !== update.state.field(jinjaExpandedField, false)) {
+      this.decorations = computeInlineMathDecorations(update.state.doc.toString(), computeExcludedInlineRanges(update.state));
+    }
+  }
+}, {
+  decorations: (v) => v.decorations,
+  provide: (plugin) => CmEditorView.atomicRanges.of((view) => view.plugin(plugin)?.decorations || CmDecoration.none),
+});
+
+class DisplayMathWidget extends CmWidgetType {
+  constructor(expr, from, to) {
+    super();
+    this.expr = expr;
+    this.from = from;
+    this.to = to;
+  }
+  toDOM() {
+    const div = document.createElement('div');
+    div.className = 'latex-chip display-math';
+    div.title = `$$${this.expr}$$`;
+    renderKatexInto(div, this.expr, true);
+    div.addEventListener('mousedown', (e) => e.preventDefault());
+    div.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      openMathModalForRange({ from: this.from, to: this.to, expr: this.expr, type: 'display' });
+    });
+    return div;
+  }
+  ignoreEvent() { return true; }
+}
+
+// Only a "$$...$$" whose opening/closing markers each sit ALONE on their
+// own line (exactly the shape onMathApply itself always inserts:
+// "$$\n<expr>\n$$") becomes a block widget -- matches the same "clean
+// block layout only" rule Phase D applies to for/if/macro/set. An
+// inline "$$formula$$" sharing its line with other content is left as
+// plain highlighted text.
+const DISPLAY_MATH_RE = /\$\$([\s\S]*?)\$\$/g;
+
+const computeDisplayMathBlocks = (state) => {
+  const doc = state.doc;
+  const text = doc.toString();
+  const collapsedJinja = computeCollapsedJinjaRanges(state);
+  const blocks = [];
+  DISPLAY_MATH_RE.lastIndex = 0;
+  let m;
+  while ((m = DISPLAY_MATH_RE.exec(text)) !== null) {
+    const from = m.index;
+    const to = from + m[0].length;
+    if (isInsideAnyRange(from, collapsedJinja)) continue;
+    const startLine = doc.lineAt(from);
+    const endLine = doc.lineAt(to - 1);
+    if (startLine.text.trim() !== '$$' || endLine.text.trim() !== '$$') continue;
+    blocks.push({ from: startLine.from, to: endLine.to, expr: m[1].trim() });
+  }
+  return blocks;
+};
+
+const computeDisplayMathRanges = (state) => computeDisplayMathBlocks(state).map((b) => [b.from, b.to]);
+
+// Combines every kind of "this text is actually hidden inside a bigger
+// block-replace widget" range this file knows about -- collapsed
+// macro/set blocks (Phase D) and clean display-math blocks (this phase) --
+// into one list, so no OTHER decoration (a {{ }} chip, a set-inline chip,
+// markdown styling, the plain highlighter, inline math) ever tries to
+// place a decoration of its own inside a span some other plugin/field has
+// already replaced -- CodeMirror rejects overlapping replace decorations
+// regardless of which plugin/field they came from.
+const computeExcludedInlineRanges = (state) => [...computeCollapsedJinjaRanges(state), ...computeDisplayMathRanges(state)];
+
+const computeDisplayMathDecorations = (state) => {
+  const ranges = computeDisplayMathBlocks(state).map((b) => CmDecoration.replace({ widget: new DisplayMathWidget(b.expr, b.from, b.to), block: true }).range(b.from, b.to));
+  return CmDecoration.set(ranges, true);
+};
+
+// A StateField, not a ViewPlugin, for the same reason as jinjaBlockField:
+// a "$$...$$" block can span several lines, and CodeMirror requires
+// multi-line block:true replace decorations to come from a StateField.
+const displayMathField = CmStateField.define({
+  create(state) { return computeDisplayMathDecorations(state); },
+  update(value, tr) {
+    if (tr.docChanged || tr.effects.some((e) => e.is(toggleJinjaExpandEffect))) {
+      return computeDisplayMathDecorations(tr.state);
+    }
+    return value;
+  },
+  provide: (f) => [
+    CmEditorView.decorations.from(f),
+    CmEditorView.atomicRanges.of((view) => view.state.field(f, false) || CmDecoration.none),
+  ],
+});
+
 // defaultKeymap ships plain editing (cursor movement, delete, indent...);
 // Ctrl+Z/Y are deliberately NOT bound here -- undoEdit/redoEdit (below) is
 // the single shared history across both tabs, wired directly in
@@ -1307,7 +1543,7 @@ const createCodeMirrorView = () => {
 // widget/decoration extensions here without touching the Codi instance.
 const createVisualCodeMirrorView = () => {
   if (!visualCodeMirrorContainerRef.value || visualCodeMirrorView) return;
-  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaExpandedField, jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin, jinjaBlockField], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
+  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaExpandedField, jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin, jinjaBlockField, setInlinePlugin, inlineMathPlugin, displayMathField], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
   visualTextareaRef.value = makeTextareaShim(visualCodeMirrorView);
 };
 
@@ -1920,6 +2156,7 @@ const openBlockModalForRange = (type, range) => {
 // Math Modal Trigger
 const openMathModal = (node = null) => {
   saveSelection();
+  activeMathEditRange = null;
   if (node && (node.tagName === 'SPAN' || node.tagName === 'DIV' || node.classList.contains('latex-chip'))) {
     activeMathNode = node;
     mathModalInitialExpr.value = node.getAttribute('data-expr') || '';
@@ -1932,19 +2169,38 @@ const openMathModal = (node = null) => {
   isMathModalOpen.value = true;
 };
 
+// Counterpart to openMathModal above, for Phase E's InlineMathWidget/
+// DisplayMathWidget double-click: there's no DOM node to pass, only the
+// exact "$...$"/"$$...$$" TEXT SPAN being edited (see activeMathEditRange).
+const openMathModalForRange = (range) => {
+  saveSelection();
+  activeMathNode = null;
+  activeMathEditRange = range;
+  mathModalInitialExpr.value = range.expr;
+  mathModalInitialType.value = range.type;
+  isMathModalOpen.value = true;
+};
+
 // MathModal.vue owns the expr/type form state and reports the final values
-// on apply; inserting $.../$$...$$ as a precise text splice into whichever
-// tab's shim is active stays here (Phase A of the Visual-editor rewrite --
-// activeMathNode, set only by double-clicking an existing .latex-chip, is
-// never set today since no such chip exists yet; Phase E adds the KaTeX
-// widget rendered on top of this same raw text).
+// on apply. Editing an EXISTING formula (activeMathEditRange, set by
+// double-clicking a Phase E math widget) dispatches a precise
+// view.dispatch({changes:{from,to,insert}}) over that exact span; inserting
+// a brand NEW one is still a plain text splice at the cursor (whichever
+// tab's shim is active) -- activeMathNode (a DOM node) is dead, nothing
+// sets it anymore.
 const onMathApply = ({ expr, type }) => {
-  if (!expr) return;
+  if (!expr) { activeMathEditRange = null; return; }
+  const wrapExpr = type === 'display' ? `$$\n${expr}\n$$` : `$${expr}$`;
+  if (activeMathEditRange) {
+    const range = activeMathEditRange;
+    activeMathEditRange = null;
+    visualCodeMirrorView?.dispatch({ changes: { from: range.from, to: range.to, insert: wrapExpr } });
+    return;
+  }
   const el = activeShim();
   if (!el) return;
   const start = el.selectionStart;
   const end = el.selectionEnd;
-  const wrapExpr = type === 'display' ? `$$\n${expr}\n$$` : `$${expr}$`;
   editorText.value = editorText.value.substring(0, start) + wrapExpr + editorText.value.substring(end);
   nextTick(() => el.setSelectionRange(start + wrapExpr.length, start + wrapExpr.length));
 };
