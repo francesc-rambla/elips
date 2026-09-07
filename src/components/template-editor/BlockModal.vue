@@ -47,6 +47,18 @@ const blockForItemVar = ref('item');
 const blockForArrayVar = ref('');
 const blockExprInputRef = ref(null);
 
+// Label/placeholder/hint for the single free-text field above -- reused
+// as-is for 'if'/'elif' (a boolean condition), 'macro' (a call signature)
+// and 'set' (a "name = expression" assignment): all four are just one raw
+// Jinja2 expression string edited in one box, so no new form fields are
+// needed, only friendlier copy per blockType.
+const BLOCK_EXPR_FIELD_CONFIG = {
+  macro: { label: 'Nom i paràmetres del Macro (Jinja2)', placeholder: 'taula_resum(files, columnes=3)', hint: 'Escriviu el nom del macro i, entre parèntesis, els seus paràmetres.' },
+  set: { label: 'Assignació (Jinja2)', placeholder: 'resultat = economia.pressupost_total * 1.21', hint: 'Escriviu "nom_variable = expressió". Podeu fer clic a les variables del navegador lateral per anar-les inserint on estigui el cursor.' },
+};
+const DEFAULT_EXPR_FIELD_CONFIG = { label: 'Expressió de la Condició (Jinja2)', placeholder: 'economia.pressupost_total > 50000', hint: "Escriviu la condició lògica. Podeu fer clic a les variables del navegador lateral per anar-les inserint on estigui el cursor." };
+const blockExprFieldConfig = computed(() => BLOCK_EXPR_FIELD_CONFIG[props.blockType] || DEFAULT_EXPR_FIELD_CONFIG);
+
 // Search box for the data browser — a model can carry many fields, so
 // scrolling to find one is impractical. Filters the same flat lists the
 // browser already renders, so results stay consistent with what's shown
@@ -117,19 +129,19 @@ defineExpose({ apply });
       <div class="modal-body" style="display: grid; grid-template-columns: 1fr 280px; gap: 1.5rem; align-items: start;">
         <!-- Left Panel: Input controls -->
         <div style="display: flex; flex-direction: column; gap: 1rem;">
-          <!-- IF / ELIF expression -->
+          <!-- IF / ELIF expression, or MACRO signature / SET assignment -->
           <div v-if="blockType !== 'for'" class="form-row">
-            <label for="blockExprInput">Expressió de la Condició (Jinja2)</label>
+            <label for="blockExprInput">{{ blockExprFieldConfig.label }}</label>
             <input
               type="text"
               ref="blockExprInputRef"
               id="blockExprInput"
               v-model="blockExpr"
-              placeholder="economia.pressupost_total > 50000"
+              :placeholder="blockExprFieldConfig.placeholder"
               style="font-family: monospace;"
             >
             <span style="font-size:0.7rem; color:var(--text-muted); margin-top:0.25rem;">
-              Escriviu la condició lògica. Podeu fer clic a les variables del navegador lateral per anar-les inserint on estigui el cursor.
+              {{ blockExprFieldConfig.hint }}
             </span>
           </div>
 

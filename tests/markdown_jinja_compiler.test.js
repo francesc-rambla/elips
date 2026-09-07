@@ -151,6 +151,42 @@ describe('compileMarkdownToHtml (Markdown+Jinja2 source -> visual canvas)', () =
     // interactive tag chips -- none was left behind as loose literal text.
     expect(html.match(/class="j-inline-tag-text"/g)?.length).toBe(4);
   });
+
+  it('renders a {% macro %}...{% endmacro %} block collapsed to its signature', () => {
+    const md = '{% macro taula(files, columnes=3) %}\nContingut\n{% endmacro %}';
+    const html = makeCompiler().compileMarkdownToHtml(md);
+    expect(html).toContain('data-type="macro"');
+    expect(html).toContain('data-collapsed="true"');
+    expect(html).toContain('class="j-collapsed-chip"');
+    expect(html).toContain('taula(files, columnes=3)');
+    expect(html).toContain('Contingut');
+  });
+
+  it('renders a {% set x %}...{% endset %} block collapsed to its variable name', () => {
+    const md = '{% set resultat %}\nContingut capturat\n{% endset %}';
+    const html = makeCompiler().compileMarkdownToHtml(md);
+    expect(html).toContain('data-type="set"');
+    expect(html).toContain('data-collapsed="true"');
+    expect(html).toContain('resultat');
+    expect(html).toContain('Contingut capturat');
+  });
+
+  it('renders {% set x = expr %} (single-line assignment) as a leaf chip collapsed to just the name', () => {
+    const html = makeCompiler().compileMarkdownToHtml('Abans {% set total = pres.parts | length %} despres.');
+    expect(html).toContain('class="j-set-chip"');
+    expect(html).toContain('data-cond="total = pres.parts | length"');
+    expect(html).toContain('data-collapsed="true"');
+    expect(html).toContain('<span class="j-cond-text-collapsed">total</span>');
+    expect(html).toContain('<span class="j-cond-text-expanded">total = pres.parts | length</span>');
+  });
+
+  it('handles a {% set x = expr %} nested inside a for-loop body (recursive by construction)', () => {
+    const md = '{% for part in pres.parts %}\n{% set doble = part.import * 2 %}\n- {{ part.nom }}\n{% endfor %}';
+    const html = makeCompiler().compileMarkdownToHtml(md);
+    expect(html).toContain('data-type="for"');
+    expect(html).toContain('class="j-set-chip"');
+    expect(html).toContain('data-cond="doble = part.import * 2"');
+  });
 });
 
 describe('Markdown -> HTML -> Markdown round-trip stability', () => {
@@ -189,6 +225,33 @@ describe('Markdown -> HTML -> Markdown round-trip stability', () => {
   it('inline if', () => {
     const md = 'Text abans {% if a %}mig{% endif %} text despres.';
     expect(roundtrip(md)).toBe(md);
+  });
+
+  it('macro block', () => {
+    const md = '{% macro taula(files, columnes=3) %}\nContingut\n{% endmacro %}';
+    expect(roundtrip(md)).toBe(md);
+  });
+
+  it('set block (content-capture form)', () => {
+    const md = '{% set resultat %}\nContingut capturat\n{% endset %}';
+    expect(roundtrip(md)).toBe(md);
+  });
+
+  it('set single-line assignment', () => {
+    const md = 'Abans {% set total = pres.parts | length %} despres.';
+    expect(roundtrip(md)).toBe(md);
+  });
+
+  it('set single-line assignment nested inside a for-loop', () => {
+    // Turndown always pads list markers to "-   " (3 spaces) and inserts a
+    // blank line between a preceding block-ish line and the list -- the same
+    // kind of cosmetic markdown-it/turndown round-trip normalization already
+    // seen elsewhere in this file (e.g. the "---"/"--:" table-alignment
+    // test), not something introduced by set-chip support.
+    const md = '{% for part in pres.parts %}\n{% set doble = part.import * 2 %}\n- {{ part.nom }}\n{% endfor %}';
+    const normalized = '{% for part in pres.parts %}\n{% set doble = part.import * 2 %}\n\n-   {{ part.nom }}\n{% endfor %}';
+    expect(roundtrip(md)).toBe(normalized);
+    expect(roundtrip(normalized)).toBe(normalized);
   });
 
   it('math (inline + display)', () => {

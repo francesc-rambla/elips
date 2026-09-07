@@ -57,7 +57,7 @@ const branchBodyToMarkdown = (td, contentEl) => (contentEl ? td.turndown(content
 
 const jinjaBlockToMarkdown = (td, node) => {
   const type = node.getAttribute('data-type') || 'if';
-  const endTag = type === 'for' ? 'endfor' : 'endif';
+  const endTag = JINJA_BLOCK_META[type]?.endTag || 'endif';
   // Which extraction path to use is decided by the DOM's *actual* shape,
   // not the inline/data-layout flag: the "Inline"/"Bloc" toggle button
   // (TemplateEditor.vue) only flips that flag on the existing DOM — it
@@ -230,12 +230,23 @@ const buildTurndownService = () => {
     node.classList.contains('j-head') || node.classList.contains('j-actions') ||
     node.classList.contains('j-footer') || node.classList.contains('j-inline-tag') ||
     node.classList.contains('j-inline-toolbar') || node.classList.contains('j-cond-text') ||
+    node.classList.contains('j-collapsed-chip') ||
     node.classList.contains('table-edit-btn') || node.classList.contains('trailing-editable-line')
   ));
 
   td.addRule('jinjaVarChip', {
     filter: (node) => node.nodeType === Node.ELEMENT_NODE && node.classList.contains('j-var-chip'),
     replacement: (content, node) => `{{ ${stripRawJinjaRef(node.getAttribute('data-raw'))} }}`,
+  });
+
+  // {% set name = expr %} (single-line assignment, no body) -- a leaf chip
+  // just like j-var-chip above, not a .jinja-block (no open/close pair, no
+  // .j-content to recurse into). The canonical "name = expr" text lives in
+  // data-cond (shared with openBlockModal/onBlockApply in TemplateEditor.vue,
+  // which edit it the same way they edit a for/if header's condition).
+  td.addRule('jinjaSetChip', {
+    filter: (node) => node.nodeType === Node.ELEMENT_NODE && node.classList.contains('j-set-chip'),
+    replacement: (content, node) => `{% set ${node.getAttribute('data-cond') || ''} %}`,
   });
 
   td.addRule('latexChip', {
@@ -303,9 +314,29 @@ export const htmlToMarkdown = (element) => {
 
 const ICON_LOOP = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>';
 const ICON_IF = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>';
+// Macro: angle brackets ("<>"), the common dev-tool shorthand for
+// "callable code" -- fits a named, parametrized, reusable snippet.
+const ICON_MACRO = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+// Set: an "=" sign -- assignment/binding, exactly what {% set %} does.
+const ICON_SET = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="9" x2="19" y2="9"/><line x1="5" y1="15" x2="19" y2="15"/></svg>';
+const ICON_COLLAPSE = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>';
 const ICON_INLINE_TOGGLE = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
 const ICON_TRASH = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
 const ICON_EDIT = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+
+// Single source of truth for the {% for %}/{% if %}/{% macro %}/{% set %}
+// vocabulary shared by the block builders below and jinjaBlockToMarkdown's
+// reverse serialization (endTag) -- one place to add a fifth type later.
+const JINJA_BLOCK_META = {
+  for: { icon: ICON_LOOP, endTag: 'endfor' },
+  if: { icon: ICON_IF, endTag: 'endif' },
+  macro: { icon: ICON_MACRO, endTag: 'endmacro' },
+  set: { icon: ICON_SET, endTag: 'endset' },
+};
+// macro/set are always rendered collapsed to a single "nom_macro(params)" /
+// "nom_variable" chip until clicked -- unlike for/if, whose body is content
+// the reader normally wants to see inline. See collapsedChipHtml below.
+const COLLAPSIBLE_BLOCK_TYPES = new Set(['macro', 'set']);
 
 // A dedicated edit affordance for dynamic/transposed tables — double-clicking
 // the header is the only other way in, and a double-click on a <th> also
@@ -329,17 +360,45 @@ const btnBranchTrashHtml = () => '<button class="j-btn-mini btn-branch-trash" st
 // block's condition becomes unreachable: the only other way to edit it is
 // clicking the (now-hidden) condition text itself.
 const btnHeadEditHtml = () => `<button class="j-btn-mini j-head-edit-btn" style="background:none;border:none;color:inherit;padding:0;display:inline-flex;align-items:center;cursor:pointer;" title="Edita la condició">${ICON_EDIT}</button>`;
+const btnCollapseHtml = () => `<button class="j-btn-mini btn-collapse" style="background:none;border:1px solid currentColor;color:inherit;display:inline-flex;align-items:center;justify-content:center;" title="Col·lapsa">${ICON_COLLAPSE}</button>`;
 
 const forHeadHtml = (cond) => { const c = escapeHtml(cond); return `<div class="j-head" data-type="for"><div style="display:flex;align-items:center;gap:4px;">${ICON_LOOP}${btnHeadEditHtml()} <span style="font-weight:700;color:var(--color-primary);">PER CADA:</span> <span class="j-cond-text" data-cond="${c}">${c}</span></div><div class="j-actions">${btnLayoutHtml()}${btnTrashHtml('Elimina el bucle')}</div></div>`; };
 const ifHeadHtml = (cond) => { const c = escapeHtml(cond); return `<div class="j-head" data-type="if"><div style="display:flex;align-items:center;gap:4px;">${ICON_IF}${btnHeadEditHtml()} <span style="font-weight:700;color:#b45309;">SI:</span> <span class="j-cond-text" data-cond="${c}">${c}</span></div><div class="j-actions">${btnLayoutHtml()}<button class="j-btn-mini btn-elif" title="Afegeix branca O SI (ELIF)">+ ELIF</button><button class="j-btn-mini btn-else" title="Afegeix branca EN CAS CONTRARI (ELSE)">+ ELSE</button>${btnTrashHtml('Elimina el condicional')}</div></div>`; };
+// macro/set have no elif/else/inline-layout affordances -- just the
+// collapse toggle (they're collapsed by default, see COLLAPSIBLE_BLOCK_TYPES)
+// and delete.
+const macroHeadHtml = (cond) => { const c = escapeHtml(cond); return `<div class="j-head" data-type="macro"><div style="display:flex;align-items:center;gap:4px;">${ICON_MACRO}${btnHeadEditHtml()} <span style="font-weight:700;color:#0e7490;">MACRO:</span> <span class="j-cond-text" data-cond="${c}">${c}</span></div><div class="j-actions">${btnCollapseHtml()}${btnTrashHtml('Elimina el macro')}</div></div>`; };
+const setHeadHtml = (cond) => { const c = escapeHtml(cond); return `<div class="j-head" data-type="set"><div style="display:flex;align-items:center;gap:4px;">${ICON_SET}${btnHeadEditHtml()} <span style="font-weight:700;color:#15803d;">ASSIGNA A:</span> <span class="j-cond-text" data-cond="${c}">${c}</span></div><div class="j-actions">${btnCollapseHtml()}${btnTrashHtml('Elimina el bloc set')}</div></div>`; };
 
-// Builds the interactive .jinja-block HTML for a block-layout for/if, given its
-// branches ([{ keyword: 'for'|'if'|'elif'|'else', cond, body }]) and a function
-// to recursively compile each branch's Markdown body to HTML.
+const headHtmlFor = (type, cond) => {
+  if (type === 'for') return forHeadHtml(cond);
+  if (type === 'macro') return macroHeadHtml(cond);
+  if (type === 'set') return setHeadHtml(cond);
+  return ifHeadHtml(cond);
+};
+
+const FOOTER_LABELS = { for: 'FINAL BUCLE', if: 'FINAL CONDICIONAL', macro: 'FINAL MACRO', set: 'FINAL SET' };
+
+// The compact chip shown instead of the full head/content/footer while a
+// collapsible (macro/set) block is collapsed -- see the matching
+// .jinja-block[data-collapsed="true"] CSS in TemplateEditor.vue, which is a
+// pure display:none/flex toggle (no recompile): clicking it, or the head's
+// collapse button, just flips the data-collapsed attribute in place.
+const collapsedChipHtml = (type, cond) => `<span class="j-collapsed-chip" contenteditable="false" title="Fes clic per mostrar/editar">${JINJA_BLOCK_META[type].icon}<span class="j-collapsed-label">${escapeHtml(cond)}</span></span>`;
+
+// Builds the interactive .jinja-block HTML for a block-layout for/if/macro/set,
+// given its branches ([{ keyword: 'for'|'if'|'elif'|'else', cond, body }]) and
+// a function to recursively compile each branch's Markdown body to HTML.
+// (macro/set never have more than one branch -- Jinja2 has no elif/else for
+// them -- but nothing here assumes that, so a malformed template with a
+// stray elif/else still degrades the same way it always has.)
 const buildJinjaBlockHtml = (type, branches, compileFn) => {
   const openCond = branches[0].cond;
-  const openHead = type === 'for' ? forHeadHtml(openCond) : ifHeadHtml(openCond);
-  let html = `<div class="jinja-block" contenteditable="false" data-layout="block" data-type="${type}" data-cond="${escapeHtml(openCond)}">${openHead}<div class="j-content" contenteditable="true">${compileFn(branches[0].body)}</div>`;
+  const collapsible = COLLAPSIBLE_BLOCK_TYPES.has(type);
+  let html = `<div class="jinja-block" contenteditable="false" data-layout="block" data-type="${type}"${collapsible ? ' data-collapsed="true"' : ''} data-cond="${escapeHtml(openCond)}">`;
+  if (collapsible) html += collapsedChipHtml(type, openCond);
+  html += headHtmlFor(type, openCond);
+  html += `<div class="j-content" contenteditable="true">${compileFn(branches[0].body)}</div>`;
 
   for (let i = 1; i < branches.length; i++) {
     const b = branches[i];
@@ -352,8 +411,7 @@ const buildJinjaBlockHtml = (type, branches, compileFn) => {
     html += `<div class="j-content" contenteditable="true">${compileFn(b.body)}</div>`;
   }
 
-  const footerLabel = type === 'for' ? 'FINAL BUCLE' : 'FINAL CONDICIONAL';
-  html += `<div class="j-footer"><span>${footerLabel}</span></div></div>`;
+  html += `<div class="j-footer"><span>${FOOTER_LABELS[type] || 'FINAL BLOC'}</span></div></div>`;
   return html;
 };
 
@@ -365,7 +423,7 @@ const buildJinjaBlockHtml = (type, branches, compileFn) => {
 // construct and revealed only on :focus-within (see the matching CSS rules
 // in TemplateEditor.vue), so it doesn't take up space until needed.
 const buildInlineJinjaHtml = (type, branches, compileInline) => {
-  const icon = type === 'for' ? ICON_LOOP : ICON_IF;
+  const icon = JINJA_BLOCK_META[type].icon;
   // tagText is placed both as a title="..." attribute and as visible text
   // content below — build it from the raw (unescaped) condition, then
   // escape the whole rendered tag once so both positions get a
@@ -379,19 +437,27 @@ const buildInlineJinjaHtml = (type, branches, compileInline) => {
       : (b.keyword === 'else' ? '{% else %}' : `{% elif ${b.cond} %}`);
     html += inlineTag(tagText) + `<span class="j-content" contenteditable="true">${compileInline(b.body)}</span>`;
   });
-  html += inlineTag(`{% end${type === 'for' ? 'for' : 'if'} %}`);
+  html += inlineTag(`{% ${JINJA_BLOCK_META[type].endTag} %}`);
   html += `<span class="j-inline-toolbar" contenteditable="false">${btnToBlockHtml()}</span>`;
   html += `</span>`;
   return html;
 };
 
-// Scans `lines` for a Jinja {% for %}/{% if %} block starting at `startIdx`
-// (already confirmed to be a standalone open-tag line), tracking nesting depth
-// so inner for/if blocks' own elif/else/end don't get mistaken for this one's.
-// Returns { endIdx, branches } where each branch is { keyword, cond, body },
-// or null if unterminated (malformed template — left as literal text).
-const OPEN_TAG_RE = /^\{%\s*(for|if)\s+([\s\S]+?)\s*%\}$/;
+// Scans `lines` for a Jinja {% for %}/{% if %}/{% macro %}/{% set %} block
+// starting at `startIdx` (already confirmed to be a standalone open-tag
+// line), tracking nesting depth so inner blocks' own elif/else/end don't get
+// mistaken for this one's. Returns { endIdx, branches } where each branch is
+// { keyword, cond, body }, or null if unterminated (malformed template —
+// left as literal text).
+//
+// {% set name = expr %} (the single-line assignment form, no body/endset) is
+// NOT matched here -- it's already gone by the time this runs, replaced by a
+// placeholder in the earlier extractSetSimple pass, so any literal
+// "{% set ... %}" tag left for this regex to see is guaranteed to be the
+// bare block-capture form ({% set name %}...{% endset %}).
+const OPEN_TAG_RE = /^\{%\s*(for|if|macro|set)\s+([\s\S]+?)\s*%\}$/;
 const ELIF_TAG_RE = /^\{%\s*elif\s+([\s\S]+?)\s*%\}$/;
+const CLOSE_TAG_RE = /^\{%\s*(?:endfor|endif|endmacro|endset)\s*%\}$/;
 
 const scanJinjaBlock = (lines, startIdx) => {
   const open = lines[startIdx].trim().match(OPEN_TAG_RE);
@@ -415,7 +481,7 @@ const scanJinjaBlock = (lines, startIdx) => {
         continue;
       }
     }
-    if (t === '{% endfor %}' || t === '{% endif %}') {
+    if (CLOSE_TAG_RE.test(t)) {
       depth--;
       if (depth === 0) {
         branches.push({ keyword: branchKeyword, cond: branchCond, body: lines.slice(branchStart, i).join('\n') });
@@ -465,11 +531,46 @@ const restorePlaceholders = (text, kind, values, blockLevel = false) => {
   return out;
 };
 
-// Extracts every standalone (block-layout) {% for %}/{% if %} region from the
-// text, replacing each with a placeholder and recursively compiling its
-// branch bodies via `compileFn` (the outer compileMarkdownToHtml itself, so
-// nested nested blocks, tables, math and plain Markdown inside a branch are
-// all handled by the exact same pipeline).
+// {% set name = expr %} -- the single-line assignment form, no body/endset --
+// is a leaf, exactly like a {{ var }} chip, not a paired open/close block:
+// no recursion, no depth-tracking, just a global regex-replace pass. Run
+// once per compileMarkdownToHtml call (including its own recursive calls for
+// each for/if branch body, so nesting inside a loop/condition is covered the
+// same way math/tables already are), *before* extractBlockJinja/
+// extractInlineJinja -- by the time those run, every remaining literal
+// "{% set ... %}" is guaranteed to be the bare block-capture form (see
+// OPEN_TAG_RE's comment above).
+//
+// Rendered collapsed to just "nom_variable" (matching the request: hide the
+// assigned expression until selected) via two sibling spans toggled by CSS
+// on [data-collapsed] -- see .j-set-chip in TemplateEditor.vue. The full
+// "name = expr" stays in data-cond, which is what openBlockModal/
+// onBlockApply (TemplateEditor.vue) read/write on edit, and what the
+// jinjaSetChip turndown rule reads back to reconstruct the tag on sync.
+const SET_INLINE_RE = /\{%\s*set\s+([A-Za-z_]\w*)\s*=\s*([\s\S]+?)\s*%\}/g;
+
+const buildSetInlineChipHtml = (name, expr) => {
+  const raw = `${name} = ${expr}`;
+  const c = escapeHtml(raw);
+  const n = escapeHtml(name);
+  return `<span class="j-set-chip" contenteditable="false" data-cond="${c}" data-collapsed="true" title="Fes clic per mostrar/editar l'assignació">${ICON_SET}<span class="j-cond-text-collapsed">${n}</span><span class="j-cond-text-expanded">${c}</span></span>`;
+};
+
+const extractSetSimple = (text) => {
+  const blocks = [];
+  const out = text.replace(SET_INLINE_RE, (_m, name, expr) => {
+    blocks.push(buildSetInlineChipHtml(name, expr));
+    return placeholder('JS', blocks.length - 1);
+  });
+  return { text: out, blocks };
+};
+
+// Extracts every standalone (block-layout) {% for %}/{% if %}/{% macro %}/
+// {% set %} region from the text, replacing each with a placeholder and
+// recursively compiling its branch bodies via `compileFn` (the outer
+// compileMarkdownToHtml itself, so nested nested blocks, tables, math and
+// plain Markdown inside a branch are all handled by the exact same
+// pipeline).
 const extractBlockJinja = (text, compileFn) => {
   const lines = text.split('\n');
   const outLines = [];
@@ -541,7 +642,7 @@ const extractInlineJinja = (text, compileInline) => {
         i++;
         continue;
       }
-      if (tok === '{% endfor %}' || tok === '{% endif %}') {
+      if (CLOSE_TAG_RE.test(tok)) {
         i++;
         branches.push({ keyword: branchKeyword, cond: branchCond, body });
         return { type, branches };
@@ -924,7 +1025,8 @@ export function useMarkdownJinjaCompiler({ store, activeLoopStack, hasCheckedTem
     const { text: afterYaml, headerHtml } = extractYamlHeader(markdownText || '');
     const { text: afterMath, blocks: mathBlocks } = extractMath(afterYaml);
     const { text: afterTables, blocks: tableBlocks } = extractCommentTables(afterMath, { findBestKeyMatch, findColHeaderKeyMatch, resolveFieldLabel });
-    const { text: afterBlockJinja, blocks: blockJinjaBlocks } = extractBlockJinja(afterTables, compileMarkdownToHtml);
+    const { text: afterSetSimple, blocks: setSimpleBlocks } = extractSetSimple(afterTables);
+    const { text: afterBlockJinja, blocks: blockJinjaBlocks } = extractBlockJinja(afterSetSimple, compileMarkdownToHtml);
     const { text: afterInlineJinja, blocks: inlineJinjaBlocks } = extractInlineJinja(afterBlockJinja, (t) => md.renderInline(t));
 
     let html = md.render(escapeFilterPipesInBraces(afterInlineJinja));
@@ -934,6 +1036,7 @@ export function useMarkdownJinjaCompiler({ store, activeLoopStack, hasCheckedTem
     // standalone $$display math$$), avoiding invalid <p><div>...</div></p> nesting.
     html = restorePlaceholders(html, 'JI', inlineJinjaBlocks, true);
     html = restorePlaceholders(html, 'JB', blockJinjaBlocks, true);
+    html = restorePlaceholders(html, 'JS', setSimpleBlocks, true);
     html = restorePlaceholders(html, 'JT', tableBlocks, true);
     html = restorePlaceholders(html, 'JM', mathBlocks, true);
     return headerHtml + html;

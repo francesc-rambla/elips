@@ -527,23 +527,30 @@ const jinjaHighlightPlugin = CmViewPlugin.fromClass(class {
 });
 
 // Same block-tag vocabulary the Visual-canvas compiler recognizes
-// (useMarkdownJinjaCompiler.js's OPEN_TAG_RE/ELIF_TAG_RE) -- for/if open a
-// block, elif/else are mid-block branches, endfor/endif close it. Matched
-// independently of the highlighter above: this pass builds a flat,
-// depth-stack-paired list of every {% ... %} block tag in the whole
-// document (ignoring line breaks, so same-line/nested tags pair correctly
-// too), so that CodeMirror can highlight a block's whole tag family
-// (open + any elif/else + close) the way bracket-matching highlights a
-// pair of ()/[]/{} -- CodeMirror's own bracketMatching (@codemirror/language)
-// can't do this itself: its syntax-tree mode needs a real language grammar
-// (we only have a regex highlighter, no Jinja2 grammar), and its plain-text
-// fallback only pairs single literal characters, never multi-character
-// keyword tags like "{% for %}"/"{% endfor %}".
+// (useMarkdownJinjaCompiler.js's OPEN_TAG_RE/ELIF_TAG_RE/CLOSE_TAG_RE) --
+// for/if/macro/set open a block, elif/else are mid-block branches (if
+// only), endfor/endif/endmacro/endset close it. Matched independently of
+// the highlighter above: this pass builds a flat, depth-stack-paired list
+// of every {% ... %} block tag in the whole document (ignoring line breaks,
+// so same-line/nested tags pair correctly too), so that CodeMirror can
+// highlight a block's whole tag family (open + any elif/else + close) the
+// way bracket-matching highlights a pair of ()/[]/{} -- CodeMirror's own
+// bracketMatching (@codemirror/language) can't do this itself: its
+// syntax-tree mode needs a real language grammar (we only have a regex
+// highlighter, no Jinja2 grammar), and its plain-text fallback only pairs
+// single literal characters, never multi-character keyword tags like
+// "{% for %}"/"{% endfor %}".
+//
+// {% set name = expr %} (the single-line assignment form) is deliberately
+// NOT an "open" tag here -- like the compiler's OPEN_TAG_RE, only the bare
+// "{% set name %}" block-capture form (no "=") pairs with {% endset %};
+// the assignment form is self-contained and would otherwise show up as a
+// permanently "unmatched" open tag.
 const JINJA_TAG_SCAN_RE = /\{%[\s\S]*?%\}/g;
-const JINJA_TAG_OPEN_RE = /^\{%\s*(?:for|if)\s+[\s\S]+?\s*%\}$/;
+const JINJA_TAG_OPEN_RE = /^\{%\s*(?:for|if|macro)\s+[\s\S]+?\s*%\}$|^\{%\s*set\s+[A-Za-z_]\w*\s*%\}$/;
 const JINJA_TAG_ELIF_RE = /^\{%\s*elif\s+[\s\S]+?\s*%\}$/;
 const JINJA_TAG_ELSE_RE = /^\{%\s*else\s*%\}$/;
-const JINJA_TAG_CLOSE_RE = /^\{%\s*(?:endfor|endif)\s*%\}$/;
+const JINJA_TAG_CLOSE_RE = /^\{%\s*(?:endfor|endif|endmacro|endset)\s*%\}$/;
 
 const computeJinjaTagRanges = (text) => {
   const tags = [];
@@ -1201,11 +1208,18 @@ const openVarModal = (node = null) => {
 };
 
 // Logic Blocks Modals Trigger
+// Edit-modal titles for a block whose header/chip is being edited (existing
+// node) vs. inserted fresh (no node yet — only reachable for 'for'/'if'
+// today, since macro/set have no toolbar "insert" button, only in-place
+// editing of tags already present in the source).
+const EDIT_TITLES = { for: 'Editar Bucle (FOR)', elif: 'Editar branca O SI (ELIF)', macro: 'Editar Macro', set: 'Editar Assignació (SET)' };
+const NEW_TITLES = { for: 'Nou Bucle (FOR)' };
+
 const openBlockModal = (type, node = null) => {
   saveSelection();
   blockType.value = type;
   activeLoopContext.value = getActiveLoopContext(node);
-  
+
   if (type === 'elif' && !node) {
     activeEditNode = null;
     blockModalInitialExpr.value = '';
@@ -1221,7 +1235,7 @@ const openBlockModal = (type, node = null) => {
     } else {
       blockModalInitialExpr.value = raw;
     }
-    modalTitle.value = type === 'for' ? "Editar Bucle (FOR)" : (type === 'elif' ? "Editar branca O SI (ELIF)" : "Editar Condició (IF)");
+    modalTitle.value = EDIT_TITLES[type] || 'Editar Condició (IF)';
   } else {
     activeEditNode = null;
     if (type === 'for') {
@@ -1231,7 +1245,7 @@ const openBlockModal = (type, node = null) => {
     } else {
       blockModalInitialExpr.value = '';
     }
-    modalTitle.value = type === 'for' ? "Nou Bucle (FOR)" : "Nova Condició (IF)";
+    modalTitle.value = NEW_TITLES[type] || 'Nova Condició (IF)';
   }
   isBlockModalOpen.value = true;
 };
@@ -1743,7 +1757,20 @@ const onBlockApply = (expr) => {
     
     if (activeEditNode) {
       activeEditNode.setAttribute('data-cond', expr);
-      activeEditNode.textContent = expr;
+      if (activeEditNode.classList.contains('j-set-chip')) {
+        // A leaf chip (icon + two label spans, see buildSetInlineChipHtml in
+        // useMarkdownJinjaCompiler.js), not a plain text node like
+        // .j-cond-text -- a blind textContent assignment below would wipe
+        // the icon too. Update the two label spans in place instead.
+        const eqIdx = expr.indexOf('=');
+        const nameOnly = (eqIdx > -1 ? expr.slice(0, eqIdx) : expr).trim();
+        const collapsedEl = activeEditNode.querySelector('.j-cond-text-collapsed');
+        const expandedEl = activeEditNode.querySelector('.j-cond-text-expanded');
+        if (collapsedEl) collapsedEl.textContent = nameOnly;
+        if (expandedEl) expandedEl.textContent = expr;
+      } else {
+        activeEditNode.textContent = expr;
+      }
       syncVisualToCode();
     } else if (blockType.value === 'elif') {
       if (activeBlockForNewBranch) {
@@ -2085,7 +2112,19 @@ const syncCodeToVisual = () => {
     canvasRef.value.querySelectorAll('.j-var-chip').forEach(c => {
       c.ondblclick = (e) => { e.stopPropagation(); openVarModal(c); };
     });
-    
+
+    // {% set name = expr %} leaf chip: single click toggles collapsed
+    // ("name" only) vs expanded ("name = expr") in place -- no recompile, a
+    // pure CSS/attribute toggle, same mechanism as .jinja-block's collapse
+    // below. Double-click edits it (mirrors .j-var-chip's own dblclick above).
+    canvasRef.value.querySelectorAll('.j-set-chip').forEach(c => {
+      c.onclick = (e) => {
+        e.stopPropagation();
+        c.dataset.collapsed = c.dataset.collapsed === 'true' ? 'false' : 'true';
+      };
+      c.ondblclick = (e) => { e.stopPropagation(); openBlockModal('set', c); };
+    });
+
     canvasRef.value.querySelectorAll('.latex-chip').forEach(c => {
       c.ondblclick = (e) => { e.stopPropagation(); openMathModal(c); };
     });
@@ -2122,6 +2161,21 @@ const syncCodeToVisual = () => {
         const toBlockBtn = block.querySelector('.btn-to-block');
         if (toBlockBtn) toBlockBtn.onclick = switchToBlock;
       } else {
+        // macro/set render collapsed by default (see COLLAPSIBLE_BLOCK_TYPES
+        // in useMarkdownJinjaCompiler.js) -- clicking the compact chip, or
+        // the head's collapse button once expanded, just flips
+        // data-collapsed; CSS alone (.jinja-block[data-collapsed]) handles
+        // showing/hiding the head/content/footer vs. the chip. No recompile,
+        // so any in-progress body edits are untouched by the toggle.
+        const collapsedChip = block.querySelector(':scope > .j-collapsed-chip');
+        if (collapsedChip) {
+          collapsedChip.onclick = (e) => { e.stopPropagation(); block.dataset.collapsed = 'false'; };
+        }
+        const collapseBtn = block.querySelector('.btn-collapse');
+        if (collapseBtn) {
+          collapseBtn.onclick = (e) => { e.stopPropagation(); block.dataset.collapsed = 'true'; };
+        }
+
         const condText = block.querySelector('.j-cond-text');
         if (condText) {
           condText.onclick = (e) => {
@@ -2272,9 +2326,10 @@ const switchTab = (tab) => {
 // Helper to identify atomic visual chips (variables, math formulas, inline tags)
 const isAtomicChip = (node) => {
   return node && node.nodeType === Node.ELEMENT_NODE && (
-    node.classList.contains('j-var-chip') || 
-    node.classList.contains('latex-chip') || 
-    node.classList.contains('j-inline-tag')
+    node.classList.contains('j-var-chip') ||
+    node.classList.contains('latex-chip') ||
+    node.classList.contains('j-inline-tag') ||
+    node.classList.contains('j-set-chip')
   );
 };
 
@@ -3892,9 +3947,72 @@ body.dark-theme .code-editor-wrapper .cm-content {
   border-left-color: var(--color-primary, #0284c7);
 }
 
+.jinja-block[data-type="macro"] {
+  border-left-color: #0e7490;
+}
+
+.jinja-block[data-type="set"] {
+  border-left-color: #15803d;
+}
+
 .jinja-block:hover {
   border-color: rgba(2, 132, 199, 0.4);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+/* macro/set render collapsed by default: only the small chip below shows,
+   the usual head/content/footer box (border, shadow, absolute-positioned
+   pills) is suppressed entirely rather than just hiding its text the way
+   for/if's :focus-within rule does above -- there's a real body to hide,
+   not just a label. Toggled purely by the data-collapsed attribute
+   (TemplateEditor.vue flips it on click, no recompile involved). */
+.jinja-block[data-collapsed="true"] {
+  display: inline-block;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+  margin: 0.15rem 0;
+}
+
+.jinja-block[data-collapsed="true"] > .j-head,
+.jinja-block[data-collapsed="true"] > .j-content,
+.jinja-block[data-collapsed="true"] > .j-branch,
+.jinja-block[data-collapsed="true"] > .j-footer {
+  display: none;
+}
+
+.j-collapsed-chip {
+  display: none;
+  align-items: center;
+  gap: 5px;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.jinja-block[data-collapsed="true"] > .j-collapsed-chip {
+  display: inline-flex;
+}
+
+.jinja-block[data-type="macro"] > .j-collapsed-chip {
+  color: #0e7490;
+  border-color: #0e7490;
+}
+
+.jinja-block[data-type="set"] > .j-collapsed-chip {
+  color: #15803d;
+  border-color: #15803d;
+}
+
+.j-collapsed-chip:hover {
+  filter: brightness(0.95);
 }
 
 .jinja-block.inline {
@@ -4057,6 +4175,51 @@ body.dark-theme .code-editor-wrapper .cm-content {
   color: #b45309;
 }
 
+.jinja-block[data-type="macro"] .j-cond-text {
+  color: #0e7490;
+}
+
+.jinja-block[data-type="set"] .j-cond-text {
+  color: #15803d;
+}
+
+/* {% set name = expr %} leaf chip -- same family as .j-var-chip, green-toned
+   to match the "set" block color above. Collapsed by default: only
+   .j-cond-text-collapsed ("name") shows; a click flips data-collapsed and
+   swaps in .j-cond-text-expanded ("name = expr") instead. */
+.j-set-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background-color: rgba(21, 128, 61, 0.08);
+  color: #15803d;
+  border: 1px solid rgba(21, 128, 61, 0.45);
+  border-radius: 3px;
+  padding: 0 4px;
+  height: 18px;
+  line-height: 18px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin: 0 2px;
+  vertical-align: baseline;
+  cursor: pointer;
+  user-select: none;
+}
+
+.j-set-chip:hover {
+  background-color: #15803d;
+  color: white;
+}
+
+.j-set-chip[data-collapsed="true"] .j-cond-text-expanded {
+  display: none;
+}
+
+.j-set-chip:not([data-collapsed="true"]) .j-cond-text-collapsed {
+  display: none;
+}
+
 .j-content {
   padding: 0.6rem 0.75rem;
   min-height: 26px;
@@ -4161,6 +4324,43 @@ body.dark-theme .jinja-block[data-type="for"] {
   border-left-color: #38bdf8 !important;
 }
 
+[data-theme="dark"] .jinja-block[data-type="macro"],
+body.dark-theme .jinja-block[data-type="macro"] {
+  border-left-color: #22d3ee !important;
+}
+
+[data-theme="dark"] .jinja-block[data-type="set"],
+body.dark-theme .jinja-block[data-type="set"] {
+  border-left-color: #4ade80 !important;
+}
+
+[data-theme="dark"] .jinja-block[data-type="macro"] > .j-collapsed-chip,
+body.dark-theme .jinja-block[data-type="macro"] > .j-collapsed-chip {
+  color: #22d3ee !important;
+  border-color: #22d3ee !important;
+}
+
+[data-theme="dark"] .jinja-block[data-type="set"] > .j-collapsed-chip,
+body.dark-theme .jinja-block[data-type="set"] > .j-collapsed-chip {
+  color: #4ade80 !important;
+  border-color: #4ade80 !important;
+}
+
+[data-theme="dark"] .j-set-chip,
+body.dark-theme .j-set-chip {
+  background-color: rgba(34, 197, 94, 0.3) !important;
+  color: #ffffff !important;
+  border: 1.5px solid #4ade80 !important;
+  font-weight: 700 !important;
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.4);
+}
+
+[data-theme="dark"] .j-set-chip:hover,
+body.dark-theme .j-set-chip:hover {
+  background-color: #4ade80 !important;
+  color: #0b0f19 !important;
+}
+
 [data-theme="dark"] .j-head,
 body.dark-theme .j-head {
   background-color: #1e293b !important;
@@ -4194,6 +4394,22 @@ body.dark-theme .jinja-block[data-type="if"] .j-cond-text {
   background-color: rgba(245, 158, 11, 0.3) !important;
   color: #ffffff !important;
   border: 1px solid #fbbf24 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="dark"] .jinja-block[data-type="macro"] .j-cond-text,
+body.dark-theme .jinja-block[data-type="macro"] .j-cond-text {
+  background-color: rgba(34, 211, 238, 0.3) !important;
+  color: #ffffff !important;
+  border: 1px solid #22d3ee !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="dark"] .jinja-block[data-type="set"] .j-cond-text,
+body.dark-theme .jinja-block[data-type="set"] .j-cond-text {
+  background-color: rgba(74, 222, 128, 0.3) !important;
+  color: #ffffff !important;
+  border: 1px solid #4ade80 !important;
   font-weight: 700 !important;
 }
 
