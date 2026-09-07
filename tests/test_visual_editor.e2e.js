@@ -18,19 +18,29 @@
 
 import puppeteer from 'puppeteer';
 
-// Exercises the visual editor rewrite (markdown-it + turndown based compiler,
-// Markdown-as-priority clipboard model) against the real app in a real
-// browser: rendering, tab-switch round-trip stability, pasting rich HTML
-// (converted to Markdown, never kept as HTML), and copying (source text on
-// the clipboard, not styled HTML).
+// Exercises the Visual tab as of Phase A of its CodeMirror-based rewrite
+// (see /home/frambla/.claude/plans/unified-nibbling-adleman.md): a second
+// CodeMirror 6 EditorView over the exact same editorText as the Codi tab,
+// not a contenteditable canvas compiled from/reconstructed via HTML. As of
+// this phase the Visual tab shows plain (syntax-highlighted) source text —
+// no chip/block widgets yet, those land in later phases (B: plain
+// Markdown styling, C: variable chips, D: Jinja blocks, E: set/math, F:
+// tables, G: metadata/special chars) and should extend, not replace, the
+// checks below.
+//
+// This file used to test rich HTML rendering (bold/list/jinja-block/
+// var-chip), an HTML-to-Markdown paste conversion, and a chip-aware copy —
+// all specific to the old contenteditable canvas, which no longer exists.
+// Those are deliberately not re-tested here; they'll come back scoped to
+// whichever phase reintroduces each capability.
 //
 // Note: DataInspector.vue also mounts its own (normally hidden) TemplateEditor
-// instance for cell editing, so the page always has *two* ".editor-textarea"
-// elements/tab-switcher button pairs. Everything below scopes to the visible
+// instance for cell editing, so the page always has *two* CodeMirror Visual
+// containers/tab-switcher button pairs. Everything below scopes to the visible
 // one (offsetParent !== null) — the main template editor — to avoid
 // accidentally driving the hidden cell-mode instance instead.
 async function testVisualEditor() {
-  console.log('🚀 Testing Visual Editor (Markdown/Jinja2 <-> HTML compiler rewrite)...');
+  console.log('🚀 Testing Visual Editor (Phase A: CodeMirror-based rewrite, plain text)...');
   const browser = await puppeteer.launch({
     headless: 'new',
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -52,7 +62,9 @@ async function testVisualEditor() {
 
   await page.evaluate(() => {
     window.__visualEditorTest = {
-      canvas: () => Array.from(document.querySelectorAll('.editor-textarea[contenteditable="true"]')).find((el) => el.offsetParent !== null),
+      // The Visual tab's CodeMirror content DOM (the visible, main-editor
+      // instance — see the note above about the hidden cell-mode twin).
+      visualContent: () => Array.from(document.querySelectorAll('.code-editor-wrapper .cm-content')).find((el) => el.offsetParent !== null),
       clickTab: (label) => {
         const btn = Array.from(document.querySelectorAll('button')).find((b) => b.offsetParent !== null && b.textContent.trim() === label);
         if (!btn) throw new Error(`Botó de pestanya "${label}" no trobat (visible)`);
@@ -61,8 +73,6 @@ async function testVisualEditor() {
     };
   });
 
-  // Inject data + a template with a for-loop, a var chip, bold text and a
-  // nested list, and switch to the Template tab / Visual sub-tab.
   console.log('➡️ 1. Carregant dades i plantilla d\'exemple, obrint l\'editor visual...');
   await page.evaluate(() => {
     window.store.excelJsonData = {
@@ -86,21 +96,17 @@ async function testVisualEditor() {
   });
   await new Promise((r) => setTimeout(r, 800));
 
-  const rendered = await page.evaluate(() => window.__visualEditorTest.canvas()?.innerHTML || null);
-  if (!rendered) throw new Error('No s\'ha trobat el canvas visible de l\'editor visual');
-  if (!rendered.includes('<strong>negreta</strong>')) throw new Error('La negreta no s\'ha renderitzat: ' + rendered);
-  if ((rendered.match(/<ul>/g) || []).length < 2) throw new Error('La llista aniuada no té 2 nivells de <ul>: ' + rendered);
-  if (!rendered.includes('class="jinja-block"') || !rendered.includes('data-type="for"')) {
-    throw new Error('El bloc {% for %} no s\'ha renderitzat com a jinja-block: ' + rendered);
+  const visualText = await page.evaluate(() => window.__visualEditorTest.visualContent()?.textContent || null);
+  if (!visualText) throw new Error('No s\'ha trobat el contenidor visible de CodeMirror a la pestanya Visual');
+  if (!visualText.includes('{% for part in pres.parts %}') || !visualText.includes('**negreta**')) {
+    throw new Error('El text font no es mostra correctament a la pestanya Visual: ' + visualText);
   }
-  if (!rendered.includes('class="j-var-chip"') || !rendered.includes('data-raw="part.nom"')) {
-    throw new Error('El xip de variable part.nom no s\'ha renderitzat: ' + rendered);
-  }
-  console.log('  ✓ Capçalera, negreta, llista aniuada, bloc for i xip de variable renderitzats correctament.');
+  console.log('  ✓ La pestanya Visual mostra el text font (CodeMirror), sense errors.');
 
   // Round-trip: switch to Code, back to Visual, verify source text is intact
-  // (this is exactly the scenario fix #1 from earlier today protects: tab
-  // switches must not corrupt or lose content).
+  // (this is exactly Phase A's own acceptance criterion: tab switches must
+  // never corrupt or lose content, now that both tabs share one text
+  // buffer instead of reconstructing Markdown from edited HTML).
   console.log('➡️ 2. Verificant estabilitat del cicle Visual -> Codi -> Visual...');
   await page.evaluate(() => window.__visualEditorTest.clickTab('Codi'));
   await new Promise((r) => setTimeout(r, 300));
@@ -113,57 +119,36 @@ async function testVisualEditor() {
   }
   console.log('  ✓ El text font es manté intacte després de canviar de pestanya diverses vegades.');
 
-  // Paste: simulate pasting Word-like HTML (bold + nested list) via a
-  // synthetic ClipboardEvent, and verify it lands in the source as clean
-  // Markdown — never as raw HTML inside editorText/templateText.
-  console.log('➡️ 3. Simulant enganxar HTML tipus Word (negreta + llista aniuada)...');
-  await page.evaluate(() => {
-    const canvas = window.__visualEditorTest.canvas();
-    canvas.focus();
-    const range = document.createRange();
-    range.selectNodeContents(canvas);
-    range.collapse(false);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-
-    const dt = new DataTransfer();
-    dt.setData('text/html', '<p>Text enganxat amb <strong>fort</strong>.</p><ul><li>A<ul><li>A1</li></ul></li></ul>');
-    dt.setData('text/plain', 'Text enganxat amb fort.');
-    const pasteEvent = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
-    canvas.dispatchEvent(pasteEvent);
-  });
-  await new Promise((r) => setTimeout(r, 500));
-
-  const textAfterPaste = await page.evaluate(() => window.store.templateText);
-  if (!textAfterPaste.includes('**fort**')) throw new Error('El text enganxat no s\'ha convertit a Markdown (negreta): ' + textAfterPaste);
-  if (textAfterPaste.includes('<p>') || textAfterPaste.includes('<ul>') || textAfterPaste.includes('<strong>')) {
-    throw new Error('S\'ha filtrat HTML cru dins del text font en enganxar: ' + textAfterPaste);
+  // Typing directly into the Visual tab must land in the shared source
+  // exactly, same as the Codi tab -- there's no separate HTML
+  // representation to keep in sync anymore.
+  console.log('➡️ 3. Escriure directament a la pestanya Visual actualitza el text font...');
+  await page.evaluate(() => window.__visualEditorTest.clickTab('Visual'));
+  await new Promise((r) => setTimeout(r, 300));
+  await page.evaluate(() => window.__visualEditorTest.visualContent().focus());
+  await page.keyboard.press('End');
+  await page.keyboard.type('{{ afegit_des_de_visual }}');
+  await new Promise((r) => setTimeout(r, 300));
+  const textAfterTyping = await page.evaluate(() => window.store.templateText);
+  if (!textAfterTyping.includes('{{ afegit_des_de_visual }}')) {
+    throw new Error('El text escrit a la pestanya Visual no s\'ha reflectit al text font: ' + textAfterTyping);
   }
-  console.log('  ✓ El HTML enganxat s\'ha convertit a Markdown net, sense HTML cru dins del text font.');
+  console.log('  ✓ Escriure a Visual actualitza editorText/store.templateText correctament.');
 
-  // Copy: select the rendered var chip's surrounding text and verify the
-  // clipboard receives Markdown/Jinja2 source, not HTML.
-  console.log('➡️ 4. Verificant que copiar des del canvas posa codi font (no HTML) al porta-retalls...');
-  const copiedText = await page.evaluate(() => {
-    const canvas = window.__visualEditorTest.canvas();
-    const chip = canvas.querySelector('.j-var-chip[data-raw="part.nom"]');
-    if (!chip) return null;
-    const range = document.createRange();
-    range.selectNode(chip);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-
-    const dt = new DataTransfer();
-    const copyEvent = new ClipboardEvent('copy', { bubbles: true, cancelable: true, clipboardData: dt });
-    canvas.dispatchEvent(copyEvent);
-    return dt.getData('text/plain');
-  });
-  if (copiedText !== '{{ part.nom }}') {
-    throw new Error(`Copiar el xip hauria de posar "{{ part.nom }}" al porta-retalls, s'ha obtingut: ${JSON.stringify(copiedText)}`);
+  // Undo across a tab switch: the undo/redo history is shared regardless
+  // of which tab produced an edit (useEditHistory.js).
+  console.log('➡️ 4. Desfer després d\'escriure a Visual i canviar a Codi...');
+  await page.evaluate(() => window.__visualEditorTest.clickTab('Codi'));
+  await new Promise((r) => setTimeout(r, 300));
+  await page.keyboard.down('Control');
+  await page.keyboard.press('z');
+  await page.keyboard.up('Control');
+  await new Promise((r) => setTimeout(r, 300));
+  const textAfterUndo = await page.evaluate(() => window.store.templateText);
+  if (textAfterUndo.includes('{{ afegit_des_de_visual }}')) {
+    throw new Error('Ctrl+Z des de la pestanya Codi no ha desfet el text escrit prèviament a Visual: ' + textAfterUndo);
   }
-  console.log('  ✓ Copiar des del canvas posa el codi font Markdown/Jinja2 al porta-retalls:', JSON.stringify(copiedText));
+  console.log('  ✓ Ctrl+Z desfà un canvi fet a Visual encara que ara s\'estigui a la pestanya Codi.');
 
   // Regression: DataInspector.vue's cell-text editor modal embeds this same
   // TemplateEditor (isCellMode), which can itself open an inner modal (e.g.
@@ -190,10 +175,11 @@ async function testVisualEditor() {
   await new Promise((r) => setTimeout(r, 300));
 
   await page.evaluate(() => {
-    const canvas = Array.from(document.querySelectorAll('.editor-textarea[contenteditable="true"]')).find((el) => el.offsetParent !== null);
-    canvas.focus();
-    document.execCommand('insertText', false, ' MODIFICAT');
+    const content = Array.from(document.querySelectorAll('.code-editor-wrapper .cm-content')).find((el) => el.offsetParent !== null);
+    content.focus();
   });
+  await page.keyboard.press('End');
+  await page.keyboard.type(' MODIFICAT');
   await page.evaluate(() => {
     const btn = Array.from(document.querySelectorAll('button')).find((b) => b.title === "Insereix taula automàtica des de l'Excel" && b.offsetParent !== null);
     if (!btn) throw new Error('Botó Taula no trobat');
@@ -211,7 +197,7 @@ async function testVisualEditor() {
   await new Promise((r) => setTimeout(r, 300));
   const stateAfterFirstEscape = await page.evaluate(() => {
     const visible = Array.from(document.querySelectorAll('.modal-overlay')).filter((o) => getComputedStyle(o).display !== 'none');
-    return { count: visible.length, hasEditor: visible.some((m) => !!m.querySelector('.editor-textarea')) };
+    return { count: visible.length, hasEditor: visible.some((m) => !!m.querySelector('.code-editor-wrapper')) };
   });
   if (stateAfterFirstEscape.count !== 1 || !stateAfterFirstEscape.hasEditor) {
     throw new Error('El primer Esc hauria d\'haver tancat només el modal de Taula, deixant el de cel·la obert amb els canvis: ' + JSON.stringify(stateAfterFirstEscape));

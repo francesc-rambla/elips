@@ -21,7 +21,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import { isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
 import { useLoopContext } from '../composables/useLoopContext';
-import { useMarkdownJinjaCompiler, htmlToMarkdown, buildJinjaBlockHtml } from '../composables/useMarkdownJinjaCompiler';
+import { useMarkdownJinjaCompiler, htmlToMarkdown } from '../composables/useMarkdownJinjaCompiler';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { useEditHistory } from '../composables/useEditHistory';
 import { EditorState as CmEditorState } from '@codemirror/state';
@@ -448,6 +448,12 @@ const setScrollFraction = (el, fraction) => {
 // ============================================================================
 let codeMirrorView = null;
 const codeMirrorContainerRef = ref(null);
+// Visual tab's own CodeMirror instance (Phase A of the Visual-editor
+// rewrite) -- a second view over the exact same editorText, not a
+// contenteditable canvas. See createVisualCodeMirrorView below.
+let visualCodeMirrorView = null;
+const visualCodeMirrorContainerRef = ref(null);
+const visualTextareaRef = ref(null);
 
 const makeTextareaShim = (view) => ({
   get value() { return view.state.doc.toString(); },
@@ -649,16 +655,23 @@ const CM_SAFE_KEYMAP = cmDefaultKeymap.filter((b) => {
   return !keys.some((k) => /^Mod-(z|y)$/i.test(k) || /^Mod-Shift-z$/i.test(k));
 });
 
-const createCodeMirrorView = () => {
-  if (!codeMirrorContainerRef.value || codeMirrorView) return;
+// Shared factory for both tabs' CodeMirror instances (Phase A of the
+// Visual-tab rewrite: Visual is now a second CodeMirror view over the exact
+// same editorText, not a contenteditable canvas rebuilt from compiled HTML
+// -- see /home/frambla/.claude/plans/unified-nibbling-adleman.md). `extraExtensions`
+// is where the two tabs will keep diverging (Visual gains a growing set of
+// decoration/widget plugins phase by phase; Codi keeps today's plain
+// syntax-highlighting set) -- both share lineNumbers/lineWrapping/the safe
+// keymap/the update-listener shape, so that divergence is additive, not a
+// fork of this function.
+const createCmView = (containerEl, extraExtensions, placeholderText) => {
   const state = CmEditorState.create({
     doc: editorText.value || '',
     extensions: [
       CmLineNumbers(),
       CmEditorView.lineWrapping,
-      jinjaHighlightPlugin,
-      jinjaTagMatchPlugin,
-      cmPlaceholder('Escriu o edita la teva plantilla Jinja2 en Markdown aquí...'),
+      ...extraExtensions,
+      cmPlaceholder(placeholderText),
       CmKeymap.of(CM_SAFE_KEYMAP),
       CmEditorView.updateListener.of((update) => {
         if (update.docChanged) {
@@ -674,19 +687,44 @@ const createCodeMirrorView = () => {
       }),
     ],
   });
-  codeMirrorView = new CmEditorView({ state, parent: codeMirrorContainerRef.value });
-  codeMirrorView.scrollDOM.addEventListener('scroll', saveScrollState);
+  const view = new CmEditorView({ state, parent: containerEl });
+  view.scrollDOM.addEventListener('scroll', saveScrollState);
+  return view;
+};
+
+const createCodeMirrorView = () => {
+  if (!codeMirrorContainerRef.value || codeMirrorView) return;
+  codeMirrorView = createCmView(codeMirrorContainerRef.value, [jinjaHighlightPlugin, jinjaTagMatchPlugin], 'Escriu o edita la teva plantilla Jinja2 en Markdown aquí...');
   textareaRef.value = makeTextareaShim(codeMirrorView);
 };
 
-// Applies an editorText change that originated OUTSIDE CodeMirror (e.g. a
-// Visual-tab edit synced via syncVisualToCode(), an undo/redo snapshot, a
-// version-history restore) into the live view -- the shim's own `.value`
-// setter already no-ops when the text already matches (the common case:
-// this fires right after CodeMirror's OWN updateListener above set
-// editorText.value to match what CodeMirror already holds).
+// Visual tab, Phase A: looks exactly like Codi for now (same highlighting/
+// tag-matching plugins, no rich decorations yet) -- later phases add
+// widget/decoration extensions here without touching the Codi instance.
+const createVisualCodeMirrorView = () => {
+  if (!visualCodeMirrorContainerRef.value || visualCodeMirrorView) return;
+  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaHighlightPlugin, jinjaTagMatchPlugin], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
+  visualTextareaRef.value = makeTextareaShim(visualCodeMirrorView);
+};
+
+// The shim (.value/.selectionStart/.setSelectionRange/.scrollTop/.contentDOM
+// -- see makeTextareaShim) for whichever tab is currently active. Now that
+// both tabs are CodeMirror, every function that used to branch
+// activeEditorTab.value === 'code' ? (textarea API) : (contenteditable DOM)
+// converges on this single shim instead, parameterized only by which view
+// is live.
+const activeShim = () => (activeEditorTab.value === 'code' ? textareaRef.value : visualTextareaRef.value);
+const activeCmView = () => (activeEditorTab.value === 'code' ? codeMirrorView : visualCodeMirrorView);
+
+// Applies an editorText change that originated OUTSIDE a given CodeMirror
+// view (an edit made in the OTHER tab, an undo/redo snapshot, a
+// version-history restore, a modal's apply) into that view -- the shim's
+// own `.value` setter already no-ops when the text already matches (the
+// common case: this fires right after the view's OWN updateListener above
+// set editorText.value to match what it already holds).
 watch(editorText, (newVal) => {
   if (textareaRef.value) textareaRef.value.value = newVal;
+  if (visualTextareaRef.value) visualTextareaRef.value.value = newVal;
 });
 
 // Check if document generation is ready to run
@@ -1114,8 +1152,13 @@ const restoreSelection = () => {
 };
 
 // Formatting commands for Code Mode
+// Formats editorText via a plain string splice against whichever tab is
+// active's shim (both tabs are CodeMirror since Phase A of the
+// Visual-editor rewrite -- there is no longer a separate contenteditable
+// document.execCommand path for the Visual tab; formatDoc/insertList/
+// formatBlock below all funnel into this one implementation now).
 const formatCodeText = (cmd, arg = null) => {
-  const el = textareaRef.value;
+  const el = activeShim();
   if (!el) return;
   el.focus();
   const start = el.selectionStart || 0;
@@ -1162,50 +1205,16 @@ const formatCodeText = (cmd, arg = null) => {
   }
 };
 
-const formatDoc = (cmd) => {
-  if (activeEditorTab.value === 'code') {
-    formatCodeText(cmd);
-    return;
-  }
-  if (canvasRef.value) {
-    canvasRef.value.focus();
-    restoreSelection();
-  }
-  document.execCommand(cmd, false, null);
-  saveSelection();
-  syncVisualToCode();
-};
+const formatDoc = (cmd) => formatCodeText(cmd);
 
 const insertList = (type) => {
   const cmd = (type === 'ordered' || type === 'insertOrderedList') ? 'insertOrderedList' : 'insertUnorderedList';
-  if (activeEditorTab.value === 'code') {
-    formatCodeText(cmd);
-    return;
-  }
-  if (canvasRef.value) {
-    canvasRef.value.focus();
-    restoreSelection();
-  }
-  document.execCommand(cmd, false, null);
-  saveSelection();
-  syncVisualToCode();
+  formatCodeText(cmd);
 };
 
 const formatBlock = (headerTag) => {
   if (!headerTag) return;
-  if (activeEditorTab.value === 'code') {
-    formatCodeText('formatBlock', headerTag);
-    return;
-  }
-  if (canvasRef.value) {
-    canvasRef.value.focus();
-    restoreSelection();
-  }
-  const cleanTag = headerTag.toUpperCase().replace(/[<>]/g, '');
-  const tag = `<${cleanTag}>`;
-  document.execCommand('formatBlock', false, tag);
-  saveSelection();
-  syncVisualToCode();
+  formatCodeText('formatBlock', headerTag);
 };
 
 // Variable Modals Trigger
@@ -1290,87 +1299,21 @@ const openMathModal = (node = null) => {
   isMathModalOpen.value = true;
 };
 
-// MathModal.vue owns the expr/type form state and reports the final values on
-// apply; inserting/updating the .latex-chip in the canvas (or wrapping the
-// expression in $.../$$...$$ in Code mode) stays here since it needs
-// activeMathNode/savedRange/canvasRef — canvas-level state.
+// MathModal.vue owns the expr/type form state and reports the final values
+// on apply; inserting $.../$$...$$ as a precise text splice into whichever
+// tab's shim is active stays here (Phase A of the Visual-editor rewrite --
+// activeMathNode, set only by double-clicking an existing .latex-chip, is
+// never set today since no such chip exists yet; Phase E adds the KaTeX
+// widget rendered on top of this same raw text).
 const onMathApply = ({ expr, type }) => {
-  if (!expr) {
-    if (activeMathNode) {
-      activeMathNode.remove();
-      syncVisualToCode();
-    }
-    return;
-  }
-
-  let render = '';
-  try {
-    // Replace Jinja2 placeholders with a clean LaTeX representation for editor preview
-    const cleanExpr = expr.replace(/\{\{\s*([^}]+)\s*\}\}/g, (match, p1) => {
-      const escaped = p1.trim().replace(/_/g, '\\_');
-      return `\\text{[${escaped}]}`;
-    });
-    render = katex.renderToString(cleanExpr, { displayMode: type === 'display', throwOnError: false });
-  } catch (_) {
-    render = expr;
-  }
-
-  if (activeEditorTab.value === 'visual') {
-    restoreSelection();
-
-    const tagName = type === 'display' ? 'div' : 'span';
-    const typeChanged = activeMathNode && activeMathNode.tagName.toLowerCase() !== tagName;
-
-    if (activeMathNode && !typeChanged) {
-      activeMathNode.setAttribute('data-expr', expr);
-      activeMathNode.setAttribute('data-type', type);
-      activeMathNode.className = `latex-chip ${type}-math`;
-      activeMathNode.innerHTML = render;
-    } else {
-      const el = document.createElement(tagName);
-      el.className = `latex-chip ${type}-math`;
-      el.setAttribute('contenteditable', 'false');
-      el.setAttribute('data-expr', expr);
-      el.setAttribute('data-type', type);
-      el.innerHTML = render;
-
-      el.ondblclick = (e) => {
-        e.stopPropagation();
-        openMathModal(el);
-      };
-
-      if (activeMathNode && typeChanged) {
-        activeMathNode.parentNode.replaceChild(el, activeMathNode);
-      } else {
-        const space = document.createTextNode(' ');
-        if (savedRange) {
-          savedRange.deleteContents();
-          savedRange.insertNode(el);
-          el.after(space);
-        } else {
-          canvasRef.value.appendChild(el);
-          canvasRef.value.appendChild(space);
-        }
-
-        const newRange = document.createRange();
-        newRange.setStart(space, 1);
-        newRange.collapse(true);
-        const sel = window.getSelection();
-        if (sel) {
-          sel.removeAllRanges();
-          sel.addRange(newRange);
-        }
-        savedRange = newRange.cloneRange();
-      }
-    }
-    syncVisualToCode();
-  } else if (textareaRef.value) {
-    const txt = textareaRef.value;
-    const start = txt.selectionStart;
-    const end = txt.selectionEnd;
-    const wrapExpr = type === 'display' ? `$$\n${expr}\n$$` : `$${expr}$`;
-    editorText.value = editorText.value.substring(0, start) + wrapExpr + editorText.value.substring(end);
-  }
+  if (!expr) return;
+  const el = activeShim();
+  if (!el) return;
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  const wrapExpr = type === 'display' ? `$$\n${expr}\n$$` : `$${expr}$`;
+  editorText.value = editorText.value.substring(0, start) + wrapExpr + editorText.value.substring(end);
+  nextTick(() => el.setSelectionRange(start + wrapExpr.length, start + wrapExpr.length));
 };
 
 
@@ -1486,121 +1429,52 @@ const openTableModal = (table = null) => {
 };
 
 // TableModal.vue owns the mode/columns/array/iterator form state and
-// computes the <table> HTML on apply; inserting it into (or replacing a node
-// in) the canvas, and re-wiring the resulting th click / dblclick handlers,
-// stays here since it needs activeEditTableNode/canvasRef — canvas-level state.
+// computes the resulting <table> HTML on apply. Phase A of the
+// Visual-editor rewrite: there's no canvas/table DOM to insert that HTML
+// into anymore (activeEditTableNode, set only by double-clicking an
+// existing rendered table, is never set today since none exists yet), so
+// it's converted to Markdown+Jinja2 source *once* here via the existing
+// htmlToMarkdown/dynamicTableToMarkdown/transposedTableToMarkdown
+// machinery (useMarkdownJinjaCompiler.js) — a one-shot conversion of
+// freshly-generated content, not a repeated round-trip of live-edited
+// content, so it doesn't reintroduce the fidelity problem this rewrite is
+// fixing. Phase F replaces this with a real table widget built directly
+// from TableModal's structured config, without an HTML detour at all.
 const onTableApply = (html) => {
-  if (activeEditorTab.value !== 'visual') return;
-  restoreSelection();
-  if (activeEditTableNode) {
-    const div = document.createElement('div');
-    div.innerHTML = html;
-    const newTable = div.querySelector('table');
-    const newEditBtn = div.querySelector('.table-edit-btn');
-
-    newTable.querySelectorAll('th').forEach(th => {
-      th.onclick = () => toggleTableAlignment(th);
-    });
-
-    newTable.ondblclick = (e) => {
-      e.stopPropagation();
-      openTableModal(newTable);
-    };
-    if (newEditBtn) newEditBtn.onclick = (e) => { e.stopPropagation(); openTableModal(newTable); };
-
-    // TABLE_EDIT_BTN_HTML is a sibling right before <table>, not a
-    // descendant — replaceChild below only swaps the <table> node itself,
-    // so its old edit-button sibling (if any) needs removing and the new
-    // one inserting in the real DOM separately.
-    const oldEditBtn = activeEditTableNode.previousElementSibling;
-    if (oldEditBtn?.classList.contains('table-edit-btn')) oldEditBtn.remove();
-    if (newEditBtn) activeEditTableNode.parentNode.insertBefore(newEditBtn, activeEditTableNode);
-
-    activeEditTableNode.parentNode.replaceChild(newTable, activeEditTableNode);
-  } else {
-    document.execCommand('insertHTML', false, html);
-    nextTick(() => {
-      canvasRef.value.querySelectorAll('table').forEach(table => {
-        table.querySelectorAll('th').forEach(th => {
-          th.onclick = () => toggleTableAlignment(th);
-        });
-        table.ondblclick = (e) => {
-          e.stopPropagation();
-          openTableModal(table);
-        };
-        const editBtn = table.previousElementSibling;
-        if (editBtn?.classList.contains('table-edit-btn')) {
-          editBtn.onclick = (e) => { e.stopPropagation(); openTableModal(table); };
-        }
-      });
-    });
-  }
-  syncVisualToCode();
+  const el = activeShim();
+  if (!el) return;
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = html;
+  const tableMarkdown = htmlToMarkdown(wrapper);
+  if (!tableMarkdown) return;
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  const insertText = `\n\n${tableMarkdown.trim()}\n\n`;
+  editorText.value = editorText.value.substring(0, start) + insertText + editorText.value.substring(end);
+  nextTick(() => el.setSelectionRange(start + insertText.length, start + insertText.length));
 };
-
-
-// Apply Variable Chip to canvas or textarea
+// Inserts/edits a {{ expr | filter }} as a precise text splice into
+// whichever tab's shim is active (Phase A of the Visual-editor rewrite --
+// there is no canvas/chip DOM to write into anymore; Phase C adds the
+// variable-chip *widget* rendered on top of this same raw text).
+// activeEditNode (set only by double-clicking an existing .j-var-chip) is
+// never set today since no such chip exists yet -- always the "insert
+// fresh" path until Phase C.
 const applyVariable = () => {
   const expr = modalExpr.value.trim();
   const filter = computedModalFilter.value.trim();
   if (!expr) {
-    if (activeEditNode) {
-      activeEditNode.remove();
-      syncVisualToCode();
-    }
     isVarModalOpen.value = false;
     return;
   }
 
   const rawJinja = filter ? `{{ ${expr} | ${filter} }}` : `{{ ${expr} }}`;
-  const displayLabel = resolveFieldLabel(filter ? `${expr} | ${filter}` : `${expr}`);
-
-  if (activeEditorTab.value === 'visual') {
-    restoreSelection();
-    if (activeEditNode) {
-      activeEditNode.setAttribute('data-raw', expr + (filter ? `|${filter}` : ''));
-      activeEditNode.textContent = displayLabel;
-    } else {
-      const chip = document.createElement('span');
-      chip.className = 'j-var-chip';
-      chip.setAttribute('contenteditable', 'false');
-      chip.setAttribute('data-raw', expr + (filter ? `|${filter}` : ''));
-      chip.textContent = displayLabel;
-      
-      chip.ondblclick = (e) => {
-        e.stopPropagation();
-        openVarModal(chip);
-      };
-
-      const space = document.createTextNode(' ');
-      if (savedRange) {
-        savedRange.deleteContents();
-        savedRange.insertNode(chip);
-        chip.after(space);
-      } else {
-        canvasRef.value.appendChild(chip);
-        canvasRef.value.appendChild(space);
-      }
-
-      // Position caret immediately after the space following the variable chip
-      const newRange = document.createRange();
-      newRange.setStart(space, 1);
-      newRange.collapse(true);
-      const sel = window.getSelection();
-      if (sel) {
-        sel.removeAllRanges();
-        sel.addRange(newRange);
-      }
-      savedRange = newRange.cloneRange();
-    }
-    syncVisualToCode();
-  } else {
-    if (textareaRef.value) {
-      const txt = textareaRef.value;
-      const start = txt.selectionStart;
-      const end = txt.selectionEnd;
-      editorText.value = editorText.value.substring(0, start) + rawJinja + editorText.value.substring(end);
-    }
+  const el = activeShim();
+  if (el) {
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    editorText.value = editorText.value.substring(0, start) + rawJinja + editorText.value.substring(end);
+    nextTick(() => el.setSelectionRange(start + rawJinja.length, start + rawJinja.length));
   }
   isVarModalOpen.value = false;
 };
@@ -1623,105 +1497,24 @@ const sidebarInsertLoop = (subKey, fullPath, iteratorName, fields) => {
   sidebarCopyInsert(blockCode);
 };
 
-// Sidebar copy insert variable / block handler
+// Sidebar copy insert variable / block handler -- a precise text splice
+// into whichever tab's shim is active (Phase A of the Visual-editor
+// rewrite: both tabs are CodeMirror now, so the DOM-Range insertion this
+// used to do for the Visual tab specifically no longer applies; Phase C/D
+// render the chip/block widgets on top of this same raw text).
 const sidebarCopyInsert = (expr) => {
   const isBlock = expr.includes('{%') || expr.includes('\n');
-
-  if (activeEditorTab.value === 'code') {
-    if (textareaRef.value) {
-      const txt = textareaRef.value;
-      const start = txt.selectionStart || 0;
-      const end = txt.selectionEnd || 0;
-      const insertText = isBlock ? `\n\n${expr.trim()}\n\n` : (expr.startsWith('{{') ? expr : `{{ ${expr} }}`);
-      editorText.value = editorText.value.substring(0, start) + insertText + editorText.value.substring(end);
-      setTimeout(() => {
-        txt.focus();
-        txt.selectionStart = txt.selectionEnd = start + insertText.length;
-        updateActiveLoopContext();
-      }, 50);
-    }
-  } else {
-    // Visual Mode DOM Range Insertion
-    restoreSelection();
-    
-    if (isBlock) {
-      // 1. Insert Block (Jinja loop or condition block)
-      const html = compileMarkdownToHtml(expr);
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = html;
-      
-      const frag = document.createDocumentFragment();
-      let lastNode = null;
-      while (tempDiv.firstChild) {
-        lastNode = tempDiv.firstChild;
-        frag.appendChild(lastNode);
-      }
-      
-      if (savedRange && canvasRef.value && canvasRef.value.contains(savedRange.commonAncestorContainer)) {
-        savedRange.deleteContents();
-        savedRange.insertNode(frag);
-      } else if (canvasRef.value) {
-        canvasRef.value.appendChild(frag);
-      }
-      
-      if (lastNode) {
-        const newRange = document.createRange();
-        newRange.setStartAfter(lastNode);
-        newRange.collapse(true);
-        const sel = window.getSelection();
-        if (sel) {
-          sel.removeAllRanges();
-          sel.addRange(newRange);
-        }
-        savedRange = newRange.cloneRange();
-      }
-    } else {
-      // 2. Insert Single Variable Chip
-      let clean = expr.replace(/^\{\{\s*/, '').replace(/\s*\}\}$/, '').trim();
-      const parts = clean.split('|');
-      const varRaw = parts[0].trim();
-      const filterRaw = parts.slice(1).join('|').trim();
-      
-      const chip = document.createElement('span');
-      chip.className = 'j-var-chip';
-      chip.setAttribute('contenteditable', 'false');
-      chip.setAttribute('data-raw', varRaw + (filterRaw ? `|${filterRaw}` : ''));
-      chip.textContent = resolveFieldLabel(clean);
-      
-      chip.ondblclick = (e) => {
-        e.stopPropagation();
-        openVarModal(chip);
-      };
-
-      const space = document.createTextNode(' ');
-      
-      if (savedRange && canvasRef.value && canvasRef.value.contains(savedRange.commonAncestorContainer)) {
-        savedRange.deleteContents();
-        savedRange.insertNode(chip);
-        chip.after(space);
-      } else if (canvasRef.value) {
-        canvasRef.value.appendChild(chip);
-        canvasRef.value.appendChild(space);
-      }
-
-      const newRange = document.createRange();
-      newRange.setStart(space, 1);
-      newRange.collapse(true);
-      const sel = window.getSelection();
-      if (sel) {
-        sel.removeAllRanges();
-        sel.addRange(newRange);
-      }
-      savedRange = newRange.cloneRange();
-    }
-
-    // Sync visual canvas DOM back to Markdown editorText
-    syncVisualToCode();
-    
-    nextTick(() => {
-      updateActiveLoopContext();
-    });
-  }
+  const txt = activeShim();
+  if (!txt) return;
+  const start = txt.selectionStart || 0;
+  const end = txt.selectionEnd || 0;
+  const insertText = isBlock ? `\n\n${expr.trim()}\n\n` : (expr.startsWith('{{') ? expr : `{{ ${expr} }}`);
+  editorText.value = editorText.value.substring(0, start) + insertText + editorText.value.substring(end);
+  setTimeout(() => {
+    txt.focus();
+    txt.selectionStart = txt.selectionEnd = start + insertText.length;
+    updateActiveLoopContext();
+  }, 50);
 };
 
 // Insert variables at cursor inside the IF condition box in the modal
@@ -1768,107 +1561,33 @@ const insertBranchAtCursorOrFooter = (ifBlock, branchElement, bodyElement) => {
   }
 };
 
-// BlockModal.vue owns the expr/forItemVar/forArrayVar form state and reports
-// the final expression string on apply; inserting/updating the
-// .jinja-block/.j-branch DOM in the canvas stays here since it needs
-// activeEditNode/activeBlockForNewBranch/savedRange/canvasRef — canvas-level
-// state, and this logic is also reused by the canvas's own rendered
-// "+ELIF"/"+ELSE" button handlers below.
+// BlockModal.vue owns the expr/forItemVar/forArrayVar form state and
+// reports the final expression string on apply. Phase A of the
+// Visual-editor rewrite: a NEW for/if/macro/set is a precise text splice
+// at the cursor (block-layout shape, each tag alone on its own line,
+// matching what the compiler's line-based scanner already expects) --
+// there's no canvas/block DOM to build/insert into anymore. Editing an
+// EXISTING block's condition (activeEditNode) or adding an elif/else
+// branch to one (activeBlockForNewBranch) both require first locating
+// that block in the source text, which needs the same block/line-tracking
+// machinery Phase D builds properly; neither is reachable today anyway,
+// since both are only ever set by clicking on an existing rendered block,
+// and no block widgets exist yet.
 const onBlockApply = (expr) => {
-  if (!expr) return;
+  if (!expr || blockType.value === 'elif' || activeEditNode) {
+    isBlockModalOpen.value = false;
+    return;
+  }
 
-  if (activeEditorTab.value === 'visual') {
-    restoreSelection();
-    
-    if (activeEditNode) {
-      activeEditNode.setAttribute('data-cond', expr);
-      if (activeEditNode.classList.contains('j-set-chip')) {
-        // A leaf chip (icon + two label spans, see buildSetInlineChipHtml in
-        // useMarkdownJinjaCompiler.js), not a plain text node like
-        // .j-cond-text -- a blind textContent assignment below would wipe
-        // the icon too. Update the two label spans in place instead.
-        const eqIdx = expr.indexOf('=');
-        const nameOnly = (eqIdx > -1 ? expr.slice(0, eqIdx) : expr).trim();
-        const collapsedEl = activeEditNode.querySelector('.j-cond-text-collapsed');
-        const expandedEl = activeEditNode.querySelector('.j-cond-text-expanded');
-        if (collapsedEl) collapsedEl.textContent = nameOnly;
-        if (expandedEl) expandedEl.textContent = expr;
-      } else {
-        activeEditNode.textContent = expr;
-      }
-      syncVisualToCode();
-    } else if (blockType.value === 'elif') {
-      if (activeBlockForNewBranch) {
-        const branch = document.createElement('div');
-        branch.className = 'j-branch';
-        branch.setAttribute('data-type', 'elif');
-        branch.innerHTML = `
-          <div style="display:flex;align-items:center;gap:4px;"><span style="font-weight:700;color:#b45309;">O SI:</span> <span class="j-cond-text" data-cond="${expr}">${expr}</span></div>
-          <button class="j-btn-mini btn-branch-trash" style="background-color:var(--color-danger);color:white;border:none;display:inline-flex;align-items:center;justify-content:center;" title="Elimina la branca"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
-        `;
-        
-        branch.querySelector('.j-cond-text').onclick = (e) => {
-          e.stopPropagation();
-          openBlockModal('elif', e.target);
-        };
-        
-        branch.querySelector('.btn-branch-trash').onclick = () => {
-          if (branch.nextElementSibling && branch.nextElementSibling.classList.contains('j-content')) {
-            branch.nextElementSibling.remove();
-          }
-          branch.remove();
-          syncVisualToCode();
-        };
-        
-        const body = document.createElement('div');
-        body.className = 'j-content';
-        body.setAttribute('contenteditable', 'true');
-        body.innerHTML = '<br>';
-        
-        insertBranchAtCursorOrFooter(activeBlockForNewBranch, branch, body);
-        syncVisualToCode();
-      }
-    } else {
-      // Built via the exact same buildJinjaBlockHtml the compiler itself
-      // uses (useMarkdownJinjaCompiler.js) for every for/if/macro/set block
-      // compiled from source, rather than a hand-duplicated copy of that
-      // markup here (which used to drift: e.g. .btn-layout was never wired
-      // by the old hand-built version, so clicking "Inline" on a
-      // never-yet-resynced new block silently did nothing). One
-      // implementation of "what a block looks like" -- this needs no
-      // per-button wiring at all, because the syncCodeToVisual() rebuild
-      // below (from the now-current source) wires every button the exact
-      // same way an existing, compiled-from-source block's already are.
-      const html = buildJinjaBlockHtml(blockType.value, [{ keyword: blockType.value, cond: expr, body: '' }], compileMarkdownToHtml);
-      const wrapper = document.createElement('div');
-      wrapper.innerHTML = html;
-      const block = wrapper.firstElementChild;
-
-      if (savedRange) {
-        savedRange.insertNode(block);
-      } else {
-        canvasRef.value.appendChild(block);
-      }
-      ensureTrailingEditableLine(canvasRef.value);
-      syncVisualToCode();
-      syncCodeToVisual();
-      // macro/set default to collapsed (see COLLAPSIBLE_BLOCK_TYPES) --
-      // right after inserting one fresh, that would hide the very body the
-      // user presumably wants to start typing into immediately. Setting
-      // data-collapsed on `block` itself wouldn't survive the
-      // syncCodeToVisual() rebuild just above (it replaces the canvas's
-      // whole innerHTML from source, and collapse state isn't part of the
-      // source text) -- so instead, re-find the block by type+condition in
-      // the now-rebuilt canvas and expand it there. Matches by data-cond
-      // rather than any other identity, since that's the one thing
-      // guaranteed to still be exactly `expr` post-rebuild; a pre-existing
-      // block sharing the exact same signature is a rare enough coincidence
-      // to not be worth guarding against.
-      if (blockType.value === 'macro' || blockType.value === 'set') {
-        const inserted = Array.from(canvasRef.value.querySelectorAll(`.jinja-block[data-type="${blockType.value}"]`)).find((el) => el.getAttribute('data-cond') === expr);
-        if (inserted) inserted.setAttribute('data-collapsed', 'false');
-      }
-    }
+  const closeTagFor = { for: 'endfor', if: 'endif', macro: 'endmacro', set: 'endset' };
+  const endTag = closeTagFor[blockType.value] || 'endif';
+  const blockText = `{% ${blockType.value} ${expr} %}\n\n{% ${endTag} %}`;
+  const el = activeShim();
+  if (el) {
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    editorText.value = editorText.value.substring(0, start) + blockText + editorText.value.substring(end);
+    nextTick(() => el.setSelectionRange(start + blockText.length, start + blockText.length));
   }
   isBlockModalOpen.value = false;
 };
@@ -2290,39 +2009,30 @@ const syncCodeToVisual = () => {
 };
 
 // Handle Tab Switches
+// Both tabs are CodeMirror over the same editorText since Phase A of the
+// Visual-editor rewrite, so "caret position" is already the same character
+// offset in both -- no more translating between a DOM Range and a source
+// offset (sourceOffsetFromVisualCaret/visualCaretFromSourceOffset), the
+// fragile part of this function before. Text itself never needs
+// resyncing here either: both views' own updateListener + the shared
+// watch(editorText, ...) above already keep it identical at all times.
 const switchTab = (tab) => {
   if (tab === activeEditorTab.value) return;
 
-  // Capture the caret's position in terms of editorText — the one thing
-  // both representations share — *before* switching, so it can be
-  // translated into the new tab's own terms once it's rendered. Same for
-  // the scroll fraction: cursor position alone doesn't guarantee landing
-  // at the same *scroll depth* the user was reading at (e.g. they scrolled
-  // without moving the caret), so both are carried across independently.
-  const fromEl = tab === 'code' ? canvasRef.value : textareaRef.value;
-  const sourceOffset = tab === 'code'
-    ? sourceOffsetFromVisualCaret()
-    : (textareaRef.value?.selectionStart ?? 0);
-  const scrollFraction = getScrollFraction(fromEl);
+  const fromShim = activeShim();
+  const sourceOffset = fromShim?.selectionStart ?? 0;
+  const scrollFraction = getScrollFraction(fromShim);
 
-  if (tab === 'code') {
-    syncVisualToCode();
-  } else {
-    syncCodeToVisual();
-  }
   activeEditorTab.value = tab;
 
   nextTick(() => {
-    if (tab === 'code' && textareaRef.value) {
-      textareaRef.value.focus();
-      textareaRef.value.setSelectionRange(sourceOffset, sourceOffset);
+    const toShim = tab === 'code' ? textareaRef.value : visualTextareaRef.value;
+    if (toShim) {
+      toShim.focus();
+      toShim.setSelectionRange(sourceOffset, sourceOffset);
       // Set *after* focus/selection — a browser's own "scroll the caret
       // into view" reaction to that would otherwise override it.
-      setScrollFraction(textareaRef.value, scrollFraction);
-    } else if (tab === 'visual' && canvasRef.value) {
-      canvasRef.value.focus();
-      visualCaretFromSourceOffset(sourceOffset);
-      setScrollFraction(canvasRef.value, scrollFraction);
+      setScrollFraction(toShim, scrollFraction);
     }
     updateActiveLoopContext();
   });
@@ -2378,99 +2088,15 @@ const moveCaretAfter = (el) => {
 };
 
 // Keystrokes observers inside canvas to handle atomic chips & backspaces properly
-const onCanvasKeyDown = (e) => {
-  const sel = window.getSelection();
-  if (!sel || !sel.anchorNode) return;
-  
-  const currentChip = getParentAtomicChip(sel.anchorNode);
-  
-  // If caret is inside or on an atomic chip element
-  if (currentChip) {
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-      e.preventDefault();
-      moveCaretAfter(currentChip);
-      return;
-    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      moveCaretBefore(currentChip);
-      return;
-    } else if (e.key === 'Backspace' || e.key === 'Delete') {
-      e.preventDefault();
-      currentChip.remove();
-      syncVisualToCode();
-      return;
-    }
-  }
-
-  const node = sel.anchorNode;
-  const offset = sel.anchorOffset;
-
-  if (e.key === 'ArrowRight') {
-    if (node.nodeType === Node.TEXT_NODE && offset === node.textContent.length) {
-      if (isAtomicChip(node.nextSibling)) {
-        e.preventDefault();
-        moveCaretAfter(node.nextSibling);
-        return;
-      }
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const childAtOffset = node.childNodes[offset];
-      if (isAtomicChip(childAtOffset)) {
-        e.preventDefault();
-        moveCaretAfter(childAtOffset);
-        return;
-      }
-    }
-  } else if (e.key === 'ArrowLeft') {
-    if (node.nodeType === Node.TEXT_NODE && offset === 0) {
-      if (isAtomicChip(node.previousSibling)) {
-        e.preventDefault();
-        moveCaretBefore(node.previousSibling);
-        return;
-      }
-    } else if (node.nodeType === Node.ELEMENT_NODE && offset > 0) {
-      const childBeforeOffset = node.childNodes[offset - 1];
-      if (isAtomicChip(childBeforeOffset)) {
-        e.preventDefault();
-        moveCaretBefore(childBeforeOffset);
-        return;
-      }
-    }
-  } else if (e.key === 'Backspace') {
-    if (node.nodeType === Node.TEXT_NODE && offset === 0) {
-      if (isAtomicChip(node.previousSibling)) {
-        e.preventDefault();
-        node.previousSibling.remove();
-        syncVisualToCode();
-        return;
-      }
-    } else if (node.nodeType === Node.ELEMENT_NODE && offset > 0) {
-      const target = node.childNodes[offset - 1];
-      if (isAtomicChip(target)) {
-        e.preventDefault();
-        target.remove();
-        syncVisualToCode();
-        return;
-      }
-    }
-  } else if (e.key === 'Delete') {
-    if (node.nodeType === Node.TEXT_NODE && offset === node.textContent.length) {
-      if (isAtomicChip(node.nextSibling)) {
-        e.preventDefault();
-        node.nextSibling.remove();
-        syncVisualToCode();
-        return;
-      }
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const target = node.childNodes[offset];
-      if (isAtomicChip(target)) {
-        e.preventDefault();
-        target.remove();
-        syncVisualToCode();
-        return;
-      }
-    }
-  }
-};
+// onCanvasKeyDown (atomic-chip arrow-key/backspace navigation for the old
+// contenteditable canvas) was deleted in Phase A of the Visual-editor
+// rewrite along with the canvas itself -- CodeMirror's own atomicRanges
+// facet is the planned replacement once Phase C/D introduce chip/block
+// widgets to navigate around (see the phased plan). isAtomicChip/
+// getParentAtomicChip/moveCaretBefore/moveCaretAfter are left in place,
+// unreachable for now (still referenced by the dead-but-not-yet-deleted
+// syncCodeToVisual()/getPositionAtomicAncestor() chain below, cleaned up
+// together in Phase H).
 
 const ensureTrailingEditableLine = (canvas) => {
   if (!canvas) return;
@@ -2489,83 +2115,13 @@ const ensureTrailingEditableLine = (canvas) => {
   }
 };
 
-const moveCaretToElementEnd = (el) => {
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  range.collapse(false);
-  const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(range);
-  saveSelection();
-};
-
-const onCanvasClick = (e) => {
-  saveSelection();
-  updateActiveLoopContext();
-  
-  if (canvasRef.value) {
-    ensureTrailingEditableLine(canvasRef.value);
-    const lastChild = canvasRef.value.lastElementChild;
-    if (lastChild) {
-      const rect = lastChild.getBoundingClientRect();
-      if (e.clientY > rect.bottom) {
-        moveCaretToElementEnd(lastChild);
-      }
-    }
-  }
-};
-
-const onCanvasMouseUp = () => {
-  saveSelection();
-  updateActiveLoopContext();
-};
-
-// Markdown/Jinja2 is the priority representation for the clipboard, not HTML:
-// copying/cutting from the canvas puts the underlying source text on the
-// clipboard (not styled HTML), and pasted HTML/rich text is always converted
-// to Markdown via htmlToMarkdown *before* it ever enters editorText — never
-// preserved as HTML inside the contenteditable DOM. This replaces the old
-// sanitizePasteHtml DOM-surgery approach entirely.
-const onCanvasCopyOrCut = (e) => {
-  const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return; // nothing selected: let default happen
-  const range = sel.getRangeAt(0);
-  const md = htmlToMarkdown(range.cloneContents());
-  e.clipboardData.setData('text/plain', md);
-  e.preventDefault();
-  if (e.type === 'cut') {
-    range.deleteContents();
-    saveSelection();
-    syncVisualToCode();
-  }
-};
-
-const onCanvasPaste = (e) => {
-  e.preventDefault();
-  if (!canvasRef.value) return;
-
-  const html = e.clipboardData.getData('text/html');
-  let pastedMarkdown;
-  if (html) {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    pastedMarkdown = htmlToMarkdown(doc.body);
-  } else {
-    pastedMarkdown = e.clipboardData.getData('text/plain') || '';
-  }
-  if (!pastedMarkdown) return;
-
-  const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0) return;
-
-  const insertAt = sourceOffsetFromVisualCaret();
-
-  syncVisualToCode(); // ensure editorText reflects the canvas exactly before splicing
-  const current = editorText.value || '';
-  const at = Math.min(insertAt, current.length);
-  editorText.value = current.slice(0, at) + pastedMarkdown + current.slice(at);
-
-  nextTick(() => syncCodeToVisual());
-};
+// moveCaretToElementEnd/onCanvasClick/onCanvasMouseUp/onCanvasCopyOrCut/
+// onCanvasPaste were deleted in Phase A along with the contenteditable
+// canvas: CodeMirror's native selection/click and clipboard handling
+// (already relied on, unmodified, by the Codi tab) covers all of this for
+// the Visual tab automatically now -- no custom copy/cut/paste code needed
+// (Markdown/Jinja2 source text is what a CodeMirror view's clipboard
+// already contains, never HTML).
 
 // --- Pandoc YAML Metadata Modal State & Logic ---
 const isMetadataModalOpen = ref(false);
@@ -2640,24 +2196,14 @@ const openSpecialCharModal = () => {
 
 const insertSpecialChar = (item) => {
   const char = item.char;
-  if (activeEditorTab.value === 'visual') {
-    restoreSelection();
-    document.execCommand('insertText', false, char);
-    saveSelection();
-    syncVisualToCode();
-  } else {
-    if (textareaRef.value) {
-      const el = textareaRef.value;
-      el.focus();
-      const start = el.selectionStart || 0;
-      const end = el.selectionEnd || 0;
-      const text = editorText.value || '';
-      editorText.value = text.substring(0, start) + char + text.substring(end);
-      nextTick(() => {
-        el.setSelectionRange(start + char.length, start + char.length);
-        syncCodeToVisual();
-      });
-    }
+  const el = activeShim();
+  if (el) {
+    el.focus();
+    const start = el.selectionStart || 0;
+    const end = el.selectionEnd || 0;
+    const text = editorText.value || '';
+    editorText.value = text.substring(0, start) + char + text.substring(end);
+    nextTick(() => el.setSelectionRange(start + char.length, start + char.length));
   }
   isSpecialCharModalOpen.value = false;
 };
@@ -2674,7 +2220,7 @@ const handleGlobalKeyDown = (e) => {
     // for the app's whole lifetime (App.vue only CSS-hides it on other
     // tabs), so an unscoped handler would hijack Ctrl+Z away from an
     // unrelated focused input elsewhere on the page.
-    const isEditorFocused = document.activeElement === canvasRef.value || document.activeElement === textareaRef.value?.contentDOM;
+    const isEditorFocused = document.activeElement === textareaRef.value?.contentDOM || document.activeElement === visualTextareaRef.value?.contentDOM;
     if (isEditorFocused && e.key.toLowerCase() === 'z' && !e.shiftKey) {
       e.preventDefault();
       undoEdit();
@@ -2955,23 +2501,18 @@ const getCaretStorageKeys = () => {
 };
 
 // Persists only the scroll position (not the caret) — called from plain
-// scroll events, which fire far more often than selectionchange and don't
-// need the (relatively expensive) sourceOffsetFromVisualCaret() conversion
-// saveCaretState below does.
+// scroll events, which fire far more often than selectionchange.
 const saveScrollState = () => {
   if (props.isCellMode) return;
   const { pName, dName } = getCaretStorageKeys();
-  const activeEl = activeEditorTab.value === 'code' ? textareaRef.value : canvasRef.value;
-  localStorage.setItem(`${pName}:doc:${dName}:scrollFraction`, getScrollFraction(activeEl));
+  localStorage.setItem(`${pName}:doc:${dName}:scrollFraction`, getScrollFraction(activeShim()));
 };
 
 const saveCaretState = () => {
   if (props.isCellMode) return;
   const { pName, dName } = getCaretStorageKeys();
 
-  const pos = activeEditorTab.value === 'code' && textareaRef.value
-    ? (textareaRef.value.selectionStart || 0)
-    : sourceOffsetFromVisualCaret();
+  const pos = activeShim()?.selectionStart || 0;
   localStorage.setItem(`${pName}:doc:${dName}:sourceCaretOffset`, pos);
   localStorage.setItem(`${pName}:doc:${dName}:activeEditorTab`, activeEditorTab.value);
   saveScrollState();
@@ -2990,35 +2531,28 @@ const restoreCaretState = () => {
   const savedScrollFraction = parseFloat(localStorage.getItem(`${pName}:doc:${dName}:scrollFraction`) || '0');
 
   nextTick(() => {
-    if (activeEditorTab.value === 'code' && textareaRef.value) {
+    const shim = activeShim();
+    if (shim) {
       if (savedOffset) {
-        textareaRef.value.focus();
-        textareaRef.value.setSelectionRange(savedOffset, savedOffset);
+        shim.focus();
+        shim.setSelectionRange(savedOffset, savedOffset);
       }
       // Set *after* focus/selection — a browser's own "scroll the caret
       // into view" reaction to that would otherwise override it.
-      setScrollFraction(textareaRef.value, savedScrollFraction);
-    } else if (activeEditorTab.value === 'visual' && canvasRef.value) {
-      if (savedOffset) visualCaretFromSourceOffset(savedOffset);
-      setScrollFraction(canvasRef.value, savedScrollFraction);
+      setScrollFraction(shim, savedScrollFraction);
     }
   });
 };
 
 // selectionchange is a *document*-level event — it fires for any selection
 // change anywhere on the page, not just within this editor, including ones
-// this component itself causes indirectly (e.g. syncCodeToVisual()
-// rebuilding the canvas's innerHTML clears whatever selection was inside
-// it). Without this check, such a spurious event's handler would read the
-// canvas's currently-unset scrollTop/selection as if it were real and
-// overwrite the correctly-persisted values with it — this is what broke
-// reload-restored scroll position: a late data-load re-render fired well
-// after restoreCaretState() had already applied it correctly.
-const isSelectionWithinActiveEditor = () => {
-  if (activeEditorTab.value === 'code') return document.activeElement === textareaRef.value?.contentDOM;
-  const sel = window.getSelection();
-  return !!(canvasRef.value && sel && sel.rangeCount > 0 && canvasRef.value.contains(sel.getRangeAt(0).commonAncestorContainer));
-};
+// this component itself causes indirectly. Without this check, such a
+// spurious event's handler would read stale/unrelated selection state as
+// if it were real and overwrite the correctly-persisted values with it —
+// this is what broke reload-restored scroll position: a late data-load
+// re-render fired well after restoreCaretState() had already applied it
+// correctly.
+const isSelectionWithinActiveEditor = () => document.activeElement === activeShim()?.contentDOM;
 
 const handleSelectionChange = () => {
   saveSelection();
@@ -3026,15 +2560,9 @@ const handleSelectionChange = () => {
   updateActiveLoopContext();
 };
 
-const onCanvasFocus = () => {
-  saveSelection();
-  updateActiveLoopContext();
-};
-
-const onCanvasKeyUp = () => {
-  saveSelection();
-  updateActiveLoopContext();
-};
+// onCanvasFocus/onCanvasKeyUp deleted along with the contenteditable canvas
+// in Phase A -- the Visual tab's CodeMirror view's own updateListener
+// (selectionSet) already calls updateActiveLoopContext(), same as Codi's.
 
 watch(() => activeEditorTab.value, () => {
   nextTick(() => {
@@ -3072,32 +2600,17 @@ onMounted(() => {
     const rawTitle = typeof target === 'object' && target ? target.rawTitle : '';
     const textTitle = typeof target === 'object' && target ? target.text : '';
 
-    // Strategy A: Visual WYSIWYG Mode Canvas
-    if (activeEditorTab.value === 'visual' && canvasRef.value) {
-      const headings = Array.from(canvasRef.value.querySelectorAll('h1, h2, h3, h4, h5, h6'));
-      if (headings.length > 0) {
-        let el = headingIndex !== undefined ? headings[headingIndex] : null;
-        if (!el && textTitle) {
-          el = headings.find(h => h.textContent.includes(textTitle) || (rawTitle && h.textContent.includes(rawTitle)));
-        }
-        if (!el) {
-          el = headings[Math.min(lineIndex, headings.length - 1)];
-        }
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          el.classList.add('heading-highlight');
-          setTimeout(() => el.classList.remove('heading-highlight'), 2000);
-          return;
-        }
-      }
-    }
-
-    // Strategy B: Raw Code Textarea Mode
-    if (textareaRef.value) {
+    // Both tabs are CodeMirror since Phase A of the Visual-editor rewrite --
+    // scroll/select the currently-active one directly by line/char offset
+    // (the old heading-DOM-based "Visual WYSIWYG canvas" strategy is gone
+    // along with the canvas; Phase B+ can reintroduce heading-aware
+    // scrolling as a decoration-aware refinement if needed).
+    const shim = activeShim();
+    if (shim) {
       const text = editorText.value || '';
       const lines = text.split(/\r?\n/);
       let targetLine = lineIndex;
-      
+
       if (typeof target === 'object') {
         const foundIdx = lines.findIndex((l) => {
           if (!/^(#{1,6})\s+/.test(l)) return false;
@@ -3114,18 +2627,19 @@ onMounted(() => {
       for (let i = 0; i < Math.min(targetLine, lines.length); i++) {
         charOffset += lines[i].length + 1;
       }
-      
+
       const targetLineText = lines[targetLine] || '';
-      textareaRef.value.focus();
-      textareaRef.value.setSelectionRange(charOffset, charOffset + targetLineText.length);
+      shim.focus();
+      shim.setSelectionRange(charOffset, charOffset + targetLineText.length);
 
       // CodeMirror knows the real rendered (wrapped) vertical position of
       // any character offset directly — lineBlockAt() replaces the old
       // hand-measured per-line-height approximation (uniform scrollHeight/
       // totalLines) entirely, and is exact rather than approximate.
-      if (codeMirrorView) {
-        const top = codeMirrorView.lineBlockAt(Math.min(charOffset, codeMirrorView.state.doc.length)).top;
-        textareaRef.value.scrollTop = Math.max(0, top - 80);
+      const view = activeCmView();
+      if (view) {
+        const top = view.lineBlockAt(Math.min(charOffset, view.state.doc.length)).top;
+        shim.scrollTop = Math.max(0, top - 80);
       }
     }
   };
@@ -3160,7 +2674,7 @@ onMounted(() => {
     };
   }
   createCodeMirrorView();
-  syncCodeToVisual();
+  createVisualCodeMirrorView();
   window.addEventListener('keydown', handleGlobalKeyDown);
   document.addEventListener('selectionchange', handleSelectionChange);
   restoreCaretState();
@@ -3173,6 +2687,8 @@ onUnmounted(() => {
   document.removeEventListener('selectionchange', handleSelectionChange);
   codeMirrorView?.destroy();
   codeMirrorView = null;
+  visualCodeMirrorView?.destroy();
+  visualCodeMirrorView = null;
 });
 </script>
 
@@ -3304,25 +2820,15 @@ onUnmounted(() => {
       <!-- Editor Canvas Wrapper -->
       <div class="editor-container">
 
-        <!-- Visual WYSIWYG Editor Canvas -->
-        <div 
-          v-show="activeEditorTab === 'visual'"
-          ref="canvasRef"
-          class="editor-textarea" 
-          contenteditable="true"
-          style="outline: none;"
-          @input="syncVisualToCode"
-          @keydown="onCanvasKeyDown"
-          @keyup="onCanvasKeyUp"
-          @paste="onCanvasPaste"
-          @copy="onCanvasCopyOrCut"
-          @cut="onCanvasCopyOrCut"
-          @blur="saveSelection"
-          @click="onCanvasClick"
-          @mouseup="onCanvasMouseUp"
-          @focus="onCanvasFocus"
-          @scroll="saveScrollState"
-        ></div>
+        <!-- Visual tab: CodeMirror 6 (see createVisualCodeMirrorView() in
+             <script>) — a second view over the exact same editorText as the
+             Codi tab below, not a contenteditable canvas rebuilt from
+             compiled HTML. Phase A of the Visual-editor rewrite: looks like
+             Codi for now (no rich decorations/widgets yet — those land in
+             later phases), but every edit is already a precise CodeMirror
+             transaction on the one shared document, never a Markdown->HTML
+             reconstruction. -->
+        <div v-show="activeEditorTab === 'visual'" ref="visualCodeMirrorContainerRef" class="code-editor-wrapper"></div>
 
         <!-- Code Raw Editor: CodeMirror 6 (see createCodeMirrorView() in
              <script>) — gutter, line wrapping and Jinja2/Markdown
