@@ -526,6 +526,87 @@ const jinjaHighlightPlugin = CmViewPlugin.fromClass(class {
   decorations: (v) => v.decorations,
 });
 
+// Same block-tag vocabulary the Visual-canvas compiler recognizes
+// (useMarkdownJinjaCompiler.js's OPEN_TAG_RE/ELIF_TAG_RE) -- for/if open a
+// block, elif/else are mid-block branches, endfor/endif close it. Matched
+// independently of the highlighter above: this pass builds a flat,
+// depth-stack-paired list of every {% ... %} block tag in the whole
+// document (ignoring line breaks, so same-line/nested tags pair correctly
+// too), so that CodeMirror can highlight a block's whole tag family
+// (open + any elif/else + close) the way bracket-matching highlights a
+// pair of ()/[]/{} -- CodeMirror's own bracketMatching (@codemirror/language)
+// can't do this itself: its syntax-tree mode needs a real language grammar
+// (we only have a regex highlighter, no Jinja2 grammar), and its plain-text
+// fallback only pairs single literal characters, never multi-character
+// keyword tags like "{% for %}"/"{% endfor %}".
+const JINJA_TAG_SCAN_RE = /\{%[\s\S]*?%\}/g;
+const JINJA_TAG_OPEN_RE = /^\{%\s*(?:for|if)\s+[\s\S]+?\s*%\}$/;
+const JINJA_TAG_ELIF_RE = /^\{%\s*elif\s+[\s\S]+?\s*%\}$/;
+const JINJA_TAG_ELSE_RE = /^\{%\s*else\s*%\}$/;
+const JINJA_TAG_CLOSE_RE = /^\{%\s*(?:endfor|endif)\s*%\}$/;
+
+const computeJinjaTagRanges = (text) => {
+  const tags = [];
+  JINJA_TAG_SCAN_RE.lastIndex = 0;
+  let m;
+  while ((m = JINJA_TAG_SCAN_RE.exec(text)) !== null) {
+    const raw = m[0].trim();
+    let kind = null;
+    if (JINJA_TAG_OPEN_RE.test(raw)) kind = 'open';
+    else if (JINJA_TAG_ELIF_RE.test(raw)) kind = 'elif';
+    else if (JINJA_TAG_ELSE_RE.test(raw)) kind = 'else';
+    else if (JINJA_TAG_CLOSE_RE.test(raw)) kind = 'close';
+    if (kind) tags.push({ from: m.index, to: m.index + m[0].length, kind, groupId: null });
+  }
+  // Pairs each family via a depth stack, exactly like the compiler's own
+  // scanJinjaBlock/readBlock -- a group only gets marked "closed" (matched)
+  // once its endfor/endif is actually found; an elif/else/close with no
+  // enclosing open (or an open still on the stack at EOF) is left unmatched.
+  let nextGroupId = 0;
+  const stack = [];
+  tags.forEach((tag) => {
+    if (tag.kind === 'open') {
+      const group = { id: nextGroupId++ };
+      tag.groupId = group.id;
+      stack.push(group);
+    } else if (tag.kind === 'elif' || tag.kind === 'else') {
+      const top = stack[stack.length - 1];
+      if (top) tag.groupId = top.id;
+    } else if (tag.kind === 'close') {
+      const top = stack.pop();
+      if (top) tag.groupId = top.id;
+    }
+  });
+  return tags;
+};
+
+const jinjaTagMatchDecoClass = (matched) => (matched ? 'cm-jinja-tag-match' : 'cm-jinja-tag-nomatch');
+
+const computeJinjaTagMatchDecorations = (view, tags) => {
+  const pos = view.state.selection.main.head;
+  const hit = tags.find((t) => pos >= t.from && pos <= t.to);
+  if (!hit) return CmDecoration.none;
+  const family = hit.groupId == null ? [hit] : tags.filter((t) => t.groupId === hit.groupId);
+  const matched = hit.groupId != null && family.some((t) => t.kind === 'close');
+  const cls = jinjaTagMatchDecoClass(matched);
+  return CmDecoration.set(family.map((t) => CmDecoration.mark({ class: cls }).range(t.from, t.to)), true);
+};
+
+const jinjaTagMatchPlugin = CmViewPlugin.fromClass(class {
+  constructor(view) {
+    this.tags = computeJinjaTagRanges(view.state.doc.toString());
+    this.decorations = computeJinjaTagMatchDecorations(view, this.tags);
+  }
+  update(update) {
+    if (update.docChanged) this.tags = computeJinjaTagRanges(update.state.doc.toString());
+    if (update.docChanged || update.selectionSet) {
+      this.decorations = computeJinjaTagMatchDecorations(update.view, this.tags);
+    }
+  }
+}, {
+  decorations: (v) => v.decorations,
+});
+
 // defaultKeymap ships plain editing (cursor movement, delete, indent...);
 // Ctrl+Z/Y are deliberately NOT bound here -- undoEdit/redoEdit (below) is
 // the single shared history across both tabs, wired directly in
@@ -544,6 +625,7 @@ const createCodeMirrorView = () => {
       CmLineNumbers(),
       CmEditorView.lineWrapping,
       jinjaHighlightPlugin,
+      jinjaTagMatchPlugin,
       cmPlaceholder('Escriu o edita la teva plantilla Jinja2 en Markdown aquí...'),
       CmKeymap.of(CM_SAFE_KEYMAP),
       CmEditorView.updateListener.of((update) => {
@@ -3581,6 +3663,20 @@ body.dark-theme .code-editor-wrapper .cm-content {
 .tok-header { color: var(--text-primary); font-weight: 700; }
 .tok-bold { font-weight: 700; }
 .tok-italic { font-style: italic; }
+
+/* Jinja block tag matching (open/elif/else/close), highlighted as a family
+   whenever the caret touches one of them -- the same UX as bracket matching
+   for ()/[]/{}, applied to our own {% for %}/{% endfor %} vocabulary since
+   CodeMirror's built-in bracketMatching can't pair multi-character tags
+   (see computeJinjaTagRanges in the <script> above). */
+.cm-jinja-tag-match {
+  background-color: rgba(180, 83, 9, 0.18);
+  border-radius: 3px;
+}
+.cm-jinja-tag-nomatch {
+  background-color: rgba(220, 38, 38, 0.22);
+  border-radius: 3px;
+}
 
 .editor-textarea h1::before {
   content: "H1";

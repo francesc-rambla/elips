@@ -137,6 +137,20 @@ describe('compileMarkdownToHtml (Markdown+Jinja2 source -> visual canvas)', () =
     expect(html).toContain('class="jinja-block inline"');
     expect(html).toContain('{% if a %}');
   });
+
+  it('handles a block tag truly nested inside another inline-layout block on the same line', () => {
+    const md = '{% for item in array %}{% if item.exists %}{{ item.name }}{% endif %}{% endfor %}';
+    const html = makeCompiler().compileMarkdownToHtml(md);
+    // Both the outer for and the inner if become their own interactive
+    // inline blocks, not raw "{% if ... %}" text flanking the chip.
+    expect(html.match(/class="jinja-block inline"/g)?.length).toBe(2);
+    expect(html).toContain('data-type="for"');
+    expect(html).toContain('data-type="if"');
+    expect(html).toContain('class="j-var-chip"');
+    // All 4 tags (for/endfor + the nested if/endif) became their own
+    // interactive tag chips -- none was left behind as loose literal text.
+    expect(html.match(/class="j-inline-tag-text"/g)?.length).toBe(4);
+  });
 });
 
 describe('Markdown -> HTML -> Markdown round-trip stability', () => {

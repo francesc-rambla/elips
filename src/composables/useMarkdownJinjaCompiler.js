@@ -443,16 +443,25 @@ const placeholder = (kind, idx) => `${kind}${idx}`;
 // corrupting any document with 10+ placeholders of the same kind. The
 // (?!\d) lookahead ensures a token only matches when NOT followed by another
 // digit, so "JB1" can never eat into "JB10".
+//
+// Walked highest-index-first: extractInlineJinja pushes a truly-nested block
+// (e.g. an {% if %} inline inside a {% for %}'s body) *before* the block that
+// contains it, so a child's index is always lower than its parent's. A
+// child's placeholder token only becomes literal text in `out` once its
+// parent has already been substituted in -- ascending order would try to
+// resolve the child first, while its token still only exists buried inside
+// the not-yet-substituted parent's `values` entry, and silently no-op.
 const restorePlaceholders = (text, kind, values, blockLevel = false) => {
   let out = text;
-  values.forEach((html, idx) => {
+  for (let idx = values.length - 1; idx >= 0; idx--) {
+    const html = values[idx];
     const token = placeholder(kind, idx);
     if (blockLevel) {
       const wrapped = new RegExp(`<p>\\s*${token}(?!\\d)\\s*</p>`, 'g');
       out = out.replace(wrapped, () => html);
     }
     out = out.replace(new RegExp(`${token}(?!\\d)`, 'g'), () => html);
-  });
+  }
   return out;
 };
 
@@ -483,11 +492,20 @@ const extractBlockJinja = (text, compileFn) => {
 };
 
 // Extracts remaining (inline-layout) {% for %}/{% if %} tags — ones that were
-// not alone on their own line, so extractBlockJinja left them untouched — using
-// the same token-split + depth-tracking approach as the block scanner, just
+// not alone on their own line, so extractBlockJinja left them untouched —
 // operating on `{% ... %}`-delimited tokens instead of lines. Their bodies are
 // rendered with `compileInline` (markdown-it's *inline*-only renderer, since
 // these live inside a single paragraph, not as standalone block content).
+//
+// Recursive: a block tag found *inside* another inline block's body (true
+// same-line nesting, e.g. `{% for x in xs %}{% if x.ok %}{{ x.name }}{% endif
+// %}{% endfor %}`) is handled by readBlock() calling itself, so nesting of any
+// depth is handled by construction rather than a hand-tracked depth counter —
+// same principle compileMarkdownToHtml already applies for block-layout
+// nesting. The nested block is compiled to its own placeholder (pushed into
+// the shared `blocks` array) and spliced into the parent's body as that
+// placeholder token; restorePlaceholders resolves it later regardless of how
+// deep it's nested, since it matches the token text wherever it ends up.
 const extractInlineJinja = (text, compileInline) => {
   const tokens = text.split(/(\{%[\s\S]*?%\})/g);
   const blocks = [];
@@ -501,31 +519,32 @@ const extractInlineJinja = (text, compileInline) => {
     let branchKeyword = type;
     let branchCond = openMatch[2];
     let body = '';
-    let depth = 1;
     i++;
     while (i < tokens.length) {
       const tok = tokens[i].trim();
-      if (OPEN_TAG_RE.test(tok)) { depth++; body += tokens[i]; i++; continue; }
-      if (depth === 1) {
-        const elifMatch = tok.match(ELIF_TAG_RE);
-        if (elifMatch || tok === '{% else %}') {
-          branches.push({ keyword: branchKeyword, cond: branchCond, body });
-          branchKeyword = elifMatch ? 'elif' : 'else';
-          branchCond = elifMatch ? elifMatch[1] : '';
-          body = '';
-          i++;
-          continue;
+      if (OPEN_TAG_RE.test(tok)) {
+        const nested = readBlock();
+        if (nested.unterminated) {
+          body += `{% ${nested.type} ${nested.branches[0].cond} %}` + nested.branches.map((b) => b.body).join('');
+        } else {
+          blocks.push(buildInlineJinjaHtml(nested.type, nested.branches, compileInline));
+          body += placeholder('JI', blocks.length - 1);
         }
+        continue;
+      }
+      const elifMatch = tok.match(ELIF_TAG_RE);
+      if (elifMatch || tok === '{% else %}') {
+        branches.push({ keyword: branchKeyword, cond: branchCond, body });
+        branchKeyword = elifMatch ? 'elif' : 'else';
+        branchCond = elifMatch ? elifMatch[1] : '';
+        body = '';
+        i++;
+        continue;
       }
       if (tok === '{% endfor %}' || tok === '{% endif %}') {
-        depth--;
         i++;
-        if (depth === 0) {
-          branches.push({ keyword: branchKeyword, cond: branchCond, body });
-          return { type, branches };
-        }
-        body += tokens[i - 1];
-        continue;
+        branches.push({ keyword: branchKeyword, cond: branchCond, body });
+        return { type, branches };
       }
       body += tokens[i];
       i++;
