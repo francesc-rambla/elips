@@ -53,7 +53,21 @@ const escapeHtml = (s) => String(s ?? '')
 
 // Converts one branch's body (a .j-content element) to Markdown. Falls back to
 // an empty string for a missing/empty node so callers can trim safely.
-const branchBodyToMarkdown = (td, contentEl) => (contentEl ? td.turndown(contentEl).trim() : '');
+//
+// data-trailing-blank (set by buildJinjaBlockHtml when the source body
+// originally ended in a blank line, e.g. "{% if x %}\ntext\n\n{% endif %}")
+// restores that blank line here. Markdown/HTML have no way to represent "an
+// empty line with nothing after it" as DOM content -- a single trailing "\n"
+// and a genuine trailing blank line ("\n\n") both compile to the exact same
+// <p>text</p>, so the distinction would otherwise silently disappear on
+// every Visual round-trip. It isn't just cosmetic: inside a {% for %}
+// body, that blank line is what separates one iteration's output from the
+// next in the final generated document.
+const branchBodyToMarkdown = (td, contentEl) => {
+  if (!contentEl) return '';
+  const body = td.turndown(contentEl).trim();
+  return body && contentEl.getAttribute('data-trailing-blank') === 'true' ? `${body}\n` : body;
+};
 
 const jinjaBlockToMarkdown = (td, node) => {
   const type = node.getAttribute('data-type') || 'if';
@@ -86,6 +100,7 @@ const jinjaBlockToMarkdown = (td, node) => {
   const wantsInlineOutput = node.classList.contains('inline') || node.getAttribute('data-layout') === 'inline';
   const sep = wantsInlineOutput ? '' : '\n';
 
+  let out;
   if (domIsInlineShape) {
     // Inline-shaped DOM: alternating <span class="j-inline-tag">{% ... %}</span>
     // and <span class="j-content">body</span> children carry the exact tag
@@ -95,7 +110,7 @@ const jinjaBlockToMarkdown = (td, node) => {
     // exactly mirroring the block-shaped branch below, just reading tag
     // text off .j-inline-tag instead of reconstructing it from data-cond.
     const relevant = Array.from(node.childNodes).filter((c) => c.nodeType === Node.ELEMENT_NODE && (c.classList.contains('j-inline-tag') || c.classList.contains('j-content')));
-    let out = '';
+    out = '';
     relevant.forEach((child, idx) => {
       if (child.classList.contains('j-inline-tag')) {
         out += child.textContent;
@@ -105,37 +120,50 @@ const jinjaBlockToMarkdown = (td, node) => {
         if (body) out += body + sep;
       }
     });
-    return out;
+  } else {
+    // Block-shaped DOM — also what a block still looks like right after
+    // clicking "Inline" (see above): wantsInlineOutput/sep, computed
+    // together with the inline-shaped branch's above, control the
+    // separator here too.
+    //
+    // The condition itself is read from the .j-head's .j-cond-text span,
+    // not from this node's own data-cond: the visual editor
+    // (openBlockModal/onBlockApply in TemplateEditor.vue) only ever keeps
+    // .j-cond-text's data-cond up to date (on both initial creation and
+    // edits), the same way the elif branch condition below is read from
+    // its own .j-cond-text.
+    const headCond = node.querySelector(':scope > .j-head .j-cond-text')?.getAttribute('data-cond');
+    out = `{% ${type} ${headCond ?? node.getAttribute('data-cond') ?? ''} %}${sep}`;
+    node.childNodes.forEach((child) => {
+      if (child.nodeType !== Node.ELEMENT_NODE) return;
+      if (child.classList.contains('j-content')) {
+        const body = branchBodyToMarkdown(td, child);
+        if (body) out += body + sep;
+      } else if (child.classList.contains('j-branch')) {
+        const branchType = child.getAttribute('data-type');
+        if (branchType === 'else') {
+          out += `{% else %}${sep}`;
+        } else {
+          const cond = child.querySelector('.j-cond-text')?.getAttribute('data-cond') || '';
+          out += `{% elif ${cond} %}${sep}`;
+        }
+      }
+    });
+    out += `{% ${endTag} %}`;
   }
 
-  // Block-shaped DOM — also what a block still looks like right after
-  // clicking "Inline" (see above): wantsInlineOutput/sep, computed together
-  // with the inline-shaped branch's above, control the separator here too.
-  //
-  // The condition itself is read from the .j-head's .j-cond-text span, not
-  // from this node's own data-cond: the visual editor (openBlockModal/
-  // onBlockApply in TemplateEditor.vue) only ever keeps .j-cond-text's
-  // data-cond up to date (on both initial creation and edits), the same way
-  // the elif branch condition below is read from its own .j-cond-text.
-  const headCond = node.querySelector(':scope > .j-head .j-cond-text')?.getAttribute('data-cond');
-  let out = `{% ${type} ${headCond ?? node.getAttribute('data-cond') ?? ''} %}${sep}`;
-  node.childNodes.forEach((child) => {
-    if (child.nodeType !== Node.ELEMENT_NODE) return;
-    if (child.classList.contains('j-content')) {
-      const body = branchBodyToMarkdown(td, child);
-      if (body) out += body + sep;
-    } else if (child.classList.contains('j-branch')) {
-      const branchType = child.getAttribute('data-type');
-      if (branchType === 'else') {
-        out += `{% else %}${sep}`;
-      } else {
-        const cond = child.querySelector('.j-cond-text')?.getAttribute('data-cond') || '';
-        out += `{% elif ${cond} %}${sep}`;
-      }
-    }
-  });
-  out += `{% ${endTag} %}`;
-  return out;
+  // turndown's default rule pads any *block* element's converted content
+  // with a blank line on both sides (its join() logic reuses whatever
+  // leading/trailing newlines a replacement string already carries to
+  // decide the separator between siblings, capped at 2) -- but a CUSTOM
+  // rule's replacement (this function) bypasses that default padding
+  // entirely, so two block-layout jinja-blocks sitting right next to each
+  // other in the source (with a blank line between them) previously came
+  // out glued together with no separator at all the moment either one got
+  // round-tripped through the canvas. Only for block-layout output though
+  // -- an inline block must stay flush with the surrounding prose it's
+  // embedded in, never gain blank-line padding of its own.
+  return wantsInlineOutput ? out : `\n\n${out}\n\n`;
 };
 
 const dynamicTableToMarkdown = (td, table, loopExpr) => {
@@ -285,14 +313,20 @@ const buildTurndownService = () => {
   // Registered *after* the gfm plugin so it wins for tables that carry our
   // Jinja loop markers (turndown checks custom rules most-recently-added-first);
   // plain tables fall through to the gfm plugin's own table rule untouched.
+  //
+  // Wrapped in blank-line padding for the same reason as jinjaBlock below:
+  // a custom rule's replacement bypasses turndown's own default block
+  // padding, so a table sitting right next to another block-level sibling
+  // would otherwise come out glued to it with no separator.
   td.addRule('jinjaTable', {
     filter: (node) => node.nodeType === Node.ELEMENT_NODE && node.tagName === 'TABLE' &&
       !!(node.querySelector('[data-jinja-for]') || node.querySelector('[data-jinja-col-loop]')),
     replacement: (content, node) => {
       const rowLoop = node.querySelector('[data-jinja-for]');
-      if (rowLoop) return dynamicTableToMarkdown(td, node, rowLoop.getAttribute('data-jinja-for') || '');
-      const colLoop = node.querySelector('[data-jinja-col-loop]');
-      return transposedTableToMarkdown(td, node, colLoop.getAttribute('data-jinja-col-loop') || '');
+      const md = rowLoop
+        ? dynamicTableToMarkdown(td, node, rowLoop.getAttribute('data-jinja-for') || '')
+        : transposedTableToMarkdown(td, node, node.querySelector('[data-jinja-col-loop]').getAttribute('data-jinja-col-loop') || '');
+      return `\n\n${md}\n\n`;
     },
   });
 
@@ -431,13 +465,24 @@ const collapsedChipHtml = (type, cond) => `<span class="j-collapsed-chip" conten
 // TemplateEditor.vue's onBlockApply can build a freshly-*inserted* block's
 // markup the exact same way an existing one gets compiled from source --
 // one implementation of "what a for/if/macro/set block looks like", not two.
+// A trailing blank line in the raw source body (e.g. "text\n\n" right
+// before {% endfor %}/{% endif %}) survives as a plain "\n" once sliced out
+// of the lines array here (join() only inserts separators *between*
+// elements) -- enough to distinguish "had a blank line" (>=1 trailing
+// newline) from "didn't" (none), even though it undercounts the exact
+// original newline count by one. That's fine: markdown treats one blank
+// line and several as identical, so collapsing any count down to "yes,
+// restore one" on round-trip (branchBodyToMarkdown's data-trailing-blank
+// check) loses nothing meaningful.
+const jContentHtml = (body, compileFn) => `<div class="j-content"${/\n$/.test(body) ? ' data-trailing-blank="true"' : ''} contenteditable="true">${compileFn(body)}</div>`;
+
 export const buildJinjaBlockHtml = (type, branches, compileFn) => {
   const openCond = branches[0].cond;
   const collapsible = COLLAPSIBLE_BLOCK_TYPES.has(type);
   let html = `<div class="jinja-block" contenteditable="false" data-layout="block" data-type="${type}"${collapsible ? ' data-collapsed="true"' : ''} data-cond="${escapeHtml(openCond)}">`;
   if (collapsible) html += collapsedChipHtml(type, openCond);
   html += headHtmlFor(type, openCond);
-  html += `<div class="j-content" contenteditable="true">${compileFn(branches[0].body)}</div>`;
+  html += jContentHtml(branches[0].body, compileFn);
 
   for (let i = 1; i < branches.length; i++) {
     const b = branches[i];
@@ -447,7 +492,7 @@ export const buildJinjaBlockHtml = (type, branches, compileFn) => {
       const bc = escapeHtml(b.cond);
       html += `<div class="j-branch" data-type="elif"><div style="display:flex;align-items:center;gap:4px;"><span style="font-weight:700;color:#b45309;">O SI:</span> <span class="j-cond-text" data-cond="${bc}">${bc}</span></div>${btnBranchTrashHtml()}</div>`;
     }
-    html += `<div class="j-content" contenteditable="true">${compileFn(b.body)}</div>`;
+    html += jContentHtml(b.body, compileFn);
   }
 
   html += `<div class="j-footer"><span>${FOOTER_LABELS[type] || 'FINAL BLOC'}</span></div></div>`;

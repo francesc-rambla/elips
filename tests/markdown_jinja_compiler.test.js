@@ -248,6 +248,30 @@ describe('Markdown -> HTML -> Markdown round-trip stability', () => {
     expect(roundtrip(md)).toBe(md);
   });
 
+  it('preserves a blank line at the end of a block body, right before its closing tag', () => {
+    // Reported bug: this blank line isn't cosmetic -- inside a {% for %}
+    // body it's what separates one iteration's output from the next in the
+    // final generated document, so silently dropping it on a Visual
+    // round-trip is a real (if subtle) data-loss bug, not just whitespace.
+    const md = '{% if general.decisio %}\nadfadf\n\n{% endif %}';
+    expect(roundtrip(md)).toBe(md);
+  });
+
+  it('preserves both the blank line inside a body AND the blank line between two adjacent top-level blocks', () => {
+    const md = '{% for anualitat in anualitats %}\nprova\n\n{% endfor %}\n\n{% if prova %}\nFes prova\n{% endif %}';
+    expect(roundtrip(md)).toBe(md);
+  });
+
+  it('keeps two adjacent top-level blocks separated by a blank line (they used to come out glued together, {% endfor %}{% if %} with nothing between)', () => {
+    const md = '{% for x in a %}\nA\n{% endfor %}\n\n{% if b %}\nB\n{% endif %}';
+    expect(roundtrip(md)).toBe(md);
+  });
+
+  it('does not add blank-line padding around an inline-layout block (it must stay flush with surrounding prose)', () => {
+    const md = 'Text abans {% if a %}mig{% endif %} text despres.';
+    expect(roundtrip(md)).toBe(md);
+  });
+
   it('serializes a block-shaped jinja-block flagged inline (the moment right after clicking "Inline", before a re-render restructures it)', () => {
     // TemplateEditor.vue's "Inline"/"Bloc" toggle button only flips the
     // inline class / data-layout attribute on the *existing* DOM — it does
