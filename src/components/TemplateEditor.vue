@@ -24,7 +24,7 @@ import { useLoopContext } from '../composables/useLoopContext';
 import { useMarkdownJinjaCompiler, htmlToMarkdown } from '../composables/useMarkdownJinjaCompiler';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { useEditHistory } from '../composables/useEditHistory';
-import { EditorState as CmEditorState } from '@codemirror/state';
+import { EditorState as CmEditorState, StateField as CmStateField, StateEffect as CmStateEffect } from '@codemirror/state';
 import { EditorView as CmEditorView, keymap as CmKeymap, lineNumbers as CmLineNumbers, Decoration as CmDecoration, ViewPlugin as CmViewPlugin, WidgetType as CmWidgetType, placeholder as cmPlaceholder } from '@codemirror/view';
 import { defaultKeymap as cmDefaultKeymap } from '@codemirror/commands';
 import katex from 'katex';
@@ -405,6 +405,15 @@ let activeBlockForNewBranch = null; // Pointer to block when adding a new ELIF b
 // inserting a fresh variable -- a plain text range, not a DOM node like
 // activeEditNode above (which Phase D's block widgets will use instead).
 let activeVarChipRange = null;
+// {from, to, kind} of a Jinja2 block-tag TEXT SPAN being edited via a
+// Phase D block widget: kind 'condition' replaces an existing open/elif
+// tag's inner expression (e.g. just "item in pres.parts", not the "{% for
+// "/" %}" around it); kind 'new-elif' inserts a brand new "{% elif ... %}"
+// line at a zero-width point (always right before the block's close tag --
+// see addElifBranch). null when the modal is being used for its other,
+// older purposes (a fresh top-level block insertion, or the dead
+// DOM-node-based edit path).
+let activeBlockEditRange = null;
 
 const linesCount = computed(() => {
   return editorText.value.split('\n').length;
@@ -504,13 +513,25 @@ const makeTextareaShim = (view) => ({
 // lose content the way a parsing mistake in a real grammar might.
 const HIGHLIGHT_TOKEN_RE = /(<!--[\s\S]*?-->)|(\{%[\s\S]*?%\})|(\{\{[\s\S]*?\}\})|(\$\$[\s\S]*?\$\$)|(\$[^$\n]+\$)|(^#{1,6}\s.*$)|(\*\*[^\n*]+\*\*)|(\*[^\n*]+\*)/gm;
 
-const computeHighlightDecorations = (text) => {
+// Shared by computeHighlightDecorations/computeMarkdownStyleDecorations/
+// computeVarChipDecorations below (Phase D): a collapsed {% macro %}/
+// {% set %} block hides its whole body inside ONE block-level replace
+// widget (see jinjaBlockField further down), so none of these three
+// plugins may ALSO try to place a decoration inside that same span --
+// CodeMirror rejects two replace decorations (even a small inline chip
+// nested inside a bigger block one) that overlap. Recomputed
+// independently by each caller (not shared mutable state) so this stays
+// correct regardless of extension/plugin registration order.
+const isInsideAnyRange = (pos, ranges) => ranges.some(([f, t]) => pos >= f && pos < t);
+
+const computeHighlightDecorations = (text, collapsedRanges = []) => {
   const decos = [];
   let m;
   HIGHLIGHT_TOKEN_RE.lastIndex = 0;
   while ((m = HIGHLIGHT_TOKEN_RE.exec(text)) !== null) {
     const [full, comment, block, variable, mathDisplay, mathInline, header, bold, italic] = m;
     if (full.length === 0) { HIGHLIGHT_TOKEN_RE.lastIndex++; continue; }
+    if (isInsideAnyRange(m.index, collapsedRanges)) continue;
     let cls = '';
     if (comment) cls = 'tok-comment';
     else if (block) cls = 'tok-jinja-block';
@@ -537,13 +558,14 @@ const computeHighlightDecorations = (text) => {
 const MD_STYLE_TOKEN_RE = /(^#{1,6}\s.*$)|(\*\*[^\n*]+\*\*)|(\*[^\n*]+\*)/gm;
 const MD_LIST_MARKER_RE = /^\s*(?:[-*+]|\d+\.)\s+/gm;
 
-const computeMarkdownStyleDecorations = (text) => {
+const computeMarkdownStyleDecorations = (text, collapsedRanges = []) => {
   const decos = [];
   let m;
   MD_STYLE_TOKEN_RE.lastIndex = 0;
   while ((m = MD_STYLE_TOKEN_RE.exec(text)) !== null) {
     const [full, header, bold, italic] = m;
     if (full.length === 0) { MD_STYLE_TOKEN_RE.lastIndex++; continue; }
+    if (isInsideAnyRange(m.index, collapsedRanges)) continue;
     let cls = '';
     if (header) cls = `cm-md-heading cm-md-h${header.match(/^#{1,6}/)[0].length}`;
     else if (bold) cls = 'cm-md-bold';
@@ -553,6 +575,7 @@ const computeMarkdownStyleDecorations = (text) => {
   MD_LIST_MARKER_RE.lastIndex = 0;
   while ((m = MD_LIST_MARKER_RE.exec(text)) !== null) {
     if (m[0].length === 0) { MD_LIST_MARKER_RE.lastIndex++; continue; }
+    if (isInsideAnyRange(m.index, collapsedRanges)) continue;
     decos.push(CmDecoration.mark({ class: 'cm-md-list-marker' }).range(m.index, m.index + m[0].length));
   }
   return CmDecoration.set(decos, true);
@@ -560,11 +583,11 @@ const computeMarkdownStyleDecorations = (text) => {
 
 const markdownStylePlugin = CmViewPlugin.fromClass(class {
   constructor(view) {
-    this.decorations = computeMarkdownStyleDecorations(view.state.doc.toString());
+    this.decorations = computeMarkdownStyleDecorations(view.state.doc.toString(), computeCollapsedJinjaRanges(view.state));
   }
   update(update) {
-    if (update.docChanged) {
-      this.decorations = computeMarkdownStyleDecorations(update.state.doc.toString());
+    if (update.docChanged || update.startState.field(jinjaExpandedField, false) !== update.state.field(jinjaExpandedField, false)) {
+      this.decorations = computeMarkdownStyleDecorations(update.state.doc.toString(), computeCollapsedJinjaRanges(update.state));
     }
   }
 }, {
@@ -625,11 +648,12 @@ class VarChipWidget extends CmWidgetType {
   ignoreEvent() { return true; }
 }
 
-const computeVarChipDecorations = (text) => {
+const computeVarChipDecorations = (text, collapsedRanges = []) => {
   const decos = [];
   let m;
   VAR_CHIP_RE.lastIndex = 0;
   while ((m = VAR_CHIP_RE.exec(text)) !== null) {
+    if (isInsideAnyRange(m.index, collapsedRanges)) continue;
     const raw = m[1];
     const label = resolveFieldLabel(raw);
     decos.push(CmDecoration.replace({ widget: new VarChipWidget(raw, label, m.index, m.index + m[0].length) }).range(m.index, m.index + m[0].length));
@@ -639,11 +663,11 @@ const computeVarChipDecorations = (text) => {
 
 const varChipPlugin = CmViewPlugin.fromClass(class {
   constructor(view) {
-    this.decorations = computeVarChipDecorations(view.state.doc.toString());
+    this.decorations = computeVarChipDecorations(view.state.doc.toString(), computeCollapsedJinjaRanges(view.state));
   }
   update(update) {
-    if (update.docChanged) {
-      this.decorations = computeVarChipDecorations(update.state.doc.toString());
+    if (update.docChanged || update.startState.field(jinjaExpandedField, false) !== update.state.field(jinjaExpandedField, false)) {
+      this.decorations = computeVarChipDecorations(update.state.doc.toString(), computeCollapsedJinjaRanges(update.state));
     }
   }
 }, {
@@ -656,11 +680,11 @@ const varChipPlugin = CmViewPlugin.fromClass(class {
 
 const jinjaHighlightPlugin = CmViewPlugin.fromClass(class {
   constructor(view) {
-    this.decorations = computeHighlightDecorations(view.state.doc.toString());
+    this.decorations = computeHighlightDecorations(view.state.doc.toString(), computeCollapsedJinjaRanges(view.state));
   }
   update(update) {
-    if (update.docChanged) {
-      this.decorations = computeHighlightDecorations(update.state.doc.toString());
+    if (update.docChanged || update.startState.field(jinjaExpandedField, false) !== update.state.field(jinjaExpandedField, false)) {
+      this.decorations = computeHighlightDecorations(update.state.doc.toString(), computeCollapsedJinjaRanges(update.state));
     }
   }
 }, {
@@ -780,6 +804,451 @@ const jinjaTagMatchPlugin = CmViewPlugin.fromClass(class {
   decorations: (v) => v.decorations,
 });
 
+// Phase D of the Visual-editor rewrite: for/if/macro/set blocks. A block is
+// built from THREE independent pieces, never one monolithic widget (see
+// the plan's "Disseny dels blocs Jinja2"): the open-tag line becomes a
+// header widget, each elif/else line becomes its own branch widget, and
+// the close-tag line becomes a footer widget -- all Decoration.replace
+// with block:true, i.e. whole-line swaps. The BODY in between stays real,
+// still-editable document text, touched only by Decoration.line (adding a
+// CSS class for the left-border/indent look), so nested blocks/chips
+// inside a body keep rendering recursively through these exact same
+// plugins, with no special-casing.
+//
+// Only a tag that sits ALONE on its own line (ignoring surrounding
+// whitespace -- the same "block layout" convention the compiler already
+// uses to tell block from inline shape) is turned into a widget; one that
+// shares its line with other content is left as plain text, already
+// colored by jinjaHighlightPlugin. Rendering an inline-layout block with
+// its own widget is a later refinement (see the plan: "Bloc-layout
+// primer... inline-layout després") -- not required for this phase, and
+// deliberately not attempted here.
+const JINJA_BLOCK_ICON = { for: '🔁', if: '🔀', macro: 'ƒ', set: '=' };
+const JINJA_BLOCK_LABEL = { for: 'FOR', if: 'SI', macro: 'MACRO', set: 'SET' };
+// Only macro/set default to collapsed (see the plan) -- for/if are always
+// fully expanded, there is no view-only "folded" state for them.
+const JINJA_BLOCK_COLLAPSIBLE = new Set(['macro', 'set']);
+
+// A tag only becomes a widget when its own physical line contains nothing
+// else -- returns that Line, or null when the tag shares its line with
+// other text (inline layout) or itself spans a line break (never true for
+// a real "{% ... %}" tag, but guarded against a pathological match anyway).
+const wholeLineTag = (doc, from, to) => {
+  const line = doc.lineAt(from);
+  if (doc.lineAt(to).number !== line.number) return null;
+  return line.text.trim() === doc.sliceString(from, to).trim() ? line : null;
+};
+
+const toggleJinjaExpandEffect = CmStateEffect.define();
+
+// View-only state (no textual representation -- see the plan): the set of
+// open-tag `from` offsets whose macro/set block the user has expanded.
+// Mapped across every edit via tr.changes so it survives typing elsewhere
+// in the document; a stale leftover offset (its block deleted, or the tag
+// itself edited away) simply never matches any current tag again --
+// harmless, not cleaned up explicitly.
+const jinjaExpandedField = CmStateField.define({
+  create() { return new Set(); },
+  update(value, tr) {
+    if (tr.docChanged) {
+      const mapped = new Set();
+      value.forEach((pos) => mapped.add(tr.changes.mapPos(pos, -1)));
+      value = mapped;
+    }
+    for (const effect of tr.effects) {
+      if (effect.is(toggleJinjaExpandEffect)) {
+        const next = new Set(value);
+        if (next.has(effect.value)) next.delete(effect.value); else next.add(effect.value);
+        value = next;
+      }
+    }
+    return value;
+  },
+});
+
+// Every well-formed (open+close both present, type-matched) block-layout
+// {% macro %}/{% set %} group that is CURRENTLY collapsed, as [from, to)
+// document ranges covering their whole open-line..close-line span -- shared
+// by computeHighlightDecorations/computeMarkdownStyleDecorations/
+// computeVarChipDecorations above so none of them ever tries to decorate
+// (chip, style, highlight) text that's actually hidden inside this Phase D
+// plugin's own collapsed block-replace widget. `state.field(..., false)`
+// (not the throwing 2-arg form) makes this safe to call on the Codi view
+// too, which never installs jinjaExpandedField -- it simply reports nothing
+// collapsed there, which is correct (Codi never renders block widgets).
+const computeCollapsedJinjaRanges = (state) => {
+  const expanded = state.field(jinjaExpandedField, false);
+  if (!expanded) return [];
+  const doc = state.doc;
+  const tags = computeJinjaTagRanges(doc.toString());
+  const byGroup = new Map();
+  tags.forEach((t) => {
+    if (t.groupId == null) return;
+    if (!byGroup.has(t.groupId)) byGroup.set(t.groupId, []);
+    byGroup.get(t.groupId).push(t);
+  });
+  const ranges = [];
+  byGroup.forEach((members) => {
+    const open = members.find((t) => t.kind === 'open');
+    const close = members.find((t) => t.kind === 'close');
+    if (!open || !close || !JINJA_BLOCK_COLLAPSIBLE.has(open.openType) || expanded.has(open.from)) return;
+    const openLine = wholeLineTag(doc, open.from, open.to);
+    const closeLine = wholeLineTag(doc, close.from, close.to);
+    if (!openLine || !closeLine) return;
+    ranges.push([openLine.from, closeLine.to]);
+  });
+  return ranges;
+};
+
+// Parses just the "condition" span of an open/elif tag's raw text -- e.g.
+// "item in pres.parts" out of "{% for item in pres.parts %}" -- as an
+// offset into the FULL DOCUMENT (docFrom + the match's local index), so an
+// edit coming back from the modal can dispatch a precise replace over only
+// that inner span, leaving the surrounding "{% for "/" %}" delimiters
+// completely untouched.
+const BLOCK_COND_RE = {
+  for: /^\{%\s*for\s+([\s\S]+?)\s*%\}$/,
+  if: /^\{%\s*if\s+([\s\S]+?)\s*%\}$/,
+  elif: /^\{%\s*elif\s+([\s\S]+?)\s*%\}$/,
+  macro: /^\{%\s*macro\s+([\s\S]+?)\s*%\}$/,
+  set: /^\{%\s*set\s+([\s\S]+?)\s*%\}$/,
+};
+
+const parseBlockTagCondition = (raw, kind, docFrom) => {
+  const re = BLOCK_COND_RE[kind];
+  const m = re && raw.match(re);
+  if (!m) return null;
+  const condStart = raw.indexOf(m[1]);
+  return { text: m[1], from: docFrom + condStart, to: docFrom + condStart + m[1].length };
+};
+
+// Both "afegir ELIF" and "afegir ELSE" always insert their new branch
+// immediately before the block's close tag, regardless of where inside the
+// block the header button was clicked -- the plan's deliberate
+// simplification over the old canvas system's cursor-aware insertion.
+const addElseBranch = (closeTag) => {
+  const view = visualCodeMirrorView;
+  if (!view) return;
+  const closeLine = view.state.doc.lineAt(closeTag.from);
+  view.dispatch({ changes: { from: closeLine.from, to: closeLine.from, insert: '{% else %}\n\n' } });
+};
+
+const addElifBranch = (type, closeTag) => {
+  const view = visualCodeMirrorView;
+  if (!view) return;
+  const closeLine = view.state.doc.lineAt(closeTag.from);
+  openBlockModalForRange('elif', { from: closeLine.from, to: closeLine.from, kind: 'new-elif', text: '' });
+};
+
+// "Elimina aquest bloc": removes the open tag's whole line through the
+// close tag's whole line (its trailing newline too, so no blank line is
+// left behind), including every line of body/branches/nested blocks in
+// between -- confirmed first, same convention as the rest of this app's
+// destructive actions (e.g. the pending-changes prompt in DataInspector's
+// nested-modal Escape handling).
+const deleteJinjaBlock = (open, close) => {
+  const view = visualCodeMirrorView;
+  if (!view) return;
+  if (!confirm('Vols eliminar aquest bloc Jinja2 sencer (etiquetes i contingut)?')) return;
+  const doc = view.state.doc;
+  const openLine = doc.lineAt(open.from);
+  const closeLine = doc.lineAt(close.from);
+  const to = closeLine.to < doc.length ? closeLine.to + 1 : closeLine.to;
+  view.dispatch({ changes: { from: openLine.from, to, insert: '' } });
+};
+
+// "Canvia a format en línia": a plain text transform, independent of widget
+// rendering -- joins every body line (trimmed) with a single space and
+// rewrites the open..close span as one line. Once inline, the block
+// naturally stops being widgetized on the next decoration recompute
+// (wholeLineTag returns null for a tag that no longer sits alone on its
+// line) and falls back to plain highlighted text -- correct, since Phase D
+// only widgetizes block-layout occurrences in the first place; there is no
+// widget offering the reverse (inline -> block) direction yet.
+const toggleJinjaBlockToInline = (open, close) => {
+  const view = visualCodeMirrorView;
+  if (!view) return;
+  const doc = view.state.doc;
+  const openLine = doc.lineAt(open.from);
+  const closeLine = doc.lineAt(close.from);
+  const bodyFrom = Math.min(openLine.to + 1, closeLine.from);
+  const bodyRaw = doc.sliceString(bodyFrom, closeLine.from);
+  const joined = bodyRaw.split('\n').map((l) => l.trim()).filter(Boolean).join(' ');
+  const openRaw = doc.sliceString(open.from, open.to);
+  const closeRaw = doc.sliceString(close.from, close.to);
+  view.dispatch({ changes: { from: openLine.from, to: closeLine.to, insert: `${openRaw}${joined}${closeRaw}` } });
+};
+
+class JinjaHeadWidget extends CmWidgetType {
+  constructor(type, openRaw, open, close, branches, collapsible, isExpanded) {
+    super();
+    this.type = type;
+    this.openRaw = openRaw;
+    this.open = open;
+    this.close = close;
+    this.branches = branches;
+    this.collapsible = collapsible;
+    this.isExpanded = isExpanded;
+  }
+  toDOM() {
+    const cond = parseBlockTagCondition(this.openRaw, this.type, this.open.from);
+    const row = document.createElement('div');
+    row.className = `j-block-head j-block-head-${this.type}`;
+
+    if (this.collapsible) {
+      const chevron = document.createElement('button');
+      chevron.type = 'button';
+      chevron.className = 'j-block-btn j-block-chevron';
+      chevron.textContent = '▾';
+      chevron.title = 'Col·lapsa';
+      chevron.addEventListener('mousedown', (e) => e.preventDefault());
+      chevron.addEventListener('click', (e) => {
+        e.stopPropagation();
+        visualCodeMirrorView?.dispatch({ effects: toggleJinjaExpandEffect.of(this.open.from) });
+      });
+      row.appendChild(chevron);
+    }
+
+    const icon = document.createElement('span');
+    icon.className = 'j-block-icon';
+    icon.textContent = JINJA_BLOCK_ICON[this.type] || '{%';
+    const label = document.createElement('span');
+    label.className = 'j-block-label';
+    label.textContent = JINJA_BLOCK_LABEL[this.type] || this.type.toUpperCase();
+    row.append(icon, label);
+
+    const condSpan = document.createElement('span');
+    condSpan.className = 'j-block-cond';
+    condSpan.textContent = cond ? cond.text : this.openRaw;
+    condSpan.title = this.openRaw;
+    if (cond) {
+      condSpan.addEventListener('mousedown', (e) => e.preventDefault());
+      condSpan.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        openBlockModalForRange(this.type, { from: cond.from, to: cond.to, kind: 'condition', text: cond.text });
+      });
+    }
+    row.appendChild(condSpan);
+
+    const actions = document.createElement('span');
+    actions.className = 'j-block-actions';
+    const allowed = JINJA_TAG_ALLOWED_BRANCHES[this.type];
+    const hasElse = this.branches.some((b) => b.kind === 'else');
+    if (allowed?.has('elif') && !hasElse) {
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'j-block-btn'; btn.textContent = '+ ELIF';
+      btn.title = 'Afegeix una branca ELIF al final del bloc';
+      btn.addEventListener('mousedown', (e) => e.preventDefault());
+      btn.addEventListener('click', (e) => { e.stopPropagation(); addElifBranch(this.type, this.close); });
+      actions.appendChild(btn);
+    }
+    if (allowed?.has('else') && !hasElse) {
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'j-block-btn'; btn.textContent = '+ ELSE';
+      btn.title = 'Afegeix una branca ELSE al final del bloc';
+      btn.addEventListener('mousedown', (e) => e.preventDefault());
+      btn.addEventListener('click', (e) => { e.stopPropagation(); addElseBranch(this.close); });
+      actions.appendChild(btn);
+    }
+    if (!this.collapsible) {
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'j-block-btn'; btn.textContent = '⇄';
+      btn.title = 'Canvia a format en línia';
+      btn.addEventListener('mousedown', (e) => e.preventDefault());
+      btn.addEventListener('click', (e) => { e.stopPropagation(); toggleJinjaBlockToInline(this.open, this.close); });
+      actions.appendChild(btn);
+    }
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button'; delBtn.className = 'j-block-btn j-block-delete'; delBtn.textContent = '🗑';
+    delBtn.title = 'Elimina aquest bloc sencer';
+    delBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteJinjaBlock(this.open, this.close); });
+    actions.appendChild(delBtn);
+    row.appendChild(actions);
+
+    return row;
+  }
+  ignoreEvent() { return true; }
+}
+
+class JinjaBranchWidget extends CmWidgetType {
+  constructor(type, branchTag, branchRaw) {
+    super();
+    this.type = type;
+    this.branchTag = branchTag;
+    this.branchRaw = branchRaw;
+  }
+  toDOM() {
+    const row = document.createElement('div');
+    row.className = `j-block-branch j-block-head-${this.type}`;
+    const label = document.createElement('span');
+    label.className = 'j-block-label';
+    label.textContent = this.branchTag.kind === 'elif' ? 'ALTRAMENT SI' : 'ALTRAMENT';
+    row.appendChild(label);
+    if (this.branchTag.kind === 'elif') {
+      const cond = parseBlockTagCondition(this.branchRaw, 'elif', this.branchTag.from);
+      const condSpan = document.createElement('span');
+      condSpan.className = 'j-block-cond';
+      condSpan.textContent = cond ? cond.text : this.branchRaw;
+      condSpan.title = this.branchRaw;
+      if (cond) {
+        condSpan.addEventListener('mousedown', (e) => e.preventDefault());
+        condSpan.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          openBlockModalForRange('elif', { from: cond.from, to: cond.to, kind: 'condition', text: cond.text });
+        });
+      }
+      row.appendChild(condSpan);
+    }
+    return row;
+  }
+  ignoreEvent() { return true; }
+}
+
+class JinjaFootWidget extends CmWidgetType {
+  constructor(type) {
+    super();
+    this.type = type;
+  }
+  toDOM() {
+    const row = document.createElement('div');
+    row.className = `j-block-foot j-block-head-${this.type}`;
+    const label = document.createElement('span');
+    label.className = 'j-block-label';
+    label.textContent = `FI ${JINJA_BLOCK_LABEL[this.type] || this.type.toUpperCase()}`;
+    row.appendChild(label);
+    return row;
+  }
+  ignoreEvent() { return true; }
+}
+
+class JinjaCollapsedWidget extends CmWidgetType {
+  constructor(type, open, openRaw) {
+    super();
+    this.type = type;
+    this.open = open;
+    this.openRaw = openRaw;
+  }
+  toDOM() {
+    const row = document.createElement('div');
+    row.className = `j-block-collapsed j-block-head-${this.type}`;
+    const chevron = document.createElement('button');
+    chevron.type = 'button'; chevron.className = 'j-block-btn j-block-chevron'; chevron.textContent = '▸';
+    chevron.title = 'Expandeix';
+    chevron.addEventListener('mousedown', (e) => e.preventDefault());
+    chevron.addEventListener('click', (e) => {
+      e.stopPropagation();
+      visualCodeMirrorView?.dispatch({ effects: toggleJinjaExpandEffect.of(this.open.from) });
+    });
+    const icon = document.createElement('span');
+    icon.className = 'j-block-icon';
+    icon.textContent = JINJA_BLOCK_ICON[this.type] || '{%';
+    const label = document.createElement('span');
+    label.className = 'j-block-label';
+    label.textContent = JINJA_BLOCK_LABEL[this.type] || this.type.toUpperCase();
+    const sig = document.createElement('span');
+    sig.className = 'j-block-cond';
+    sig.textContent = this.openRaw;
+    row.append(chevron, icon, label, sig);
+    return row;
+  }
+  ignoreEvent() { return true; }
+}
+
+const computeJinjaBlockDecorations = (state) => {
+  const doc = state.doc;
+  const tags = computeJinjaTagRanges(doc.toString());
+  const expanded = state.field(jinjaExpandedField, false) || new Set();
+  const byGroup = new Map();
+  tags.forEach((t) => {
+    if (t.groupId == null) return;
+    if (!byGroup.has(t.groupId)) byGroup.set(t.groupId, []);
+    byGroup.get(t.groupId).push(t);
+  });
+
+  const ranges = [];
+  byGroup.forEach((members) => {
+    const open = members.find((t) => t.kind === 'open');
+    const close = members.find((t) => t.kind === 'close');
+    if (!open || !close) return; // unterminated/mismatched -- left as plain text, surfaced elsewhere as an error
+    const type = open.openType;
+
+    const openLine = wholeLineTag(doc, open.from, open.to);
+    const closeLine = wholeLineTag(doc, close.from, close.to);
+    if (!openLine || !closeLine) return; // inline layout (or mixed) -- deferred, see file header comment
+
+    const branches = members.filter((t) => t.kind === 'elif' || t.kind === 'else').sort((a, b) => a.from - b.from);
+    const branchLines = [];
+    let allBranchesOk = true;
+    for (const b of branches) {
+      const bl = wholeLineTag(doc, b.from, b.to);
+      if (!bl) { allBranchesOk = false; break; }
+      branchLines.push({ tag: b, line: bl });
+    }
+    if (!allBranchesOk) return;
+
+    const collapsible = JINJA_BLOCK_COLLAPSIBLE.has(type);
+    const isExpanded = !collapsible || expanded.has(open.from);
+
+    if (collapsible && !isExpanded) {
+      ranges.push(CmDecoration.replace({
+        widget: new JinjaCollapsedWidget(type, open, doc.sliceString(open.from, open.to)),
+        block: true,
+      }).range(openLine.from, closeLine.to));
+      return;
+    }
+
+    ranges.push(CmDecoration.replace({
+      widget: new JinjaHeadWidget(type, doc.sliceString(open.from, open.to), open, close, branches, collapsible, isExpanded),
+      block: true,
+    }).range(openLine.from, openLine.to));
+
+    branchLines.forEach(({ tag, line }) => {
+      ranges.push(CmDecoration.replace({
+        widget: new JinjaBranchWidget(type, tag, doc.sliceString(tag.from, tag.to)),
+        block: true,
+      }).range(line.from, line.to));
+    });
+
+    ranges.push(CmDecoration.replace({
+      widget: new JinjaFootWidget(type),
+      block: true,
+    }).range(closeLine.from, closeLine.to));
+
+    const boundaries = [openLine, ...branchLines.map((b) => b.line), closeLine];
+    for (let i = 0; i < boundaries.length - 1; i++) {
+      for (let ln = boundaries[i].number + 1; ln < boundaries[i + 1].number; ln++) {
+        const bodyLine = doc.line(ln);
+        ranges.push(CmDecoration.line({ attributes: { class: `cm-jinja-body cm-jinja-body-${type}` } }).range(bodyLine.from));
+      }
+    }
+  });
+
+  return CmDecoration.set(ranges, true);
+};
+
+// A StateField, NOT a ViewPlugin -- CodeMirror requires block-level
+// (block:true) replace decorations to come from a StateField
+// ("Block decorations may not be specified via plugins" is a hard runtime
+// error otherwise), unlike the plain inline mark/replace decorations the
+// other Phase B/C plugins above provide. tr.effects is checked directly
+// (rather than comparing jinjaExpandedField's old/new value) since the
+// collapse toggle is the ONLY thing that can change this field without
+// also changing the document.
+const jinjaBlockField = CmStateField.define({
+  create(state) { return computeJinjaBlockDecorations(state); },
+  update(value, tr) {
+    if (tr.docChanged || tr.effects.some((e) => e.is(toggleJinjaExpandEffect))) {
+      return computeJinjaBlockDecorations(tr.state);
+    }
+    return value;
+  },
+  provide: (f) => [
+    CmEditorView.decorations.from(f),
+    CmEditorView.atomicRanges.of((view) => view.state.field(f, false) || CmDecoration.none),
+  ],
+});
+
 // defaultKeymap ships plain editing (cursor movement, delete, indent...);
 // Ctrl+Z/Y are deliberately NOT bound here -- undoEdit/redoEdit (below) is
 // the single shared history across both tabs, wired directly in
@@ -838,7 +1307,7 @@ const createCodeMirrorView = () => {
 // widget/decoration extensions here without touching the Codi instance.
 const createVisualCodeMirrorView = () => {
   if (!visualCodeMirrorContainerRef.value || visualCodeMirrorView) return;
-  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
+  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaExpandedField, jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin, jinjaBlockField], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
   visualTextareaRef.value = makeTextareaShim(visualCodeMirrorView);
 };
 
@@ -1389,6 +1858,7 @@ const NEW_TITLES = { for: 'Nou Bucle (FOR)', macro: 'Nou Macro', set: 'Nou Bloc 
 const openBlockModal = (type, node = null) => {
   saveSelection();
   blockType.value = type;
+  activeBlockEditRange = null;
   activeLoopContext.value = getActiveLoopContext(node);
 
   if (type === 'elif' && !node) {
@@ -1418,6 +1888,32 @@ const openBlockModal = (type, node = null) => {
     }
     modalTitle.value = NEW_TITLES[type] || 'Nova Condició (IF)';
   }
+  isBlockModalOpen.value = true;
+};
+
+// Counterpart to openBlockModal above, but for the Phase D block widgets:
+// they don't have a DOM node to pass (there is none, only plain text
+// offsets), and they're editing a precise TEXT SPAN, not "the block's
+// whole condition attribute" -- see activeBlockEditRange's own comment.
+// range.kind 'condition' pre-fills the existing expression (editing an
+// open/elif tag already in the source); 'new-elif' opens the modal empty,
+// for a branch that doesn't exist yet (see addElifBranch).
+const openBlockModalForRange = (type, range) => {
+  saveSelection();
+  blockType.value = type;
+  activeEditNode = null;
+  activeBlockEditRange = range;
+  activeLoopContext.value = getActiveLoopContext();
+  const raw = range.kind === 'condition' ? range.text : '';
+  if (type === 'for') {
+    const parts = raw.split(/\s+in\s+/);
+    blockModalInitialForItemVar.value = parts[0] ? parts[0].trim() : 'item';
+    blockModalInitialForArrayVar.value = parts[1] ? parts[1].trim() : '';
+    blockModalInitialExpr.value = raw || 'item in ';
+  } else {
+    blockModalInitialExpr.value = raw;
+  }
+  modalTitle.value = range.kind === 'condition' ? (EDIT_TITLES[type] || 'Editar Condició') : (EDIT_TITLES.elif || 'Afegir branca O SI (ELIF)');
   isBlockModalOpen.value = true;
 };
 
@@ -1705,18 +2201,28 @@ const insertBranchAtCursorOrFooter = (ifBlock, branchElement, bodyElement) => {
 };
 
 // BlockModal.vue owns the expr/forItemVar/forArrayVar form state and
-// reports the final expression string on apply. Phase A of the
-// Visual-editor rewrite: a NEW for/if/macro/set is a precise text splice
-// at the cursor (block-layout shape, each tag alone on its own line,
-// matching what the compiler's line-based scanner already expects) --
-// there's no canvas/block DOM to build/insert into anymore. Editing an
-// EXISTING block's condition (activeEditNode) or adding an elif/else
-// branch to one (activeBlockForNewBranch) both require first locating
-// that block in the source text, which needs the same block/line-tracking
-// machinery Phase D builds properly; neither is reachable today anyway,
-// since both are only ever set by clicking on an existing rendered block,
-// and no block widgets exist yet.
+// reports the final expression string on apply. A NEW for/if/macro/set is
+// a precise text splice at the cursor (block-layout shape, each tag alone
+// on its own line, matching what the compiler's line-based scanner already
+// expects). Editing an EXISTING block's condition, or inserting a new
+// elif branch, both go through activeBlockEditRange instead (Phase D: set
+// by openBlockModalForRange, called from a JinjaHeadWidget/
+// JinjaBranchWidget's condition dblclick, or from addElifBranch) -- a
+// precise view.dispatch({changes:{from,to,insert}}) over that exact text
+// span, never a rebuild of the whole block. activeEditNode (a DOM node)
+// is dead -- nothing sets it anymore, kept only because the check is
+// harmless and documents the old canvas-era edit path it used to gate.
 const onBlockApply = (expr) => {
+  if (activeBlockEditRange) {
+    const range = activeBlockEditRange;
+    activeBlockEditRange = null;
+    if (!expr) { isBlockModalOpen.value = false; return; }
+    const insert = range.kind === 'new-elif' ? `{% elif ${expr} %}\n\n` : expr;
+    visualCodeMirrorView?.dispatch({ changes: { from: range.from, to: range.to, insert } });
+    isBlockModalOpen.value = false;
+    return;
+  }
+
   if (!expr || blockType.value === 'elif' || activeEditNode) {
     isBlockModalOpen.value = false;
     return;
@@ -3590,6 +4096,70 @@ body.dark-theme .code-editor-wrapper .cm-content {
   font-size: 0.78rem;
   vertical-align: middle;
 }
+
+/* Phase D of the Visual-editor rewrite: for/if/macro/set block widgets
+   (header/branch/footer line-replacements + collapsed macro/set summary). */
+.j-block-head, .j-block-branch, .j-block-foot, .j-block-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  border-radius: 4px;
+  user-select: none;
+}
+
+.j-block-head, .j-block-collapsed { margin-top: 4px; font-weight: 600; }
+.j-block-branch { margin-left: 0; }
+.j-block-foot { margin-bottom: 4px; opacity: 0.75; }
+
+.j-block-head-for { background-color: var(--color-primary-light); border: 1px solid var(--border-focus); }
+.j-block-head-if { background-color: var(--color-warning-light); border: 1px solid var(--color-warning); }
+.j-block-head-macro, .j-block-head-set { background-color: var(--bg-tertiary, #f1f3f5); border: 1px solid var(--border-color); }
+
+.j-block-icon { font-size: 0.85rem; }
+.j-block-label { font-weight: 700; letter-spacing: 0.02em; opacity: 0.8; }
+
+.j-block-cond {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  padding: 0 2px;
+}
+.j-block-cond:hover { text-decoration: underline dotted; }
+
+.j-block-actions { display: inline-flex; gap: 2px; flex-shrink: 0; }
+
+.j-block-btn {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.72rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  opacity: 0.7;
+  color: inherit;
+}
+.j-block-btn:hover { opacity: 1; background-color: rgba(0, 0, 0, 0.08); }
+.j-block-chevron { font-size: 0.7rem; }
+.j-block-delete:hover { background-color: rgba(220, 38, 38, 0.15); }
+
+/* Body lines between a block's header/branch/footer widgets -- real,
+   still-editable text, only ever given a left border + slight indent so
+   nested blocks read visually like nested brackets. Multiple decorations
+   stack their classes on a deeply-nested line (CodeMirror merges the
+   `attributes` of several Decoration.line() ranges at the same line). */
+.cm-jinja-body {
+  border-left: 2px solid var(--border-color);
+  padding-left: 10px;
+  margin-left: 4px;
+}
+.cm-jinja-body-for { border-left-color: var(--color-primary); }
+.cm-jinja-body-if { border-left-color: var(--color-warning); }
 
 .latex-chip {
   cursor: pointer;

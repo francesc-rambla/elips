@@ -98,10 +98,18 @@ async function testVisualEditor() {
 
   const visualText = await page.evaluate(() => window.__visualEditorTest.visualContent()?.textContent || null);
   if (!visualText) throw new Error('No s\'ha trobat el contenidor visible de CodeMirror a la pestanya Visual');
-  if (!visualText.includes('{% for part in pres.parts %}') || !visualText.includes('**negreta**')) {
+  // Since Phase D, "{% for ... %}" no longer appears literally in the
+  // rendered DOM's textContent -- its whole line is replaced by a
+  // .j-block-head widget (see the plan's block-widget design), same as
+  // "{{ ... }}" chips since Phase C. The underlying document/editorText
+  // (checked below via window.store.templateText, never the rendered DOM)
+  // is what must never lose that raw text.
+  if (!visualText.includes('**negreta**')) {
     throw new Error('El text font no es mostra correctament a la pestanya Visual: ' + visualText);
   }
-  console.log('  ✓ La pestanya Visual mostra el text font (CodeMirror), sense errors.');
+  const hasForBlockWidget = await page.evaluate(() => !!window.__visualEditorTest.visualContent()?.querySelector('.j-block-head-for'));
+  if (!hasForBlockWidget) throw new Error('El bloc "{% for %}" no s\'ha renderitzat com a widget a la pestanya Visual');
+  console.log('  ✓ La pestanya Visual mostra el text font (CodeMirror) i el bloc FOR com a widget, sense errors.');
 
   // Round-trip: switch to Code, back to Visual, verify source text is intact
   // (this is exactly Phase A's own acceptance criterion: tab switches must
