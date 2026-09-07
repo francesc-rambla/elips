@@ -21,7 +21,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import { isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
 import { useLoopContext } from '../composables/useLoopContext';
-import { useMarkdownJinjaCompiler, htmlToMarkdown } from '../composables/useMarkdownJinjaCompiler';
+import { useMarkdownJinjaCompiler, htmlToMarkdown, buildJinjaBlockHtml } from '../composables/useMarkdownJinjaCompiler';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { useEditHistory } from '../composables/useEditHistory';
 import { EditorState as CmEditorState } from '@codemirror/state';
@@ -1237,8 +1237,8 @@ const openVarModal = (node = null) => {
 // node) vs. inserted fresh (no node yet — only reachable for 'for'/'if'
 // today, since macro/set have no toolbar "insert" button, only in-place
 // editing of tags already present in the source).
-const EDIT_TITLES = { for: 'Editar Bucle (FOR)', elif: 'Editar branca O SI (ELIF)', macro: 'Editar Macro', set: 'Editar Assignació (SET)' };
-const NEW_TITLES = { for: 'Nou Bucle (FOR)' };
+const EDIT_TITLES = { for: 'Editar Bucle (FOR)', elif: 'Editar branca O SI (ELIF)', macro: 'Editar Macro', set: 'Editar Bloc SET', 'set-inline': 'Editar Assignació (SET)' };
+const NEW_TITLES = { for: 'Nou Bucle (FOR)', macro: 'Nou Macro', set: 'Nou Bloc SET' };
 
 const openBlockModal = (type, node = null) => {
   saveSelection();
@@ -1829,83 +1829,20 @@ const onBlockApply = (expr) => {
         syncVisualToCode();
       }
     } else {
-      const isFor = blockType.value === 'for';
-      const block = document.createElement('div');
-      block.className = 'jinja-block';
-      block.setAttribute('contenteditable', 'false');
-      block.setAttribute('data-type', blockType.value);
-      
-      block.innerHTML = `
-        <div class="j-head" data-type="${blockType.value}">
-          <div style="display:flex;align-items:center;gap:4px;">
-            ${isFor ? '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>' : '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>'}
-            <button class="j-btn-mini j-head-edit-btn" style="background:none;border:none;color:inherit;padding:0;display:inline-flex;align-items:center;cursor:pointer;" title="Edita la condició"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
-            ${isFor ? '<span style="font-weight:700;color:var(--color-primary);">PER CADA:</span>' : '<span style="font-weight:700;color:#b45309;">SI:</span>'}
-            <span class="j-cond-text" data-cond="${expr}">${expr}</span>
-          </div>
-          <div class="j-actions">
-            <button class="j-btn-mini btn-layout" style="background-color:var(--color-primary);color:white;border:none;display:inline-flex;align-items:center;gap:3px;" title="Canvia a mode integrat al text (Inline)"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> <span>Inline</span></button>
-            ${isFor ? '' : '<button class="j-btn-mini btn-elif" title="Afegeix branca O SI (ELIF)">+ ELIF</button><button class="j-btn-mini btn-else" title="Afegeix branca EN CAS CONTRARI (ELSE)">+ ELSE</button>'}
-            <button class="j-btn-mini btn-trash" style="background-color:var(--color-danger);color:white;border:none;display:inline-flex;align-items:center;justify-content:center;" title="Elimina el bloc"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
-          </div>
-        </div>
-        <div class="j-content" contenteditable="true"><br></div>
-        <div class="j-footer"><span>${isFor ? 'FINAL BUCLE' : 'FINAL CONDICIONAL'}</span></div>
-      `;
-      
-      const newCondText = block.querySelector('.j-cond-text');
-      newCondText.onclick = (e) => {
-        e.stopPropagation();
-        openBlockModal(blockType.value, e.target);
-      };
-      block.querySelector('.j-head-edit-btn').onclick = (e) => {
-        e.stopPropagation();
-        openBlockModal(blockType.value, newCondText);
-      };
-
-      block.querySelector('.btn-trash').onclick = () => {
-        block.remove();
-        syncVisualToCode();
-      };
-      
-      if (!isFor) {
-        block.querySelector('.btn-elif').onclick = (e) => {
-          e.stopPropagation();
-          saveSelection();
-          activeBlockForNewBranch = block;
-          openBlockModal('elif');
-        };
-
-        block.querySelector('.btn-else').onclick = (e) => {
-          e.stopPropagation();
-          saveSelection();
-          e.target.style.display = 'none';
-          const branch = document.createElement('div');
-          branch.className = 'j-branch';
-          branch.setAttribute('data-type', 'else');
-          branch.innerHTML = `
-            <div style="display:flex;align-items:center;gap:4px;"><span style="font-weight:700;color:#b45309;">EN CAS CONTRARI</span></div>
-            <button class="j-btn-mini btn-branch-trash" style="background-color:var(--color-danger);color:white;border:none;display:inline-flex;align-items:center;justify-content:center;" title="Elimina la branca"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
-          `;
-          
-          branch.querySelector('.btn-branch-trash').onclick = () => {
-            block.querySelector('.btn-else').style.display = 'inline-block';
-            if (branch.nextElementSibling && branch.nextElementSibling.classList.contains('j-content')) {
-              branch.nextElementSibling.remove();
-            }
-            branch.remove();
-            syncVisualToCode();
-          };
-          
-          const body = document.createElement('div');
-          body.className = 'j-content';
-          body.setAttribute('contenteditable', 'true');
-          body.innerHTML = '<br>';
-          
-          insertBranchAtCursorOrFooter(block, branch, body);
-          syncVisualToCode();
-        };
-      }
+      // Built via the exact same buildJinjaBlockHtml the compiler itself
+      // uses (useMarkdownJinjaCompiler.js) for every for/if/macro/set block
+      // compiled from source, rather than a hand-duplicated copy of that
+      // markup here (which used to drift: e.g. .btn-layout was never wired
+      // by the old hand-built version, so clicking "Inline" on a
+      // never-yet-resynced new block silently did nothing). One
+      // implementation of "what a block looks like" -- this needs no
+      // per-button wiring at all, because the syncCodeToVisual() rebuild
+      // below (from the now-current source) wires every button the exact
+      // same way an existing, compiled-from-source block's already are.
+      const html = buildJinjaBlockHtml(blockType.value, [{ keyword: blockType.value, cond: expr, body: '' }], compileMarkdownToHtml);
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = html;
+      const block = wrapper.firstElementChild;
 
       if (savedRange) {
         savedRange.insertNode(block);
@@ -1914,17 +1851,23 @@ const onBlockApply = (expr) => {
       }
       ensureTrailingEditableLine(canvasRef.value);
       syncVisualToCode();
-      // A newly-inserted block is hand-built HTML with only a handful of its
-      // buttons wired directly above (.j-cond-text, .j-head-edit-btn,
-      // .btn-trash, .btn-elif/.btn-else) — .btn-layout in particular was
-      // never one of them, so clicking "Inline" on a block that had never
-      // otherwise triggered a full re-render silently did nothing (no
-      // handler at all). Following up with syncCodeToVisual() rebuilds the
-      // canvas from the now-current source, which re-wires every button the
-      // same way an existing block's already are — syncCodeToVisual()
-      // already preserves the caret for exactly this "still-focused,
-      // in-place edit" case.
       syncCodeToVisual();
+      // macro/set default to collapsed (see COLLAPSIBLE_BLOCK_TYPES) --
+      // right after inserting one fresh, that would hide the very body the
+      // user presumably wants to start typing into immediately. Setting
+      // data-collapsed on `block` itself wouldn't survive the
+      // syncCodeToVisual() rebuild just above (it replaces the canvas's
+      // whole innerHTML from source, and collapse state isn't part of the
+      // source text) -- so instead, re-find the block by type+condition in
+      // the now-rebuilt canvas and expand it there. Matches by data-cond
+      // rather than any other identity, since that's the one thing
+      // guaranteed to still be exactly `expr` post-rebuild; a pre-existing
+      // block sharing the exact same signature is a rare enough coincidence
+      // to not be worth guarding against.
+      if (blockType.value === 'macro' || blockType.value === 'set') {
+        const inserted = Array.from(canvasRef.value.querySelectorAll(`.jinja-block[data-type="${blockType.value}"]`)).find((el) => el.getAttribute('data-cond') === expr);
+        if (inserted) inserted.setAttribute('data-collapsed', 'false');
+      }
     }
   }
   isBlockModalOpen.value = false;
@@ -2182,7 +2125,7 @@ const syncCodeToVisual = () => {
         e.stopPropagation();
         c.dataset.collapsed = c.dataset.collapsed === 'true' ? 'false' : 'true';
       };
-      c.ondblclick = (e) => { e.stopPropagation(); openBlockModal('set', c); };
+      c.ondblclick = (e) => { e.stopPropagation(); openBlockModal('set-inline', c); };
     });
 
     canvasRef.value.querySelectorAll('.latex-chip').forEach(c => {
@@ -3313,6 +3256,16 @@ onUnmounted(() => {
       <button type="button" class="btn btn-secondary btn-tb" style="display: inline-flex; align-items: center; gap: 3px;" @click="openBlockModal('for')" title="Insereix bucle FOR">
         <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
         <span>FOR</span>
+      </button>
+
+      <button type="button" class="btn btn-secondary btn-tb" style="display: inline-flex; align-items: center; gap: 3px;" @click="openBlockModal('macro')" title="Insereix un bloc MACRO reutilitzable">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <span>MACRO</span>
+      </button>
+
+      <button type="button" class="btn btn-secondary btn-tb" style="display: inline-flex; align-items: center; gap: 3px;" @click="openBlockModal('set')" title="Insereix un bloc SET (captura contingut en una variable)">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="9" x2="19" y2="9"/><line x1="5" y1="15" x2="19" y2="15"/></svg>
+        <span>SET</span>
       </button>
 
       <button type="button" class="btn btn-secondary btn-tb" style="font-weight: bold; color: var(--color-primary);" @click="openSpecialCharModal()" title="Insereix caràcters especials (guió llarg, espai no separable, etc.)">

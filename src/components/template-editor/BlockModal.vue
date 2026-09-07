@@ -52,9 +52,16 @@ const blockExprInputRef = ref(null);
 // and 'set' (a "name = expression" assignment): all four are just one raw
 // Jinja2 expression string edited in one box, so no new form fields are
 // needed, only friendlier copy per blockType.
+// 'set' is the block-capture form ({% set nom %}...{% endset %} -- just a
+// bare name, like macro/for/if it opens a body); 'set-inline' is the
+// single-line assignment ({% set nom = expr %}, no body) edited via the
+// .j-set-chip's own double-click. Two different Jinja2 constructs sharing
+// this one generic modal, so they need different field copy even though
+// both ultimately just feed one raw string into onBlockApply.
 const BLOCK_EXPR_FIELD_CONFIG = {
   macro: { label: 'Nom i paràmetres del Macro (Jinja2)', placeholder: 'taula_resum(files, columnes=3)', hint: 'Escriviu el nom del macro i, entre parèntesis, els seus paràmetres.' },
-  set: { label: 'Assignació (Jinja2)', placeholder: 'resultat = economia.pressupost_total * 1.21', hint: 'Escriviu "nom_variable = expressió". Podeu fer clic a les variables del navegador lateral per anar-les inserint on estigui el cursor.' },
+  set: { label: 'Nom de la variable (Jinja2)', placeholder: 'resultat', hint: 'Escriviu el nom de la variable que capturarà el contingut del bloc.' },
+  'set-inline': { label: 'Assignació (Jinja2)', placeholder: 'resultat = economia.pressupost_total * 1.21', hint: 'Escriviu "nom_variable = expressió". Podeu fer clic a les variables del navegador lateral per anar-les inserint on estigui el cursor.' },
 };
 const DEFAULT_EXPR_FIELD_CONFIG = { label: 'Expressió de la Condició (Jinja2)', placeholder: 'economia.pressupost_total > 50000', hint: "Escriviu la condició lògica. Podeu fer clic a les variables del navegador lateral per anar-les inserint on estigui el cursor." };
 const blockExprFieldConfig = computed(() => BLOCK_EXPR_FIELD_CONFIG[props.blockType] || DEFAULT_EXPR_FIELD_CONFIG);

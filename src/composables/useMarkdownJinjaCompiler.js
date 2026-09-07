@@ -393,7 +393,10 @@ const btnBranchTrashHtml = () => '<button class="j-btn-mini btn-branch-trash" st
 const btnHeadEditHtml = () => `<button class="j-btn-mini j-head-edit-btn" style="background:none;border:none;color:inherit;padding:0;display:inline-flex;align-items:center;cursor:pointer;" title="Edita la condició">${ICON_EDIT}</button>`;
 const btnCollapseHtml = () => `<button class="j-btn-mini btn-collapse" style="background:none;border:1px solid currentColor;color:inherit;display:inline-flex;align-items:center;justify-content:center;" title="Col·lapsa">${ICON_COLLAPSE}</button>`;
 
-const forHeadHtml = (cond) => { const c = escapeHtml(cond); return `<div class="j-head" data-type="for"><div style="display:flex;align-items:center;gap:4px;">${ICON_LOOP}${btnHeadEditHtml()} <span style="font-weight:700;color:var(--color-primary);">PER CADA:</span> <span class="j-cond-text" data-cond="${c}">${c}</span></div><div class="j-actions">${btnLayoutHtml()}${btnTrashHtml('Elimina el bucle')}</div></div>`; };
+// The "+ ELSE" button here is Jinja2's real for-else (runs when the loop's
+// iterable turns out empty, see ALLOWED_BRANCH_KEYWORDS) -- no "+ ELIF",
+// for-loops don't have one.
+const forHeadHtml = (cond) => { const c = escapeHtml(cond); return `<div class="j-head" data-type="for"><div style="display:flex;align-items:center;gap:4px;">${ICON_LOOP}${btnHeadEditHtml()} <span style="font-weight:700;color:var(--color-primary);">PER CADA:</span> <span class="j-cond-text" data-cond="${c}">${c}</span></div><div class="j-actions">${btnLayoutHtml()}<button class="j-btn-mini btn-else" title="Afegeix branca EN CAS CONTRARI (s'executa si la llista és buida)">+ ELSE</button>${btnTrashHtml('Elimina el bucle')}</div></div>`; };
 const ifHeadHtml = (cond) => { const c = escapeHtml(cond); return `<div class="j-head" data-type="if"><div style="display:flex;align-items:center;gap:4px;">${ICON_IF}${btnHeadEditHtml()} <span style="font-weight:700;color:#b45309;">SI:</span> <span class="j-cond-text" data-cond="${c}">${c}</span></div><div class="j-actions">${btnLayoutHtml()}<button class="j-btn-mini btn-elif" title="Afegeix branca O SI (ELIF)">+ ELIF</button><button class="j-btn-mini btn-else" title="Afegeix branca EN CAS CONTRARI (ELSE)">+ ELSE</button>${btnTrashHtml('Elimina el condicional')}</div></div>`; };
 // macro/set have no elif/else/inline-layout affordances -- just the
 // collapse toggle (they're collapsed by default, see COLLAPSIBLE_BLOCK_TYPES)
@@ -423,7 +426,12 @@ const collapsedChipHtml = (type, cond) => `<span class="j-collapsed-chip" conten
 // (macro/set never have more than one branch -- Jinja2 has no elif/else for
 // them -- but nothing here assumes that, so a malformed template with a
 // stray elif/else still degrades the same way it always has.)
-const buildJinjaBlockHtml = (type, branches, compileFn) => {
+//
+// Exported (unlike the rest of this file's HTML builders) so
+// TemplateEditor.vue's onBlockApply can build a freshly-*inserted* block's
+// markup the exact same way an existing one gets compiled from source --
+// one implementation of "what a for/if/macro/set block looks like", not two.
+export const buildJinjaBlockHtml = (type, branches, compileFn) => {
   const openCond = branches[0].cond;
   const collapsible = COLLAPSIBLE_BLOCK_TYPES.has(type);
   let html = `<div class="jinja-block" contenteditable="false" data-layout="block" data-type="${type}"${collapsible ? ' data-collapsed="true"' : ''} data-cond="${escapeHtml(openCond)}">`;
