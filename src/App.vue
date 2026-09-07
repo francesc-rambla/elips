@@ -2078,6 +2078,21 @@ const generateDocuments = async () => {
           <div class="ribbon-group-label">FORMAT</div>
         </div>
 
+        <!-- Group: Desfer/Refer -->
+        <div class="ribbon-group-card">
+          <div class="ribbon-group-body" style="display: flex; gap: 3px; height: 28px;">
+            <button class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 28px; display: inline-flex; align-items: center; gap: 4px;" :disabled="!(store.editorActions?.canUndo && store.editorActions.canUndo())" @click="store.editorActions?.undo && store.editorActions.undo()" title="Desfer darrer canvi (Ctrl+Z)">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+              <span v-if="store.config.showButtonTexts">Desfés</span>
+            </button>
+            <button class="btn btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; height: 28px; display: inline-flex; align-items: center; gap: 4px;" :disabled="!(store.editorActions?.canRedo && store.editorActions.canRedo())" @click="store.editorActions?.redo && store.editorActions.redo()" title="Refer canvi (Ctrl+Y)">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
+              <span v-if="store.config.showButtonTexts">Refés</span>
+            </button>
+          </div>
+          <div class="ribbon-group-label">DESFER</div>
+        </div>
+
         <!-- Group: Insereix -->
         <div class="ribbon-group-card">
           <div class="ribbon-group-body" style="display: grid; grid-template-rows: repeat(2, 28px); grid-auto-flow: column; gap: 4px;">
@@ -2329,8 +2344,11 @@ const generateDocuments = async () => {
             <button class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; font-weight: bold; color: var(--color-primary);" @click="store.editorActions?.openSpecialCharModal && store.editorActions.openSpecialCharModal()" title="Ω Insereix caràcters especials (guió llarg, espai no separable, etc.)">Ω</button>
           </template>
 
-          <button 
-            class="btn btn-success" 
+          <button class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center;" :disabled="!(store.editorActions?.canUndo && store.editorActions.canUndo())" @click="store.editorActions?.undo && store.editorActions.undo()" title="Desfer darrer canvi (Ctrl+Z)"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
+          <button class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem; height: 26px; display: inline-flex; align-items: center;" :disabled="!(store.editorActions?.canRedo && store.editorActions.canRedo())" @click="store.editorActions?.redo && store.editorActions.redo()" title="Refer canvi (Ctrl+Y)"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg></button>
+
+          <button
+            class="btn btn-success"
             style="padding: 2px 7px; font-size: 0.72rem; height: 26px; font-weight: 700; border: none; display: inline-flex; align-items: center;"
             :disabled="store.generating"
             @click="store.editorActions?.emitGenerate && store.editorActions.emitGenerate()"

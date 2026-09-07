@@ -23,6 +23,7 @@ import { isNonEmptySchema, universalFindSchema } from '../composables/useSchemaR
 import { useLoopContext } from '../composables/useLoopContext';
 import { useMarkdownJinjaCompiler, htmlToMarkdown } from '../composables/useMarkdownJinjaCompiler';
 import { useWasmEngines } from '../composables/useWasmEngines';
+import { useEditHistory } from '../composables/useEditHistory';
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
 import SpecialCharPickerModal from './template-editor/SpecialCharPickerModal.vue';
@@ -44,29 +45,37 @@ const activeEditorTab = ref('visual'); // 'visual' or 'code'
 
 const editorText = ref(props.isCellMode ? (props.modelValue || '') : (store.templateText || props.modelValue || ''));
 
-// Local cell history stack for isCellMode
-const cellHistory = ref([]);
-const cellHistoryIndex = ref(-1);
+// Undo/redo history — ONE shared stack regardless of mode, since Visual and
+// Codi both read/write the same editorText: an edit made from either tab
+// pushes into the same stack, and Undo/Redo work no matter which tab is
+// currently active. See useEditHistory.js for why this is a separate
+// mechanism from useVersionHistory.js's hourly/manual checkpoints.
+const editHistory = useEditHistory(editorText.value);
+// Guards the watch(editorText, ...) below from re-pushing the very value
+// undo()/redo() just applied back onto the stack as if it were a new edit
+// (which would silently cancel the undo/redo the instant it happened).
+let isApplyingHistory = false;
 
-const canCellUndo = computed(() => props.isCellMode && cellHistoryIndex.value > 0);
-const canCellRedo = computed(() => props.isCellMode && cellHistoryIndex.value < cellHistory.value.length - 1);
-
-const cellUndo = () => {
-  if (canCellUndo.value) {
-    cellHistoryIndex.value--;
-    const prev = cellHistory.value[cellHistoryIndex.value];
-    editorText.value = prev;
-    nextTick(() => syncCodeToVisual());
-  }
+const undoEdit = () => {
+  const prev = editHistory.undo();
+  if (prev === undefined) return;
+  isApplyingHistory = true;
+  editorText.value = prev;
+  nextTick(() => {
+    syncCodeToVisual();
+    isApplyingHistory = false;
+  });
 };
 
-const cellRedo = () => {
-  if (canCellRedo.value) {
-    cellHistoryIndex.value++;
-    const next = cellHistory.value[cellHistoryIndex.value];
-    editorText.value = next;
-    nextTick(() => syncCodeToVisual());
-  }
+const redoEdit = () => {
+  const next = editHistory.redo();
+  if (next === undefined) return;
+  isApplyingHistory = true;
+  editorText.value = next;
+  nextTick(() => {
+    syncCodeToVisual();
+    isApplyingHistory = false;
+  });
 };
 
 // Watch props.modelValue if in cell mode
@@ -74,10 +83,10 @@ if (props.isCellMode) {
   watch(() => props.modelValue, (newVal) => {
     if (editorText.value !== newVal) {
       editorText.value = newVal || '';
-      if (cellHistory.value.length === 0) {
-        cellHistory.value = [newVal || ''];
-        cellHistoryIndex.value = 0;
-      }
+      // A genuinely new external value means a *different* cell/field is
+      // now being edited (openCellEditor() in DataInspector.vue) — undo
+      // history from whatever was open before must never carry over.
+      editHistory.reset(newVal || '');
       nextTick(() => {
         syncCodeToVisual();
       });
@@ -86,25 +95,23 @@ if (props.isCellMode) {
 
   watch(editorText, (newVal) => {
     emit('update:modelValue', newVal);
-    if (newVal !== undefined && cellHistory.value[cellHistoryIndex.value] !== newVal) {
-      if (cellHistoryIndex.value < cellHistory.value.length - 1) {
-        cellHistory.value = cellHistory.value.slice(0, cellHistoryIndex.value + 1);
-      }
-      cellHistory.value.push(newVal);
-      cellHistoryIndex.value = cellHistory.value.length - 1;
-    }
+    if (!isApplyingHistory) editHistory.push(newVal);
   });
 } else {
   // Main Template Mode: Single Source of Truth is store.templateText
   watch(() => store.templateText, (newVal) => {
     if (editorText.value !== newVal) {
       editorText.value = newVal || '';
+      // Same reasoning as the cell-mode branch above: templateText changing
+      // out from under us means a different document/project/version-history
+      // restore just loaded, not an edit — reset, don't accumulate.
+      editHistory.reset(newVal || '');
       nextTick(() => {
         syncCodeToVisual();
       });
     }
   }, { immediate: true });
-  
+
   watch(editorText, (newVal) => {
     emit('update:modelValue', newVal);
     if (store.templateText !== newVal) {
@@ -115,6 +122,7 @@ if (props.isCellMode) {
       localStorage.setItem(`${pName}:templateText_backup`, newVal);
       localStorage.setItem('templateText_backup', newVal);
     }
+    if (!isApplyingHistory) editHistory.push(newVal);
   });
 }
 
@@ -2451,6 +2459,23 @@ const handleGlobalKeyDown = (e) => {
 
   // Handle Ctrl+1 .. Ctrl+6 shortcuts for Headings H1..H6 and Ctrl+B / Ctrl+I
   if ((e.ctrlKey || e.metaKey) && !isAnyModalOpen) {
+    // Undo/Redo, unlike the formatting shortcuts below, is only handled here
+    // while this editor (canvas or textarea) is actually focused — Ctrl+Z is
+    // a near-universal browser shortcut, and this component stays mounted
+    // for the app's whole lifetime (App.vue only CSS-hides it on other
+    // tabs), so an unscoped handler would hijack Ctrl+Z away from an
+    // unrelated focused input elsewhere on the page.
+    const isEditorFocused = document.activeElement === canvasRef.value || document.activeElement === textareaRef.value;
+    if (isEditorFocused && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      undoEdit();
+      return;
+    }
+    if (isEditorFocused && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
+      e.preventDefault();
+      redoEdit();
+      return;
+    }
     if (['1', '2', '3', '4', '5', '6'].includes(e.key)) {
       e.preventDefault();
       formatBlock(`H${e.key}`);
@@ -2812,8 +2837,15 @@ watch(() => activeEditorTab.value, () => {
 watch(() => editorText.value, () => {
   if (activeEditorTab.value === 'code') {
     updateActiveLoopContext();
-    recomputeLineHeights();
   }
+  // Recomputed regardless of which tab is active — highlightedCodeHtml
+  // (the backdrop's actual markup) is a plain computed over editorText, so
+  // it already updates immediately on every edit, from either tab. Gating
+  // this measurement to the Codi tab left the gutter/wrap-height cache
+  // (lineHeightsPx) stale after editing from Visual, until the next tab
+  // switch remeasured it — a visible desync between the highlighted text
+  // and the gutter/line-wrap the moment you opened Codi.
+  recomputeLineHeights();
 });
 
 // TemplateEditor stays mounted for the app's whole lifetime — App.vue only
@@ -2927,6 +2959,10 @@ onMounted(() => {
       emitGenerate: () => emitGenerate(),
       getActiveTab: () => activeEditorTab.value,
       scrollToLine: (lineIndex) => scrollToLine(lineIndex),
+      undo: () => undoEdit(),
+      redo: () => redoEdit(),
+      canUndo: () => editHistory.canUndo.value,
+      canRedo: () => editHistory.canRedo.value,
     };
   }
   syncCodeToVisual();
@@ -3041,28 +3077,28 @@ onUnmounted(() => {
 
       <div style="height: 16px; width: 1px; background: var(--border-color); margin: 0 1px; flex-shrink: 0;"></div>
 
-      <!-- Cell-Exclusive History Buttons -->
-      <button 
-        type="button" 
-        class="btn btn-secondary btn-tb" 
-        :disabled="!canCellUndo"
-        @click="cellUndo" 
-        title="Històric exclusiu de la cel·la: Desfer darrer canvi"
+      <!-- Undo/Redo: one shared history across Visual and Codi (useEditHistory.js) -->
+      <button
+        type="button"
+        class="btn btn-secondary btn-tb"
+        :disabled="!editHistory.canUndo.value"
+        @click="undoEdit"
+        title="Desfer darrer canvi (Ctrl+Z)"
         style="display: inline-flex; align-items: center; gap: 3px;"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
-        <span>Desfés Cel·la</span>
+        <span>Desfés</span>
       </button>
-      <button 
-        type="button" 
-        class="btn btn-secondary btn-tb" 
-        :disabled="!canCellRedo"
-        @click="cellRedo" 
-        title="Històric exclusiu de la cel·la: Refer canvi"
+      <button
+        type="button"
+        class="btn btn-secondary btn-tb"
+        :disabled="!editHistory.canRedo.value"
+        @click="redoEdit"
+        title="Refer canvi (Ctrl+Y)"
         style="display: inline-flex; align-items: center; gap: 3px;"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
-        <span>Refés Cel·la</span>
+        <span>Refés</span>
       </button>
     </div>
 
