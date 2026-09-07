@@ -24,6 +24,9 @@ import { useLoopContext } from '../composables/useLoopContext';
 import { useMarkdownJinjaCompiler, htmlToMarkdown } from '../composables/useMarkdownJinjaCompiler';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { useEditHistory } from '../composables/useEditHistory';
+import { EditorState as CmEditorState } from '@codemirror/state';
+import { EditorView as CmEditorView, keymap as CmKeymap, lineNumbers as CmLineNumbers, Decoration as CmDecoration, ViewPlugin as CmViewPlugin, placeholder as cmPlaceholder } from '@codemirror/view';
+import { defaultKeymap as cmDefaultKeymap } from '@codemirror/commands';
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
 import SpecialCharPickerModal from './template-editor/SpecialCharPickerModal.vue';
@@ -147,9 +150,10 @@ const restoreBackupTemplate = () => {
 
 // DOM refs
 const canvasRef = ref(null);
+// textareaRef is NOT a template ref here: it starts null, then
+// createCodeMirrorView() (see the CodeMirror setup below) assigns it the
+// textarea-shaped adapter object described there.
 const textareaRef = ref(null);
-const codeGutterRef = ref(null);
-const codeHighlightRef = ref(null);
 const mathModalRef = ref(null); // Extracted-modal component refs (for the global Ctrl+Enter apply shortcut)
 const tableModalRef = ref(null);
 const blockModalRef = ref(null);
@@ -419,77 +423,83 @@ const setScrollFraction = (el, fraction) => {
   el.scrollTop = max > 0 ? fraction * max : 0;
 };
 
-// Per-line pixel heights for the code editor's line-number gutter. This is
-// a *text* editor, not a code editor in the usual sense — its lines are
-// prose paragraphs, not short statements — so wrapping stays on, and a
-// wrapped line's own number needs to span the full height its wrapped
-// content actually takes rather than a single fixed row. There's no direct
-// API for "how tall does this one line render wrapped", so it's measured
-// via a hidden mirror element built with the textarea's exact font/width/
-// white-space (all lines measured in one batch — one reflow, not one per
-// line — by giving each its own child element and reading every
-// getBoundingClientRect() after a single append).
-const lineHeightsPx = ref([]);
-let lineHeightsRaf = null;
-let lineHeightsResizeObserver = null;
+// ============================================================================
+// Code tab: CodeMirror 6, replacing an earlier hand-rolled "invisible
+// textarea + syntax-highlight <pre> behind it + a separately-measured
+// line-number gutter" -- a design that needed three parallel pieces (text,
+// highlight markup, per-line pixel heights) kept in sync by hand on every
+// edit/scroll/resize, and was the direct cause of a real desync bug (the
+// gutter's cached heights going stale after editing from the Visual tab).
+// CodeMirror owns gutter + wrapping + highlighting as ONE rendering pass,
+// so there is no second data structure that can fall out of sync with the
+// text by construction.
+//
+// Every OTHER function in this file that manipulates the code editor was
+// written against a plain <textarea>'s API (.value, .selectionStart/End,
+// .setSelectionRange(), .focus(), .scrollTop/scrollHeight/clientWidth) --
+// rewriting each of those ~30 call sites to CodeMirror's own
+// state/Transaction API individually would multiply the same handful of
+// translations across a dozen+ functions for no real benefit (they already
+// follow the exact "read selection -> compute new text+position -> write
+// text -> restore selection" shape this maps onto). Instead, `textareaRef`
+// (used everywhere else unchanged) holds a plain object that implements
+// just the subset of that API actually used, backed by the real
+// CodeMirror EditorView -- an adapter, not a live DOM node.
+// ============================================================================
+let codeMirrorView = null;
+const codeMirrorContainerRef = ref(null);
 
-const recomputeLineHeights = () => {
-  if (lineHeightsRaf) cancelAnimationFrame(lineHeightsRaf);
-  lineHeightsRaf = requestAnimationFrame(() => {
-    lineHeightsRaf = null;
-    const ta = textareaRef.value;
-    if (!ta || ta.clientWidth === 0) return;
-    const lines = editorText.value.split('\n');
-    const style = getComputedStyle(ta);
-    const mirror = document.createElement('div');
-    Object.assign(mirror.style, {
-      position: 'absolute', visibility: 'hidden', top: '0', left: '-9999px',
-      whiteSpace: 'pre-wrap', overflowWrap: 'break-word', wordBreak: style.wordBreak,
-      font: style.font, letterSpacing: style.letterSpacing, lineHeight: style.lineHeight,
-      padding: style.padding, border: style.border, boxSizing: style.boxSizing,
-      width: `${ta.clientWidth}px`,
-    });
-    lines.forEach((line) => {
-      const div = document.createElement('div');
-      div.textContent = line.length ? line : ' ';
-      mirror.appendChild(div);
-    });
-    document.body.appendChild(mirror);
-    lineHeightsPx.value = Array.from(mirror.children).map((child) => child.getBoundingClientRect().height);
-    document.body.removeChild(mirror);
-  });
-};
+const makeTextareaShim = (view) => ({
+  get value() { return view.state.doc.toString(); },
+  set value(v) {
+    const cur = view.state.doc.toString();
+    if (cur === v) return;
+    view.dispatch({ changes: { from: 0, to: cur.length, insert: v || '' } });
+  },
+  get selectionStart() { return view.state.selection.main.from; },
+  // A real textarea allows assigning .selectionStart/.selectionEnd directly
+  // (not just via setSelectionRange()) — one call site in this file does
+  // `txt.selectionStart = txt.selectionEnd = x` to collapse the cursor,
+  // so both need real setters, not just getters.
+  set selectionStart(v) { this.setSelectionRange(v, Math.max(v, view.state.selection.main.to)); },
+  get selectionEnd() { return view.state.selection.main.to; },
+  set selectionEnd(v) { this.setSelectionRange(Math.min(view.state.selection.main.from, v), v); },
+  setSelectionRange(start, end) {
+    const len = view.state.doc.length;
+    const a = Math.max(0, Math.min(start ?? 0, len));
+    const b = Math.max(0, Math.min(end ?? a, len));
+    view.dispatch({ selection: { anchor: a, head: b }, scrollIntoView: true });
+  },
+  focus() { view.focus(); },
+  get scrollTop() { return view.scrollDOM.scrollTop; },
+  set scrollTop(v) { view.scrollDOM.scrollTop = v; },
+  get scrollHeight() { return view.scrollDOM.scrollHeight; },
+  get clientHeight() { return view.scrollDOM.clientHeight; },
+  get clientWidth() { return view.scrollDOM.clientWidth; },
+  // The one piece of real DOM identity this shim can't fake: code that
+  // compares document.activeElement against "the code editor" needs
+  // CodeMirror's actual editable DOM node, not this synthetic object.
+  get contentDOM() { return view.contentDOM; },
+});
 
-// Keeps the line-number gutter and the syntax-highlight backdrop scrolled
-// exactly with the (invisible-text) textarea sitting on top of them.
-const onCodeScroll = () => {
-  if (!textareaRef.value) return;
-  const { scrollTop } = textareaRef.value;
-  if (codeGutterRef.value) codeGutterRef.value.scrollTop = scrollTop;
-  if (codeHighlightRef.value) codeHighlightRef.value.scrollTop = scrollTop;
-  saveScrollState();
-};
-
-const escapeHtmlForHighlight = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-// Best-effort, single-pass Jinja2/Markdown syntax highlighter for the code
-// editor's backdrop — a lightweight regex tokenizer, not a real grammar.
-// Tokens never nest (e.g. a {{ var }} inside a heading line is swallowed
-// whole by the heading token, not separately colored) — an accepted
-// trade-off for staying simple and never at risk of corrupting anything,
-// since this only ever produces a purely decorative backdrop layer; the
-// actual editable text always lives untouched in the real <textarea>.
+// Best-effort, single-pass Jinja2/Markdown syntax highlighter -- a
+// lightweight regex tokenizer, not a real grammar (ported unchanged from
+// the previous backdrop-based implementation; only the output shape
+// changed, from an HTML string to CodeMirror decoration ranges). Tokens
+// never nest (e.g. a {{ var }} inside a heading line is swallowed whole by
+// the heading token) -- an accepted trade-off for staying simple, and
+// harmless by construction: a decoration is purely a visual class added on
+// top of the real text CodeMirror already holds, it can never corrupt or
+// lose content the way a parsing mistake in a real grammar might.
 const HIGHLIGHT_TOKEN_RE = /(<!--[\s\S]*?-->)|(\{%[\s\S]*?%\})|(\{\{[\s\S]*?\}\})|(\$\$[\s\S]*?\$\$)|(\$[^$\n]+\$)|(^#{1,6}\s.*$)|(\*\*[^\n*]+\*\*)|(\*[^\n*]+\*)/gm;
 
-const highlightJinjaMarkdown = (text) => {
-  let html = '';
-  let lastIndex = 0;
+const computeHighlightDecorations = (text) => {
+  const decos = [];
   let m;
   HIGHLIGHT_TOKEN_RE.lastIndex = 0;
   while ((m = HIGHLIGHT_TOKEN_RE.exec(text)) !== null) {
     const [full, comment, block, variable, mathDisplay, mathInline, header, bold, italic] = m;
     if (full.length === 0) { HIGHLIGHT_TOKEN_RE.lastIndex++; continue; }
-    html += escapeHtmlForHighlight(text.slice(lastIndex, m.index));
     let cls = '';
     if (comment) cls = 'tok-comment';
     else if (block) cls = 'tok-jinja-block';
@@ -498,14 +508,72 @@ const highlightJinjaMarkdown = (text) => {
     else if (header) cls = 'tok-header';
     else if (bold) cls = 'tok-bold';
     else if (italic) cls = 'tok-italic';
-    html += `<span class="${cls}">${escapeHtmlForHighlight(full)}</span>`;
-    lastIndex = m.index + full.length;
+    if (cls) decos.push(CmDecoration.mark({ class: cls }).range(m.index, m.index + full.length));
   }
-  html += escapeHtmlForHighlight(text.slice(lastIndex));
-  return html;
+  return CmDecoration.set(decos, true);
 };
 
-const highlightedCodeHtml = computed(() => highlightJinjaMarkdown(editorText.value || ''));
+const jinjaHighlightPlugin = CmViewPlugin.fromClass(class {
+  constructor(view) {
+    this.decorations = computeHighlightDecorations(view.state.doc.toString());
+  }
+  update(update) {
+    if (update.docChanged) {
+      this.decorations = computeHighlightDecorations(update.state.doc.toString());
+    }
+  }
+}, {
+  decorations: (v) => v.decorations,
+});
+
+// defaultKeymap ships plain editing (cursor movement, delete, indent...);
+// Ctrl+Z/Y are deliberately NOT bound here -- undoEdit/redoEdit (below) is
+// the single shared history across both tabs, wired directly in
+// handleGlobalKeyDown, and letting CodeMirror ALSO bind its own undo would
+// create two competing, disconnected history stacks for the same text.
+const CM_SAFE_KEYMAP = cmDefaultKeymap.filter((b) => {
+  const keys = [b.key, b.mac, b.win, b.linux].filter(Boolean);
+  return !keys.some((k) => /^Mod-(z|y)$/i.test(k) || /^Mod-Shift-z$/i.test(k));
+});
+
+const createCodeMirrorView = () => {
+  if (!codeMirrorContainerRef.value || codeMirrorView) return;
+  const state = CmEditorState.create({
+    doc: editorText.value || '',
+    extensions: [
+      CmLineNumbers(),
+      CmEditorView.lineWrapping,
+      jinjaHighlightPlugin,
+      cmPlaceholder('Escriu o edita la teva plantilla Jinja2 en Markdown aquí...'),
+      CmKeymap.of(CM_SAFE_KEYMAP),
+      CmEditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          const newText = update.state.doc.toString();
+          if (editorText.value !== newText) editorText.value = newText;
+        }
+        if (update.docChanged || update.selectionSet) updateActiveLoopContext();
+      }),
+      CmEditorView.theme({
+        '&': { height: '100%', fontSize: '0.85rem' },
+        '.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '1.6' },
+        '.cm-content, .cm-gutters': { minHeight: '100%' },
+      }),
+    ],
+  });
+  codeMirrorView = new CmEditorView({ state, parent: codeMirrorContainerRef.value });
+  codeMirrorView.scrollDOM.addEventListener('scroll', saveScrollState);
+  textareaRef.value = makeTextareaShim(codeMirrorView);
+};
+
+// Applies an editorText change that originated OUTSIDE CodeMirror (e.g. a
+// Visual-tab edit synced via syncVisualToCode(), an undo/redo snapshot, a
+// version-history restore) into the live view -- the shim's own `.value`
+// setter already no-ops when the text already matches (the common case:
+// this fires right after CodeMirror's OWN updateListener above set
+// editorText.value to match what CodeMirror already holds).
+watch(editorText, (newVal) => {
+  if (textareaRef.value) textareaRef.value.value = newVal;
+});
 
 // Check if document generation is ready to run
 const isGenerateReady = computed(() => {
@@ -2107,7 +2175,6 @@ const switchTab = (tab) => {
     if (tab === 'code' && textareaRef.value) {
       textareaRef.value.focus();
       textareaRef.value.setSelectionRange(sourceOffset, sourceOffset);
-      recomputeLineHeights();
       // Set *after* focus/selection — a browser's own "scroll the caret
       // into view" reaction to that would otherwise override it.
       setScrollFraction(textareaRef.value, scrollFraction);
@@ -2465,7 +2532,7 @@ const handleGlobalKeyDown = (e) => {
     // for the app's whole lifetime (App.vue only CSS-hides it on other
     // tabs), so an unscoped handler would hijack Ctrl+Z away from an
     // unrelated focused input elsewhere on the page.
-    const isEditorFocused = document.activeElement === canvasRef.value || document.activeElement === textareaRef.value;
+    const isEditorFocused = document.activeElement === canvasRef.value || document.activeElement === textareaRef.value?.contentDOM;
     if (isEditorFocused && e.key.toLowerCase() === 'z' && !e.shiftKey) {
       e.preventDefault();
       undoEdit();
@@ -2786,7 +2853,6 @@ const restoreCaretState = () => {
         textareaRef.value.focus();
         textareaRef.value.setSelectionRange(savedOffset, savedOffset);
       }
-      recomputeLineHeights();
       // Set *after* focus/selection — a browser's own "scroll the caret
       // into view" reaction to that would otherwise override it.
       setScrollFraction(textareaRef.value, savedScrollFraction);
@@ -2807,7 +2873,7 @@ const restoreCaretState = () => {
 // reload-restored scroll position: a late data-load re-render fired well
 // after restoreCaretState() had already applied it correctly.
 const isSelectionWithinActiveEditor = () => {
-  if (activeEditorTab.value === 'code') return document.activeElement === textareaRef.value;
+  if (activeEditorTab.value === 'code') return document.activeElement === textareaRef.value?.contentDOM;
   const sel = window.getSelection();
   return !!(canvasRef.value && sel && sel.rangeCount > 0 && canvasRef.value.contains(sel.getRangeAt(0).commonAncestorContainer));
 };
@@ -2838,14 +2904,6 @@ watch(() => editorText.value, () => {
   if (activeEditorTab.value === 'code') {
     updateActiveLoopContext();
   }
-  // Recomputed regardless of which tab is active — highlightedCodeHtml
-  // (the backdrop's actual markup) is a plain computed over editorText, so
-  // it already updates immediately on every edit, from either tab. Gating
-  // this measurement to the Codi tab left the gutter/wrap-height cache
-  // (lineHeightsPx) stale after editing from Visual, until the next tab
-  // switch remeasured it — a visible desync between the highlighted text
-  // and the gutter/line-wrap the moment you opened Codi.
-  recomputeLineHeights();
 });
 
 // TemplateEditor stays mounted for the app's whole lifetime — App.vue only
@@ -2919,20 +2977,14 @@ onMounted(() => {
       textareaRef.value.focus();
       textareaRef.value.setSelectionRange(charOffset, charOffset + targetLineText.length);
 
-      // Lines wrap to different heights now, so a uniform scrollHeight/
-      // totalLines estimate would land increasingly off for a document with
-      // long wrapped paragraphs above the target line. Use the real
-      // per-line heights already measured for the gutter when they're
-      // current for this text; the uniform estimate is still a reasonable
-      // fallback for the first jump before that measurement exists.
-      let scrollPos;
-      if (lineHeightsPx.value.length === lines.length) {
-        scrollPos = lineHeightsPx.value.slice(0, targetLine).reduce((sum, h) => sum + h, 0);
-      } else {
-        const totalLines = Math.max(lines.length, 1);
-        scrollPos = targetLine * (textareaRef.value.scrollHeight / totalLines);
+      // CodeMirror knows the real rendered (wrapped) vertical position of
+      // any character offset directly — lineBlockAt() replaces the old
+      // hand-measured per-line-height approximation (uniform scrollHeight/
+      // totalLines) entirely, and is exact rather than approximate.
+      if (codeMirrorView) {
+        const top = codeMirrorView.lineBlockAt(Math.min(charOffset, codeMirrorView.state.doc.length)).top;
+        textareaRef.value.scrollTop = Math.max(0, top - 80);
       }
-      textareaRef.value.scrollTop = Math.max(0, scrollPos - 80);
     }
   };
 
@@ -2965,27 +3017,20 @@ onMounted(() => {
       canRedo: () => editHistory.canRedo.value,
     };
   }
+  createCodeMirrorView();
   syncCodeToVisual();
   window.addEventListener('keydown', handleGlobalKeyDown);
   document.addEventListener('selectionchange', handleSelectionChange);
   restoreCaretState();
   updateActiveLoopContext();
-
-  // A width change (window resize, the panel being resized, browser zoom)
-  // changes where every wrapped line breaks, so the gutter's per-line
-  // heights need remeasuring — ResizeObserver catches all of those, unlike
-  // a plain window "resize" listener (which misses panel-only resizes).
-  if (textareaRef.value) {
-    lineHeightsResizeObserver = new ResizeObserver(() => recomputeLineHeights());
-    lineHeightsResizeObserver.observe(textareaRef.value);
-  }
 });
 
 onUnmounted(() => {
   delete window.__openPandocMetadataModal;
   window.removeEventListener('keydown', handleGlobalKeyDown);
   document.removeEventListener('selectionchange', handleSelectionChange);
-  lineHeightsResizeObserver?.disconnect();
+  codeMirrorView?.destroy();
+  codeMirrorView = null;
 });
 </script>
 
@@ -3127,36 +3172,12 @@ onUnmounted(() => {
           @scroll="saveScrollState"
         ></div>
 
-        <!-- Code Raw Editor: line-number gutter + syntax-highlighted backdrop
-             behind a transparent-text textarea (the textarea itself is the
-             one and only place the real text lives — the backdrop is a
-             purely visual, regenerated-on-every-keystroke layer, so a
-             highlighting bug can never corrupt or lose content). Long lines
-             wrap (this edits prose, not short code lines) — each gutter
-             number's own height is measured to match however many visual
-             rows its line actually wraps to, so it still lines up. -->
-        <div v-show="activeEditorTab === 'code'" class="code-editor-wrapper">
-          <div ref="codeGutterRef" class="code-gutter">
-            <span v-for="(h, idx) in lineHeightsPx" :key="idx" :style="{ height: h + 'px', lineHeight: h + 'px' }">{{ idx + 1 }}</span>
-          </div>
-          <div class="code-editor-scroll-area">
-            <pre ref="codeHighlightRef" class="code-highlight-backdrop" aria-hidden="true"><code v-html="highlightedCodeHtml"></code></pre>
-            <textarea
-              ref="textareaRef"
-              class="editor-textarea code-editor-textarea"
-              v-model="editorText"
-              placeholder="Escriu o edita la teva plantilla Jinja2 en Markdown aquí..."
-              spellcheck="false"
-              @click="updateActiveLoopContext"
-              @keyup="updateActiveLoopContext"
-              @keydown="updateActiveLoopContext"
-              @select="updateActiveLoopContext"
-              @focus="updateActiveLoopContext"
-              @input="updateActiveLoopContext"
-              @scroll="onCodeScroll"
-            ></textarea>
-          </div>
-        </div>
+        <!-- Code Raw Editor: CodeMirror 6 (see createCodeMirrorView() in
+             <script>) — gutter, line wrapping and Jinja2/Markdown
+             highlighting are all native to it, mounted once into this
+             container and left alone by Vue from then on (CodeMirror owns
+             everything inside). -->
+        <div v-show="activeEditorTab === 'code'" ref="codeMirrorContainerRef" class="code-editor-wrapper"></div>
       </div>
 
       <!-- Variable Clipboard Helper (Sidebar) -->
@@ -3507,10 +3528,14 @@ onUnmounted(() => {
   margin-bottom: 0;
 }
 
-/* Code editor: line-number gutter + syntax-highlight backdrop. The gutter
-   and the highlighted <pre> are purely visual — the real, only copy of the
-   text lives in the (transparent-text) textarea layered on top, so nothing
-   here can ever corrupt or lose content, only mis-color it in an edge case. */
+/* Code editor: CodeMirror 6 (mounted by createCodeMirrorView() in <script>
+   into the plain .code-editor-wrapper container below — gutter, line
+   wrapping and content are CodeMirror's own DOM, one rendering pass, so
+   nothing here can fall out of sync with anything else by construction,
+   unlike the old separately-measured gutter + backdrop it replaced). This
+   edits prose (Jinja2/Markdown source), not short code lines, so long
+   lines wrap rather than scrolling horizontally like a typical code
+   editor would (see EditorView.lineWrapping in createCodeMirrorView()). */
 .code-editor-wrapper {
   flex: 1;
   display: flex;
@@ -3519,76 +3544,34 @@ onUnmounted(() => {
   background-color: var(--bg-card);
 }
 
-.code-gutter {
-  flex: 0 0 auto;
-  overflow: hidden;
-  padding: 1rem 0.6rem 1rem 0;
-  text-align: right;
-  font-family: var(--font-mono);
-  font-size: 0.9rem;
-  line-height: 1.6;
-  color: var(--text-muted);
-  background-color: var(--bg-tertiary);
-  border-right: 1px solid var(--border-color);
-  user-select: none;
-}
-
-.code-gutter span {
-  display: block;
-}
-
-.code-editor-scroll-area {
-  position: relative;
+.code-editor-wrapper .cm-editor {
   flex: 1;
   min-width: 0;
-  min-height: 0;
 }
 
-.code-highlight-backdrop {
-  position: absolute;
-  inset: 0;
-  margin: 0;
+.code-editor-wrapper .cm-scroller {
+  overflow: auto;
+}
+
+.code-editor-wrapper .cm-gutters {
+  background-color: var(--bg-tertiary);
+  color: var(--text-muted);
+  border-right: 1px solid var(--border-color);
+}
+
+.code-editor-wrapper .cm-content {
   padding: 1rem;
-  font-family: var(--font-mono);
-  font-size: 0.9rem;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-  overflow: hidden;
-  pointer-events: none;
   color: var(--text-primary);
-}
-
-.code-highlight-backdrop code {
-  font-family: inherit;
-  background: none;
-}
-
-/* This edits prose (Jinja2/Markdown source), not short code lines, so long
-   lines wrap rather than scrolling horizontally like a typical code editor
-   would — each gutter number's own height is measured (recomputeLineHeights,
-   in the script) to match however many visual rows its line wraps to,
-   instead of assuming one fixed-height row per line. */
-.editor-textarea.code-editor-textarea {
-  position: relative;
-  z-index: 1;
-  background: transparent;
-  color: transparent;
   caret-color: var(--text-primary);
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-  overflow-x: hidden;
-  overflow-y: auto;
-  resize: none;
-  width: 100%;
-  height: 100%;
 }
 
-[data-theme="dark"] .editor-textarea.code-editor-textarea,
-body.dark-theme .editor-textarea.code-editor-textarea {
-  background-color: transparent !important;
-  color: transparent !important;
-  caret-color: #f8fafc !important;
+.code-editor-wrapper .cm-line {
+  padding: 0;
+}
+
+[data-theme="dark"] .code-editor-wrapper .cm-content,
+body.dark-theme .code-editor-wrapper .cm-content {
+  caret-color: #f8fafc;
 }
 
 .tok-comment { color: var(--text-muted); font-style: italic; }
