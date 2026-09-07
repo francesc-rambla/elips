@@ -519,6 +519,53 @@ const computeHighlightDecorations = (text) => {
   return CmDecoration.set(decos, true);
 };
 
+// Phase B of the Visual-editor rewrite (plain Markdown live-preview):
+// visually styles headings/bold/italic/list markers the way the rendered
+// document actually looks (real font-weight/size, not just syntax-colored
+// text like jinjaHighlightPlugin above) -- Decoration.mark only, same as
+// the tokenizer above, so the raw "#"/"**"/"-" characters stay visible and
+// editable, just no longer plain monospace text. Visual-tab only (added to
+// createVisualCodeMirrorView's extensions, not Codi's) -- Codi keeps
+// today's plain syntax-highlighting look. Hiding the markers themselves
+// when the cursor is elsewhere is a later, optional refinement, not
+// required for this phase.
+const MD_STYLE_TOKEN_RE = /(^#{1,6}\s.*$)|(\*\*[^\n*]+\*\*)|(\*[^\n*]+\*)/gm;
+const MD_LIST_MARKER_RE = /^\s*(?:[-*+]|\d+\.)\s+/gm;
+
+const computeMarkdownStyleDecorations = (text) => {
+  const decos = [];
+  let m;
+  MD_STYLE_TOKEN_RE.lastIndex = 0;
+  while ((m = MD_STYLE_TOKEN_RE.exec(text)) !== null) {
+    const [full, header, bold, italic] = m;
+    if (full.length === 0) { MD_STYLE_TOKEN_RE.lastIndex++; continue; }
+    let cls = '';
+    if (header) cls = `cm-md-heading cm-md-h${header.match(/^#{1,6}/)[0].length}`;
+    else if (bold) cls = 'cm-md-bold';
+    else if (italic) cls = 'cm-md-italic';
+    if (cls) decos.push(CmDecoration.mark({ class: cls }).range(m.index, m.index + full.length));
+  }
+  MD_LIST_MARKER_RE.lastIndex = 0;
+  while ((m = MD_LIST_MARKER_RE.exec(text)) !== null) {
+    if (m[0].length === 0) { MD_LIST_MARKER_RE.lastIndex++; continue; }
+    decos.push(CmDecoration.mark({ class: 'cm-md-list-marker' }).range(m.index, m.index + m[0].length));
+  }
+  return CmDecoration.set(decos, true);
+};
+
+const markdownStylePlugin = CmViewPlugin.fromClass(class {
+  constructor(view) {
+    this.decorations = computeMarkdownStyleDecorations(view.state.doc.toString());
+  }
+  update(update) {
+    if (update.docChanged) {
+      this.decorations = computeMarkdownStyleDecorations(update.state.doc.toString());
+    }
+  }
+}, {
+  decorations: (v) => v.decorations,
+});
+
 const jinjaHighlightPlugin = CmViewPlugin.fromClass(class {
   constructor(view) {
     this.decorations = computeHighlightDecorations(view.state.doc.toString());
@@ -703,7 +750,7 @@ const createCodeMirrorView = () => {
 // widget/decoration extensions here without touching the Codi instance.
 const createVisualCodeMirrorView = () => {
   if (!visualCodeMirrorContainerRef.value || visualCodeMirrorView) return;
-  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaHighlightPlugin, jinjaTagMatchPlugin], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
+  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
   visualTextareaRef.value = makeTextareaShim(visualCodeMirrorView);
 };
 
@@ -3259,6 +3306,21 @@ body.dark-theme .code-editor-wrapper .cm-content {
 .tok-header { color: var(--text-primary); font-weight: 700; }
 .tok-bold { font-weight: 700; }
 .tok-italic { font-style: italic; }
+
+/* Phase B of the Visual-editor rewrite (markdownStylePlugin, Visual tab
+   only): real bold/size, not just syntax coloring -- what the rendered
+   document actually looks like, while the raw "#"/"**"/"-" characters
+   stay visible and directly editable as plain text. */
+.cm-md-heading { font-weight: 700; color: var(--text-primary); }
+.cm-md-h1 { font-size: 1.5em; }
+.cm-md-h2 { font-size: 1.3em; }
+.cm-md-h3 { font-size: 1.15em; }
+.cm-md-h4 { font-size: 1.05em; }
+.cm-md-h5 { font-size: 1em; }
+.cm-md-h6 { font-size: 0.95em; color: var(--text-secondary); }
+.cm-md-bold { font-weight: 700; }
+.cm-md-italic { font-style: italic; }
+.cm-md-list-marker { color: var(--color-primary); font-weight: 700; }
 
 /* Jinja block tag matching (open/elif/else/close), highlighted as a family
    whenever the caret touches one of them -- the same UX as bracket matching
