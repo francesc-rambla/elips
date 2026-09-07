@@ -479,6 +479,41 @@ class TestExcelPythonEngine(unittest.TestCase):
         self.assertFalse(ordinary_result["is_mirror"])
         self.assertEqual(ordinary_result["reason"], "no_formulas_found")
 
+    def test_18_validate_template_syntax_accepts_well_formed_templates(self):
+        """validate_template_syntax ha d'acceptar (valid: True) plantilles ben formades,
+        incloent-hi bucles/condicionals aniuats, for-else, i macro/set."""
+        good_templates = [
+            "Text pla sense cap tag Jinja2.",
+            "{% for part in pres.parts %}\n- {{ part.nom }}\n{% endfor %}",
+            "{% if a > 0 %}\nPositiu\n{% elif a == 0 %}\nZero\n{% else %}\nNegatiu\n{% endif %}",
+            "{% for x in a %}\n{{ x }}\n{% else %}\nLlista buida\n{% endfor %}",
+            "{% macro taula(files, columnes=3) %}\nContingut\n{% endmacro %}",
+            "{% set resultat %}\nCapturat\n{% endset %}",
+            "{% set total = pres.parts | length %}",
+            "{% for part in pres.parts %}{% if part.import > 0 %}{{ part.nom }}{% endif %}{% endfor %}",
+        ]
+        for tpl in good_templates:
+            result = json.loads(self.engine.validate_template_syntax(tpl))
+            self.assertTrue(result["valid"], f"S'esperava vàlid per a: {tpl!r}, error: {result.get('error')}")
+            self.assertIsNone(result["error"])
+
+    def test_19_validate_template_syntax_rejects_mismatched_and_malformed_templates(self):
+        """validate_template_syntax ha de detectar (valid: False, amb línia i missatge) exactament
+        els casos que l'usuari ha reportat com a problemàtics al canvas visual: un {% for %} tancat
+        amb {% endif %}, i altres construccions Jinja2 sintàcticament invàlides."""
+        bad_templates = [
+            "{% for part in pres.parts %}\n- {{ part.nom }}\n{% endif %}",  # tipus incorrecte
+            "{% if a %}\nText sense tancar",  # sense tancar
+            "{% for x in a %}\n{{ x }}\n{% elif b %}\nNo vàlid\n{% endfor %}",  # for no té elif
+            "{{ a + }}",  # expressió mal formada
+        ]
+        for tpl in bad_templates:
+            result = json.loads(self.engine.validate_template_syntax(tpl))
+            self.assertFalse(result["valid"], f"S'esperava invàlid per a: {tpl!r}")
+            self.assertIsNotNone(result["error"])
+            self.assertIsInstance(result["error"]["message"], str)
+            self.assertGreater(len(result["error"]["message"]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

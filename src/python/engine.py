@@ -2580,6 +2580,36 @@ def render_expression_preview(ctx_json, expr_str):
     except Exception as ex:
         return json.dumps({'success': False, 'error': str(ex)}, ensure_ascii=False)
 
+def validate_template_syntax(template_src):
+    """Parses template_src with the real Jinja2 parser -- no rendering, no
+    data context needed -- to catch structural syntax errors (mismatched or
+    unclosed {% %} blocks, a stray {% elif %}/{% else %} where the block
+    type doesn't support one, a malformed expression, ...): the same errors
+    the actual document-generation pass would eventually hit, surfaced
+    immediately from the template editor's "Comprova Plantilla" button
+    instead. This is the authoritative check -- the visual canvas's own
+    compiler (useMarkdownJinjaCompiler.js) is a best-effort approximation
+    that never raises (a malformed block is just left as literal text), so
+    it can't itself tell the user *why* something didn't render as expected.
+    Never raises: any problem comes back as {valid: False, error: {...}}.
+    """
+    try:
+        env = Environment(trim_blocks=True, lstrip_blocks=True)
+        env.parse(template_src)
+        return json.dumps({'valid': True, 'error': None})
+    except TemplateSyntaxError as e:
+        lineno = getattr(e, 'lineno', None)
+        return json.dumps({
+            'valid': False,
+            'error': {
+                'line': lineno,
+                'message': e.message or str(e),
+                'lineText': _get_line(template_src, lineno),
+            },
+        }, ensure_ascii=False)
+    except Exception as ex:
+        return json.dumps({'valid': False, 'error': {'line': None, 'message': str(ex), 'lineText': ''}}, ensure_ascii=False)
+
 def render_json_text(excel_path, date_format='iso', strict=False):
     doc = excel_to_json(excel_path, date_format=date_format, strict=strict)
     return json.dumps(doc, ensure_ascii=False, default=_custom_json_default)

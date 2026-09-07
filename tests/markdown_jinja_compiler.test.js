@@ -187,6 +187,49 @@ describe('compileMarkdownToHtml (Markdown+Jinja2 source -> visual canvas)', () =
     expect(html).toContain('class="j-set-chip"');
     expect(html).toContain('data-cond="doble = part.import * 2"');
   });
+
+  it('does NOT pair a {% for %} with a mismatched {% endif %} (block layout) -- left as literal text, not corrupted into a fake "for"', () => {
+    const md = '{% for part in pres.parts %}\n- {{ part.nom }}\n{% endif %}';
+    const html = makeCompiler().compileMarkdownToHtml(md);
+    expect(html).not.toContain('class="jinja-block"');
+    expect(html).not.toContain('data-type="for"');
+    // The literal tags survive untouched -- markdown-it escapes "{%"/"%}" to
+    // HTML entities when rendering plain text, so check the source text
+    // reaches the point of being handed to markdown-it unmangled instead.
+    expect(html).toMatch(/for part in pres\.parts/);
+    expect(html).toMatch(/endif/);
+  });
+
+  it('does NOT pair a {% for %} with a mismatched {% endif %} (inline layout, same line) -- left as literal text', () => {
+    const html = makeCompiler().compileMarkdownToHtml('X {% for part in pres.parts %}{{ part.nom }}{% endif %} Y');
+    expect(html).not.toContain('class="jinja-block inline"');
+    expect(html).toMatch(/for part in pres\.parts/);
+    expect(html).toMatch(/endif/);
+  });
+
+  it('accepts a {% for %}...{% else %}...{% endfor %} (real Jinja2 for-else, runs on an empty iterable)', () => {
+    const md = '{% for x in a %}\nA\n{% else %}\nB\n{% endfor %}';
+    const html = makeCompiler().compileMarkdownToHtml(md);
+    expect(html).toContain('data-type="for"');
+    expect(html).toContain('j-branch');
+    expect(html).toContain('EN CAS CONTRARI');
+  });
+
+  it('does NOT treat a stray elif inside a {% for %} as a branch (for-loops have no elif, only a trailing else) -- it stays literal text in the single body', () => {
+    const md = '{% for x in a %}\nA\n{% elif b %}\nB\n{% endfor %}';
+    const html = makeCompiler().compileMarkdownToHtml(md);
+    expect(html).toContain('data-type="for"');
+    expect(html).not.toContain('j-branch');
+    expect(html).toMatch(/elif b/);
+  });
+
+  it('does NOT treat a stray {% else %} inside a {% macro %} as a branch (real Jinja2 has no macro-else) -- it stays literal text in the single body', () => {
+    const md = '{% macro nom(a) %}\nA\n{% else %}\nB\n{% endmacro %}';
+    const html = makeCompiler().compileMarkdownToHtml(md);
+    expect(html).toContain('data-type="macro"');
+    expect(html).not.toContain('j-branch');
+    expect(html).toMatch(/else/);
+  });
 });
 
 describe('Markdown -> HTML -> Markdown round-trip stability', () => {
@@ -220,6 +263,23 @@ describe('Markdown -> HTML -> Markdown round-trip stability', () => {
       + '<div class="j-footer"></div>'
       + '</div>';
     expect(htmlToMarkdown(el(html))).toBe('{% if a > 0 %}Contingut{% endif %}');
+  });
+
+  it('serializes an inline-shaped jinja-block flagged block (the moment right after clicking "Bloc", before a re-render restructures it)', () => {
+    // Mirror of the test above, opposite direction: clicking "Bloc" on an
+    // inline block only flips data-layout/removes the inline class on the
+    // *existing* (still .j-inline-tag-shaped) DOM. Regression: the
+    // domIsInlineShape branch used to hardcode "no separator" regardless of
+    // this flag, so the freshly-flagged-block node still serialized with
+    // every tag crammed onto one line -- which the next recompile's
+    // line-based extractBlockJinja can't recognize as a standalone block,
+    // silently leaving it inline forever ("switching to Bloc doesn't work").
+    const html = '<span class="jinja-block" data-layout="block" data-type="if" data-cond="a &gt; 0">'
+      + '<span class="j-inline-tag">{% if a > 0 %}</span>'
+      + '<span class="j-content">mig</span>'
+      + '<span class="j-inline-tag">{% endif %}</span>'
+      + '</span>';
+    expect(htmlToMarkdown(el(html))).toBe('{% if a > 0 %}\nmig\n{% endif %}');
   });
 
   it('inline if', () => {

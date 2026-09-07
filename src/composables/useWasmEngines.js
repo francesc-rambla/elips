@@ -312,6 +312,21 @@ orphan_count
     return JSON.parse(resultStr);
   };
 
+  // Parses templateText with the real Jinja2 parser (no rendering, no data
+  // needed) -- the authoritative syntax check, used by "Comprova Plantilla"
+  // alongside the undefined-variables check. Catches exactly what the
+  // visual canvas's own best-effort compiler can't itself report (it just
+  // leaves a malformed block as literal text rather than raising): a
+  // mismatched/unclosed {% %} tag, a branch keyword the block type doesn't
+  // support, a malformed expression, etc.
+  const validateTemplateSyntax = async (templateText) => {
+    if (!_pyodide) throw new Error("Pyodide no s'ha inicialitzat.");
+    const fn = _pyodide.globals.get('validate_template_syntax');
+    const resultStr = fn(templateText || '');
+    fn.destroy();
+    return JSON.parse(resultStr);
+  };
+
   const compileDocx = async (markdownText, refDocBuffer, extraFilesMap) => {
     if (!_pandoc) throw new Error("Pandoc no s'ha inicialitzat.");
     
@@ -734,6 +749,7 @@ orphan_count
     parseExcel,
     renderMarkdown,
     previewExpression,
+    validateTemplateSyntax,
     compileDocx,
     saveExcelData,
     saveExcelHierarchy,

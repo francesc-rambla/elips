@@ -70,35 +70,53 @@ const jinjaBlockToMarkdown = (td, node) => {
   // instant the button is clicked.
   const domIsInlineShape = !!node.querySelector(':scope > .j-inline-tag');
 
+  // wantsInlineOutput controls the *separator* between tag and body (none,
+  // for a single inline line, vs a newline for the usual multi-line block
+  // syntax) in BOTH branches below -- including domIsInlineShape, which
+  // used to hardcode "no separator" regardless of this flag. That was the
+  // bug behind "switching an inline block to Bloc doesn't always work":
+  // clicking "Bloc" only flips data-layout/the inline class on the
+  // *existing* (still inline-shaped) DOM, then calls this function to
+  // serialize before a re-render restructures it (same reasoning as the
+  // block-shaped branch below) -- so at that moment domIsInlineShape is
+  // still true, but the output must already respect the *new* layout, or
+  // the resulting source text has every tag crammed onto one line with no
+  // newlines, which extractBlockJinja can't recognize as a block on the
+  // very next recompile, silently leaving it inline forever.
+  const wantsInlineOutput = node.classList.contains('inline') || node.getAttribute('data-layout') === 'inline';
+  const sep = wantsInlineOutput ? '' : '\n';
+
   if (domIsInlineShape) {
-    // Inline layout: alternating <span class="j-inline-tag">{% ... %}</span> and
-    // <span class="j-content">body</span> children carry the exact tag text and
-    // per-branch body already — just concatenate them in DOM order.
+    // Inline-shaped DOM: alternating <span class="j-inline-tag">{% ... %}</span>
+    // and <span class="j-content">body</span> children carry the exact tag
+    // text and per-branch body already. Every tag gets `sep` after it
+    // except the final one (the close tag); a body only gets `sep` after it
+    // when non-empty (an empty branch shouldn't add a stray blank line) --
+    // exactly mirroring the block-shaped branch below, just reading tag
+    // text off .j-inline-tag instead of reconstructing it from data-cond.
+    const relevant = Array.from(node.childNodes).filter((c) => c.nodeType === Node.ELEMENT_NODE && (c.classList.contains('j-inline-tag') || c.classList.contains('j-content')));
     let out = '';
-    node.childNodes.forEach((child) => {
-      if (child.nodeType !== Node.ELEMENT_NODE) return;
+    relevant.forEach((child, idx) => {
       if (child.classList.contains('j-inline-tag')) {
         out += child.textContent;
-      } else if (child.classList.contains('j-content')) {
-        out += branchBodyToMarkdown(td, child);
+        if (idx !== relevant.length - 1) out += sep;
+      } else {
+        const body = branchBodyToMarkdown(td, child);
+        if (body) out += body + sep;
       }
     });
     return out;
   }
 
   // Block-shaped DOM — also what a block still looks like right after
-  // clicking "Inline" (see above), so wantsInlineOutput controls only the
-  // *separator* between tag and body (none, for a single inline line, vs a
-  // newline for the usual multi-line block syntax), never which children
-  // this reads.
+  // clicking "Inline" (see above): wantsInlineOutput/sep, computed together
+  // with the inline-shaped branch's above, control the separator here too.
   //
   // The condition itself is read from the .j-head's .j-cond-text span, not
   // from this node's own data-cond: the visual editor (openBlockModal/
   // onBlockApply in TemplateEditor.vue) only ever keeps .j-cond-text's
   // data-cond up to date (on both initial creation and edits), the same way
   // the elif branch condition below is read from its own .j-cond-text.
-  const wantsInlineOutput = node.classList.contains('inline') || node.getAttribute('data-layout') === 'inline';
-  const sep = wantsInlineOutput ? '' : '\n';
   const headCond = node.querySelector(':scope > .j-head .j-cond-text')?.getAttribute('data-cond');
   let out = `{% ${type} ${headCond ?? node.getAttribute('data-cond') ?? ''} %}${sep}`;
   node.childNodes.forEach((child) => {
@@ -229,8 +247,7 @@ const buildTurndownService = () => {
   td.remove((node) => node.nodeType === Node.ELEMENT_NODE && (
     node.classList.contains('j-head') || node.classList.contains('j-actions') ||
     node.classList.contains('j-footer') || node.classList.contains('j-inline-tag') ||
-    node.classList.contains('j-inline-toolbar') || node.classList.contains('j-cond-text') ||
-    node.classList.contains('j-collapsed-chip') ||
+    node.classList.contains('j-cond-text') || node.classList.contains('j-collapsed-chip') ||
     node.classList.contains('table-edit-btn') || node.classList.contains('trailing-editable-line')
   ));
 
@@ -338,6 +355,16 @@ const JINJA_BLOCK_META = {
 // the reader normally wants to see inline. See collapsedChipHtml below.
 const COLLAPSIBLE_BLOCK_TYPES = new Set(['macro', 'set']);
 
+// Which mid-block branch keywords real Jinja2 accepts per block type: 'if'
+// has both elif and else; 'for' has only a trailing else (runs when the
+// loop's iterable turns out empty -- Jinja2's for-else, a real language
+// feature, not a typo); macro/set have neither. Used by scanJinjaBlock/
+// readBlock below to decide whether an "{% elif %}"/"{% else %}" tag
+// belongs to the block currently being scanned, or is just literal text
+// (e.g. a stray {% else %} inside a {% macro %} is a syntax error in real
+// Jinja2 too, so it must NOT be swallowed as a branch transition here).
+const ALLOWED_BRANCH_KEYWORDS = { if: new Set(['elif', 'else']), for: new Set(['else']) };
+
 // A dedicated edit affordance for dynamic/transposed tables — double-clicking
 // the header is the only other way in, and a double-click on a <th> also
 // fires two single clicks first, silently toggling that column's alignment
@@ -348,7 +375,11 @@ const COLLAPSIBLE_BLOCK_TYPES = new Set(['macro', 'set']);
 const tableEditButtonHtml = () => `<div class="table-edit-btn" contenteditable="false" title="Edita la configuració de la taula">${ICON_EDIT} Edita taula</div>`;
 
 const btnLayoutHtml = () => `<button class="j-btn-mini btn-layout" style="background-color:var(--color-primary);color:white;border:none;display:inline-flex;align-items:center;gap:3px;" title="Canvia a mode integrat al text (Inline)">${ICON_INLINE_TOGGLE} <span>Inline</span></button>`;
-const btnToBlockHtml = () => `<button class="j-btn-mini btn-to-block" style="background-color:var(--color-primary);color:white;border:none;display:inline-flex;align-items:center;gap:3px;" title="Canvia a mode Bloc">${ICON_INLINE_TOGGLE} <span>Bloc</span></button>`;
+// Icon-only and always visible (unlike the other .j-btn-mini toolbar
+// buttons, which stay hidden until the block has focus-within) -- it sits
+// right next to the open tag's icon, per explicit user feedback that
+// clicking the tag itself to switch layout was easy to miss/unreliable.
+const btnToBlockHtml = () => `<button type="button" class="j-btn-mini btn-to-block" title="Canvia a mode Bloc">${ICON_INLINE_TOGGLE}</button>`;
 const btnTrashHtml = (title) => `<button class="j-btn-mini btn-trash" style="background-color:var(--color-danger);color:white;border:none;display:inline-flex;align-items:center;justify-content:center;" title="${title}">${ICON_TRASH}</button>`;
 const btnBranchTrashHtml = () => '<button class="j-btn-mini btn-branch-trash" style="background-color:var(--color-danger);color:white;border:none;display:inline-flex;align-items:center;justify-content:center;" title="Elimina la branca">' + ICON_TRASH + '</button>';
 
@@ -418,37 +449,42 @@ const buildJinjaBlockHtml = (type, branches, compileFn) => {
 // Builds the interactive .jinja-block HTML for an inline-layout for/if. Each
 // tag (open/elif/else/close) shows only a small icon — not its literal
 // "{% ... %}" text, which would otherwise clutter running text — with the
-// full tag kept in its title tooltip. A toolbar (just the switch-to-block
-// button) is appended once, absolutely positioned below the whole inline
-// construct and revealed only on :focus-within (see the matching CSS rules
-// in TemplateEditor.vue), so it doesn't take up space until needed.
+// full tag kept in its title tooltip. The open tag also carries the
+// switch-to-block button, right next to its icon and always visible (not
+// hidden behind a hover/focus-only toolbar) — per user feedback, clicking
+// the tag itself to switch layout wasn't reliable/discoverable enough.
 const buildInlineJinjaHtml = (type, branches, compileInline) => {
   const icon = JINJA_BLOCK_META[type].icon;
   // tagText is placed both as a title="..." attribute and as visible text
   // content below — build it from the raw (unescaped) condition, then
   // escape the whole rendered tag once so both positions get a
   // consistently-escaped value.
-  const inlineTag = (tagText) => { const t = escapeHtml(tagText); return `<span class="j-inline-tag" contenteditable="false" title="${t} — Fes clic per passar a BLOC"><span class="j-inline-tag-icon">${icon}</span><span class="j-inline-tag-text">${t}</span></span>`; };
+  const inlineTag = (tagText, extraHtml = '') => { const t = escapeHtml(tagText); return `<span class="j-inline-tag" contenteditable="false" title="${t}"><span class="j-inline-tag-icon">${icon}</span>${extraHtml}<span class="j-inline-tag-text">${t}</span></span>`; };
 
   let html = `<span class="jinja-block inline" contenteditable="false" data-layout="inline" data-type="${type}" data-cond="${escapeHtml(branches[0].cond)}">`;
   branches.forEach((b, i) => {
     const tagText = i === 0
       ? `{% ${type} ${b.cond} %}`
       : (b.keyword === 'else' ? '{% else %}' : `{% elif ${b.cond} %}`);
-    html += inlineTag(tagText) + `<span class="j-content" contenteditable="true">${compileInline(b.body)}</span>`;
+    html += inlineTag(tagText, i === 0 ? btnToBlockHtml() : '') + `<span class="j-content" contenteditable="true">${compileInline(b.body)}</span>`;
   });
   html += inlineTag(`{% ${JINJA_BLOCK_META[type].endTag} %}`);
-  html += `<span class="j-inline-toolbar" contenteditable="false">${btnToBlockHtml()}</span>`;
   html += `</span>`;
   return html;
 };
 
 // Scans `lines` for a Jinja {% for %}/{% if %}/{% macro %}/{% set %} block
 // starting at `startIdx` (already confirmed to be a standalone open-tag
-// line), tracking nesting depth so inner blocks' own elif/else/end don't get
-// mistaken for this one's. Returns { endIdx, branches } where each branch is
-// { keyword, cond, body }, or null if unterminated (malformed template —
-// left as literal text).
+// line). Returns { endIdx, branches } where each branch is { keyword, cond,
+// body }, or null if unterminated -- either genuinely missing its closing
+// tag, or (just as much a syntax error) closed by the WRONG keyword, e.g.
+// "{% for %}...{% endif %}". Either way the whole thing is left as literal
+// text: safe (the exact source is preserved untouched, nothing silently
+// corrupted into a differently-structured "successful" parse) rather than
+// pairing tags that don't actually belong together the way real Jinja2
+// would reject them. Real syntax-error reporting for this case is
+// TemplateEditor.vue's "Comprova Plantilla" (validateTemplateSyntax, which
+// asks the real Jinja2 engine, not this best-effort visual-canvas scanner).
 //
 // {% set name = expr %} (the single-line assignment form, no body/endset) is
 // NOT matched here -- it's already gone by the time this runs, replaced by a
@@ -461,19 +497,30 @@ const CLOSE_TAG_RE = /^\{%\s*(?:endfor|endif|endmacro|endset)\s*%\}$/;
 
 const scanJinjaBlock = (lines, startIdx) => {
   const open = lines[startIdx].trim().match(OPEN_TAG_RE);
+  const type = open[1];
+  const endTagLine = `{% ${JINJA_BLOCK_META[type].endTag} %}`;
   const branches = [];
-  let depth = 1;
-  let branchKeyword = open[1];
+  let branchKeyword = type;
   let branchCond = open[2];
   let branchStart = startIdx + 1;
+  // Types of nested opens still awaiting their own close -- real Jinja2
+  // requires each to be closed by its own keyword too, but validating THAT
+  // is this stack's caller's job (a separate scanJinjaBlock call, made when
+  // extractBlockJinja reaches that nested open line): here, any close seen
+  // while this stack is non-empty simply isn't ours, whatever type it is.
+  const nestedOpenStack = [];
 
   for (let i = startIdx + 1; i < lines.length; i++) {
     const t = lines[i].trim();
-    if (OPEN_TAG_RE.test(t)) { depth++; continue; }
+    const openMatch = t.match(OPEN_TAG_RE);
+    if (openMatch) { nestedOpenStack.push(openMatch[1]); continue; }
 
-    if (depth === 1) {
-      const elifMatch = t.match(ELIF_TAG_RE);
-      if (elifMatch || t === '{% else %}') {
+    // See ALLOWED_BRANCH_KEYWORDS: elif/else only belong to a block whose
+    // type actually supports them, and only at our own depth.
+    const allowedBranches = ALLOWED_BRANCH_KEYWORDS[type];
+    if (nestedOpenStack.length === 0 && allowedBranches) {
+      const elifMatch = allowedBranches.has('elif') ? t.match(ELIF_TAG_RE) : null;
+      if (elifMatch || (allowedBranches.has('else') && t === '{% else %}')) {
         branches.push({ keyword: branchKeyword, cond: branchCond, body: lines.slice(branchStart, i).join('\n') });
         branchKeyword = elifMatch ? 'elif' : 'else';
         branchCond = elifMatch ? elifMatch[1] : '';
@@ -481,12 +528,18 @@ const scanJinjaBlock = (lines, startIdx) => {
         continue;
       }
     }
+
     if (CLOSE_TAG_RE.test(t)) {
-      depth--;
-      if (depth === 0) {
+      if (nestedOpenStack.length > 0) { nestedOpenStack.pop(); continue; }
+      if (t === endTagLine) {
         branches.push({ keyword: branchKeyword, cond: branchCond, body: lines.slice(branchStart, i).join('\n') });
         return { endIdx: i, branches };
       }
+      // A close tag at our own depth, but for a different type than ours
+      // (e.g. our block is "for" and this is "{% endif %}") -- mismatched,
+      // not a valid close for this block. Bail out unterminated rather than
+      // accepting it.
+      return null;
     }
   }
   return null;
@@ -613,9 +666,15 @@ const extractInlineJinja = (text, compileInline) => {
   let out = '';
   let i = 0;
 
+  // Note: unlike scanJinjaBlock's line-based scan, there's no depth/stack
+  // to track here for type-matching purposes -- a nested open (any type) is
+  // fully consumed by its own recursive readBlock() call above before this
+  // loop ever sees another token, so any close tag reaching this loop
+  // directly can only be a candidate for THIS block's own close.
   const readBlock = () => {
     const openMatch = tokens[i].match(OPEN_TAG_RE);
     const type = openMatch[1];
+    const endTagText = `{% ${JINJA_BLOCK_META[type].endTag} %}`;
     const branches = [];
     let branchKeyword = type;
     let branchCond = openMatch[2];
@@ -633,8 +692,10 @@ const extractInlineJinja = (text, compileInline) => {
         }
         continue;
       }
-      const elifMatch = tok.match(ELIF_TAG_RE);
-      if (elifMatch || tok === '{% else %}') {
+      // See ALLOWED_BRANCH_KEYWORDS (scanJinjaBlock's matching comment).
+      const allowedBranches = ALLOWED_BRANCH_KEYWORDS[type];
+      const elifMatch = allowedBranches?.has('elif') ? tok.match(ELIF_TAG_RE) : null;
+      if (allowedBranches && (elifMatch || (allowedBranches.has('else') && tok === '{% else %}'))) {
         branches.push({ keyword: branchKeyword, cond: branchCond, body });
         branchKeyword = elifMatch ? 'elif' : 'else';
         branchCond = elifMatch ? elifMatch[1] : '';
@@ -642,10 +703,18 @@ const extractInlineJinja = (text, compileInline) => {
         i++;
         continue;
       }
-      if (CLOSE_TAG_RE.test(tok)) {
+      if (tok === endTagText) {
         i++;
         branches.push({ keyword: branchKeyword, cond: branchCond, body });
         return { type, branches };
+      }
+      if (CLOSE_TAG_RE.test(tok)) {
+        // Mismatched close (a different type's end tag) -- not ours. Don't
+        // consume it: leave this block unterminated (literal text) and let
+        // whoever called us re-examine this same token afterwards, same as
+        // running out of tokens entirely.
+        branches.push({ keyword: branchKeyword, cond: branchCond, body });
+        return { type, branches, unterminated: true };
       }
       body += tokens[i];
       i++;

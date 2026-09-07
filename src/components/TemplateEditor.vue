@@ -43,7 +43,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'generate']);
 
 const store = useWorkspaceStore();
-const { previewExpression } = useWasmEngines();
+const { previewExpression, validateTemplateSyntax } = useWasmEngines();
 const activeEditorTab = ref('visual'); // 'visual' or 'code'
 
 const editorText = ref(props.isCellMode ? (props.modelValue || '') : (store.templateText || props.modelValue || ''));
@@ -547,10 +547,24 @@ const jinjaHighlightPlugin = CmViewPlugin.fromClass(class {
 // the assignment form is self-contained and would otherwise show up as a
 // permanently "unmatched" open tag.
 const JINJA_TAG_SCAN_RE = /\{%[\s\S]*?%\}/g;
-const JINJA_TAG_OPEN_RE = /^\{%\s*(?:for|if|macro)\s+[\s\S]+?\s*%\}$|^\{%\s*set\s+[A-Za-z_]\w*\s*%\}$/;
+const JINJA_TAG_OPEN_KEYWORD_RE = /^\{%\s*(for|if|macro)\s+[\s\S]+?\s*%\}$/;
+const JINJA_TAG_OPEN_SET_RE = /^\{%\s*set\s+[A-Za-z_]\w*\s*%\}$/;
 const JINJA_TAG_ELIF_RE = /^\{%\s*elif\s+[\s\S]+?\s*%\}$/;
 const JINJA_TAG_ELSE_RE = /^\{%\s*else\s*%\}$/;
-const JINJA_TAG_CLOSE_RE = /^\{%\s*(?:endfor|endif|endmacro|endset)\s*%\}$/;
+const JINJA_TAG_CLOSE_RE = /^\{%\s*(endfor|endif|endmacro|endset)\s*%\}$/;
+const JINJA_TAG_CLOSE_TYPE = { endfor: 'for', endif: 'if', endmacro: 'macro', endset: 'set' };
+// Which mid-block branch keywords are valid per open type -- same rule as
+// the compiler's ALLOWED_BRANCH_KEYWORDS (useMarkdownJinjaCompiler.js):
+// 'if' has elif+else, 'for' has only a trailing else (Jinja2's for-else, for
+// an empty iterable), macro/set have neither. Duplicated here (not shared
+// across the two files) same as the rest of this vocabulary -- keep in sync.
+const JINJA_TAG_ALLOWED_BRANCHES = { if: new Set(['elif', 'else']), for: new Set(['else']) };
+
+const jinjaTagOpenType = (raw) => {
+  const m = raw.match(JINJA_TAG_OPEN_KEYWORD_RE);
+  if (m) return m[1];
+  return JINJA_TAG_OPEN_SET_RE.test(raw) ? 'set' : null;
+};
 
 const computeJinjaTagRanges = (text) => {
   const tags = [];
@@ -558,30 +572,41 @@ const computeJinjaTagRanges = (text) => {
   let m;
   while ((m = JINJA_TAG_SCAN_RE.exec(text)) !== null) {
     const raw = m[0].trim();
+    const openType = jinjaTagOpenType(raw);
+    const closeMatch = raw.match(JINJA_TAG_CLOSE_RE);
     let kind = null;
-    if (JINJA_TAG_OPEN_RE.test(raw)) kind = 'open';
+    if (openType) kind = 'open';
     else if (JINJA_TAG_ELIF_RE.test(raw)) kind = 'elif';
     else if (JINJA_TAG_ELSE_RE.test(raw)) kind = 'else';
-    else if (JINJA_TAG_CLOSE_RE.test(raw)) kind = 'close';
-    if (kind) tags.push({ from: m.index, to: m.index + m[0].length, kind, groupId: null });
+    else if (closeMatch) kind = 'close';
+    if (kind) tags.push({ from: m.index, to: m.index + m[0].length, kind, openType, closeType: closeMatch ? JINJA_TAG_CLOSE_TYPE[closeMatch[1]] : null, groupId: null });
   }
-  // Pairs each family via a depth stack, exactly like the compiler's own
-  // scanJinjaBlock/readBlock -- a group only gets marked "closed" (matched)
-  // once its endfor/endif is actually found; an elif/else/close with no
-  // enclosing open (or an open still on the stack at EOF) is left unmatched.
+  // Pairs each family via a type-aware stack, exactly like the compiler's
+  // own scanJinjaBlock/readBlock -- a close tag only closes the block
+  // currently on top of the stack when its OWN type matches (e.g. a
+  // "{% for %}" is never satisfied by "{% endif %}"): on a mismatch the
+  // stack is left untouched (the open block keeps waiting for its real
+  // close) and the wrong close tag is left as its own single-member,
+  // permanently-unmatched group -- surfaced as an error (red) rather than
+  // silently paired with a block it doesn't actually belong to. Likewise an
+  // elif/else the open type doesn't support (JINJA_TAG_ALLOWED_BRANCHES)
+  // is left ungrouped, inert, without disturbing the stack.
   let nextGroupId = 0;
   const stack = [];
   tags.forEach((tag) => {
     if (tag.kind === 'open') {
-      const group = { id: nextGroupId++ };
-      tag.groupId = group.id;
-      stack.push(group);
+      const frame = { id: nextGroupId++, type: tag.openType };
+      tag.groupId = frame.id;
+      stack.push(frame);
     } else if (tag.kind === 'elif' || tag.kind === 'else') {
       const top = stack[stack.length - 1];
-      if (top) tag.groupId = top.id;
+      if (top && JINJA_TAG_ALLOWED_BRANCHES[top.type]?.has(tag.kind)) tag.groupId = top.id;
     } else if (tag.kind === 'close') {
-      const top = stack.pop();
-      if (top) tag.groupId = top.id;
+      const top = stack[stack.length - 1];
+      if (top && top.type === tag.closeType) {
+        stack.pop();
+        tag.groupId = top.id;
+      }
     }
   });
   return tags;
@@ -2013,6 +2038,10 @@ const extractVariablesWithStaticContext = (text) => {
 // On-demand reactive state for undefined variables (updated ONLY when "Comprova Plantilla" button is clicked)
 const undefinedVariablesList = ref([]);
 const hasCheckedTemplate = ref(false);
+// Real Jinja2 syntax error (mismatched/unclosed tags, bad expressions...),
+// from validateTemplateSyntax -- also only updated by "Comprova Plantilla".
+// null while unchecked or when the last check found nothing wrong.
+const templateSyntaxError = ref(null);
 
 // Markdown<->Jinja2<->HTML compiler cluster (isVariableDefinedInSchema, createJinjaVarChip, table
 // parsers, compileMarkdownToHtml...) lives in useMarkdownJinjaCompiler.js since these functions call
@@ -2035,7 +2064,19 @@ const {
   resolvePath,
 });
 
-const checkTemplateVariables = () => {
+// Jumps to a 1-based Jinja2 error line: switches to the Codi tab (a raw
+// line number is far more legible there than in the Visual canvas, whose
+// own scrollToLine strategy is heading-based) and scrolls/highlights it.
+// scrollToLine itself is only reachable via store.editorActions (it's a
+// local const inside onMounted, exposed there for exactly this reason --
+// see the App.vue toolbar's own scrollToLine calls, same pattern).
+const jumpToTemplateLine = (lineno) => {
+  if (!lineno) return;
+  if (activeEditorTab.value !== 'code') switchTab('code');
+  nextTick(() => store.editorActions?.scrollToLine?.(lineno - 1));
+};
+
+const checkTemplateVariables = async () => {
   const text = editorText.value || '';
   const varsWithCtx = extractVariablesWithStaticContext(text);
   const undefinedList = [];
@@ -2049,14 +2090,33 @@ const checkTemplateVariables = () => {
   }
 
   undefinedVariablesList.value = undefinedList;
+
+  // Real Jinja2 syntax validity -- independent of the schema/variables
+  // check above, and of whether an Excel is even loaded (parsing needs no
+  // data context). Best-effort: if the engine isn't ready yet, skip it
+  // silently rather than blocking the (already useful) variables check.
+  templateSyntaxError.value = null;
+  if (store.enginesReady) {
+    try {
+      const result = await validateTemplateSyntax(text);
+      if (!result.valid) templateSyntaxError.value = result.error;
+    } catch (e) {
+      // A validator-internal failure shouldn't be mistaken for a template
+      // syntax error -- just skip reporting one for this check.
+    }
+  }
+
   hasCheckedTemplate.value = true;
 
-  if (undefinedList.length === 0) {
+  if (templateSyntaxError.value) {
+    const { line, message } = templateSyntaxError.value;
+    store.addLog(`❌ La plantilla té un error de sintaxi Jinja2${line ? ` a la línia ${line}` : ''}: ${message}`, "error");
+  } else if (undefinedList.length === 0) {
     store.addLog("✓ Verificació de plantilla completada: Totes les variables i bucles estan definits a l'esquema!", "success");
   } else {
     store.addLog(`⚠️ S'han detectat ${undefinedList.length} variables no definides a la plantilla: ${undefinedList.join(', ')}`, "warning");
   }
-  
+
   syncCodeToVisual();
 };
 
@@ -2148,18 +2208,20 @@ const syncCodeToVisual = () => {
       const type = block.getAttribute('data-type') || 'if';
       
       if (isInline) {
-        const switchToBlock = (e) => {
-          e.stopPropagation();
-          block.setAttribute('data-layout', 'block');
-          block.classList.remove('inline');
-          syncVisualToCode();
-          syncCodeToVisual();
-        };
-        block.querySelectorAll('.j-inline-tag').forEach(tag => {
-          tag.onclick = switchToBlock;
-        });
+        // Only the dedicated button (next to the open tag's icon) switches
+        // layout now -- clicking the tag itself used to do this too, but
+        // per user feedback that was unreliable/easy to miss; a single
+        // explicit, always-visible button is clearer.
         const toBlockBtn = block.querySelector('.btn-to-block');
-        if (toBlockBtn) toBlockBtn.onclick = switchToBlock;
+        if (toBlockBtn) {
+          toBlockBtn.onclick = (e) => {
+            e.stopPropagation();
+            block.setAttribute('data-layout', 'block');
+            block.classList.remove('inline');
+            syncVisualToCode();
+            syncCodeToVisual();
+          };
+        }
       } else {
         // macro/set render collapsed by default (see COLLAPSIBLE_BLOCK_TYPES
         // in useMarkdownJinjaCompiler.js) -- clicking the compact chip, or
@@ -3345,22 +3407,42 @@ onUnmounted(() => {
       <div style="background: var(--bg-tertiary); border: 1px solid var(--border-color); padding: 8px 10px; border-radius: var(--radius-sm); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 6px;">
         <div style="display: flex; align-items: center; justify-content: space-between;">
           <span style="font-size: 0.72rem; font-weight: 700; color: var(--text-primary);">Verificació de Plantilla</span>
-          <span v-if="hasCheckedTemplate" :style="{ color: undefinedVariablesList.length === 0 ? '#10b981' : '#d97706' }" style="font-size: 0.68rem; font-weight: 700;">
-            {{ undefinedVariablesList.length === 0 ? '✓ Sense errors' : `⚠️ ${undefinedVariablesList.length} d'errors` }}
+          <span v-if="hasCheckedTemplate" :style="{ color: templateSyntaxError ? 'var(--color-danger)' : (undefinedVariablesList.length === 0 ? '#10b981' : '#d97706') }" style="font-size: 0.68rem; font-weight: 700;">
+            {{ templateSyntaxError ? '✗ Error de sintaxi' : (undefinedVariablesList.length === 0 ? '✓ Sense errors' : `⚠️ ${undefinedVariablesList.length} d'errors`) }}
           </span>
         </div>
-        <button 
-          type="button" 
-          class="btn btn-secondary btn-sm" 
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
           style="font-size: 0.75rem; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 5px 8px; background: var(--bg-card); color: var(--color-primary); border-color: var(--color-primary); cursor: pointer;"
           @click="checkTemplateVariables"
-          title="Comprova totes les variables i bucles de la plantilla respecte a l'esquema de dades"
+          title="Comprova totes les variables i bucles de la plantilla respecte a l'esquema de dades, i la validesa sintàctica del Jinja2"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <span>Comprova Plantilla</span>
         </button>
       </div>
-      
+
+      <!-- Syntax Error Card (real Jinja2 parser, via validateTemplateSyntax
+           in useWasmEngines.js -- catches mismatched/unclosed tags etc. that
+           the visual canvas's own best-effort compiler silently leaves as
+           literal text instead of reporting). Shown before the
+           undefined-variables card: a syntax error is the more fundamental
+           problem, and the reason the block often won't have rendered as
+           expected in the first place. -->
+      <div
+        v-if="templateSyntaxError"
+        style="border: 1px solid var(--color-danger); background: rgba(239, 68, 68, 0.06); padding: 0.5rem; border-radius: var(--radius-sm); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem; cursor: pointer;"
+        @click="jumpToTemplateLine(templateSyntaxError.line)"
+        title="Fes clic per anar a la línia de l'error a la pestanya Codi"
+      >
+        <div style="font-size: 0.7rem; font-weight: 700; color: var(--color-danger); display: flex; align-items: center; gap: 4px;">
+          ❌ Error de sintaxi Jinja2{{ templateSyntaxError.line ? ` (línia ${templateSyntaxError.line})` : '' }}
+        </div>
+        <div style="font-size: 0.68rem; color: var(--text-primary); line-height: 1.35;">{{ templateSyntaxError.message }}</div>
+        <div v-if="templateSyntaxError.lineText" style="font-size: 0.65rem; font-family: var(--font-mono); background: var(--bg-tertiary); color: var(--text-primary); padding: 3px 5px; border-radius: 3px; overflow-x: auto; white-space: pre;">{{ templateSyntaxError.lineText }}</div>
+      </div>
+
       <!-- Warning Card for Undefined Variables in Template -->
       <div v-if="undefinedVariablesList.length > 0" style="background-color: var(--color-warning-light, #fffbeb); border: 1px solid var(--color-warning, #f59e0b); padding: 0.5rem; border-radius: var(--radius-sm); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;">
         <div style="font-size: 0.7rem; font-weight: 700; color: var(--color-warning-hover, #d97706); display: flex; align-items: center; justify-content: space-between;">
@@ -4062,25 +4144,12 @@ body.dark-theme .code-editor-wrapper .cm-content {
   display: none;
 }
 
-/* Toolbar (just the switch-to-block button) for an inline block, tucked
-   away below the element and revealed only while the cursor is inside it. */
-.j-inline-toolbar {
-  display: none;
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 4px;
-  background-color: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 3px 6px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-  z-index: 5;
-  white-space: nowrap;
-}
-
-.jinja-block.inline:focus-within .j-inline-toolbar {
-  display: inline-flex;
+/* The switch-to-block button sits inside the open tag itself (next to its
+   icon, see buildInlineJinjaHtml/btnToBlockHtml in
+   useMarkdownJinjaCompiler.js) and is always visible -- no separate
+   hover/focus-revealed toolbar needed. */
+.btn-to-block {
+  margin-left: 1px;
 }
 
 .j-head {
