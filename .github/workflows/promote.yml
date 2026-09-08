@@ -1,0 +1,51 @@
+name: Promou /pre a producció
+
+# Manual only (Actions tab -> "Promou /pre a producció" -> Run workflow).
+# Does NOT rebuild anything — it copies whatever is already published at
+# /pre (built and deployed by deploy.yml) verbatim to the gh-pages branch's
+# root, i.e. the production site. This guarantees production is always
+# byte-identical to whatever was actually validated at /pre; nothing new is
+# compiled at promotion time. /pre itself is left untouched, ready for the
+# next round of testing.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Its own concurrency group (separate from deploy.yml's) so a promotion and
+# a fresh /pre deploy can never race and interleave their commits.
+concurrency:
+  group: pages-prod
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+
+      - name: Verificar que /pre existeix
+        run: |
+          if [ ! -d "pre" ] || [ -z "$(ls -A pre 2>/dev/null)" ]; then
+            echo "::error::No hi ha cap desplegament vàlid a /pre per promoure. Executa primer el workflow de desplegament a /pre."
+            exit 1
+          fi
+
+      - name: Copiar pre/ a l'arrel (producció)
+        run: |
+          # Elimina tot el contingut actual de l'arrel EXCEPTE 'pre/' i '.git/',
+          # després hi copia el contingut ja validat de pre/ tal qual.
+          find . -maxdepth 1 -mindepth 1 ! -name 'pre' ! -name '.git' -exec rm -rf {} +
+          cp -a pre/. .
+
+      - name: Confirmar i pujar
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Promou /pre a producció ($(date -u +%Y-%m-%dT%H:%M:%SZ))" --allow-empty
+          git push

@@ -1,5 +1,10 @@
-name: Deploy to GitHub Pages
+name: Deploy to /pre (pre-producció)
 
+# Every push to main auto-deploys here first, at
+# https://<user>.github.io/<repo>/pre/ — production (the site root) is only
+# ever updated by explicitly running the separate "Promote /pre to
+# production" workflow once what's here has been validated. See that
+# workflow for how the promotion itself works.
 on:
   push:
     branches: [main]
@@ -7,17 +12,17 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
-# Only one deployment at a time; a newer push cancels a queued (not yet running) one.
+# Only one /pre deployment at a time; a newer push cancels a queued (not yet
+# running) one. Kept in its own concurrency group, separate from promote.yml's,
+# so a /pre deploy and a production promotion never race each other either.
 concurrency:
-  group: pages
+  group: pages-pre
   cancel-in-progress: false
 
 jobs:
-  build:
+  build-and-deploy-pre:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -52,18 +57,17 @@ jobs:
       - name: Build production bundle
         run: npx vite build
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      # Classic branch-based Pages deploy (not actions/deploy-pages, which
+      # only ever manages ONE deployment for the whole site) — this pushes
+      # straight to the gh-pages branch under a pre/ subfolder.
+      # keep_files: true is essential: without it, this action wipes
+      # everything else already on gh-pages (i.e. the production files at
+      # the branch root) on every /pre deploy.
+      - name: Deploy dist/ to /pre on gh-pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          destination_dir: pre
+          keep_files: true
+          commit_message: "Desplega a /pre (pre-producció): ${{ github.sha }}"
