@@ -1336,6 +1336,127 @@ const jinjaBlockField = CmStateField.define({
   ],
 });
 
+// Follow-up to Phase D: an inline-layout Jinja2 tag (one that shares its
+// line with other content -- e.g. "El nom és {% if actiu %}actiu{% endif
+// %}." -- so it never qualified for a full header/branch/footer widget
+// above) used to fall all the way back to plain highlighted TEXT, which
+// read as "just code" sitting in the middle of a paragraph. Each such tag
+// gets its own small pill here instead -- exactly the tag itself
+// ("{% if actiu %}", not the body between it and its matching close),
+// replaced with a compact, colored, double-clickable label. The CONTENT
+// between an inline open/close pair is deliberately left as real, still-
+// editable inline text (including any nested {{ }} chips or further
+// inline/block Jinja2 inside it) -- only the tag delimiters themselves are
+// ever hidden behind a widget, never a whole inline "block" swallowed
+// wholesale the way Phase D's block-layout bodies are.
+//
+// A tag is treated as "inline" here precisely when it did NOT become part
+// of a full block-layout group above (computeHandledBlockGroupIds mirrors
+// computeJinjaBlockDecorations' own "does every tag in this group sit
+// alone on its line" check) -- including a MISMATCHED group (e.g. only the
+// open tag is on its own line, the close isn't): every tag in that group
+// falls back to being pilled individually rather than the whole group
+// staying unstyled.
+const computeHandledBlockGroupIds = (state) => {
+  const doc = state.doc;
+  const tags = computeJinjaTagRanges(doc.toString());
+  const byGroup = new Map();
+  tags.forEach((t) => {
+    if (t.groupId == null) return;
+    if (!byGroup.has(t.groupId)) byGroup.set(t.groupId, []);
+    byGroup.get(t.groupId).push(t);
+  });
+  const handled = new Set();
+  byGroup.forEach((members, groupId) => {
+    const open = members.find((t) => t.kind === 'open');
+    const close = members.find((t) => t.kind === 'close');
+    if (!open || !close) return;
+    if (!wholeLineTag(doc, open.from, open.to) || !wholeLineTag(doc, close.from, close.to)) return;
+    const branches = members.filter((t) => t.kind === 'elif' || t.kind === 'else');
+    if (branches.some((b) => !wholeLineTag(doc, b.from, b.to))) return;
+    handled.add(groupId);
+  });
+  return handled;
+};
+
+const INLINE_TAG_KIND_LABEL = { elif: 'SI NO', else: 'ALTRAMENT' };
+
+class InlineJinjaTagWidget extends CmWidgetType {
+  constructor(tag, raw, from, to) {
+    super();
+    this.tag = tag;
+    this.raw = raw;
+    this.from = from;
+    this.to = to;
+  }
+  toDOM() {
+    const colorType = this.tag.kind === 'open' ? this.tag.openType : (this.tag.kind === 'close' ? this.tag.closeType : null);
+    const span = document.createElement('span');
+    span.className = `j-inline-tag${colorType ? ` j-inline-tag-${colorType}` : ''}${this.tag.kind === 'close' ? ' j-inline-tag-close' : ''}`;
+    span.title = this.raw;
+
+    const label = document.createElement('span');
+    if (this.tag.kind === 'open') label.textContent = `${JINJA_BLOCK_ICON[colorType] || ''} ${JINJA_BLOCK_LABEL[colorType] || colorType}`;
+    else if (this.tag.kind === 'close') label.textContent = `FI ${JINJA_BLOCK_LABEL[colorType] || colorType || ''}`;
+    else label.textContent = INLINE_TAG_KIND_LABEL[this.tag.kind] || this.tag.kind;
+    span.appendChild(label);
+
+    const condKind = this.tag.kind === 'open' ? colorType : (this.tag.kind === 'elif' ? 'elif' : null);
+    const cond = condKind ? parseBlockTagCondition(this.raw, condKind, this.from) : null;
+    span.addEventListener('mousedown', (e) => e.preventDefault());
+    if (cond) {
+      const condSpan = document.createElement('span');
+      condSpan.className = 'j-inline-tag-cond';
+      condSpan.textContent = cond.text;
+      span.appendChild(condSpan);
+      span.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        openBlockModalForRange(condKind, { from: cond.from, to: cond.to, kind: 'condition', text: cond.text });
+      });
+    }
+    return span;
+  }
+  ignoreEvent() { return true; }
+}
+
+// A tag can never legitimately span a line break in this app's own
+// conventions (every place that WRITES one keeps it on a single line), but
+// computeJinjaTagRanges' underlying regex is dotall and would still match
+// a pathological hand-edited one that does -- guarded against explicitly,
+// since a non-block Decoration.replace crossing a line break is a hard
+// CodeMirror error (the exact crash Phase C's VAR_CHIP_RE fix was about).
+const isSameLine = (doc, from, to) => doc.lineAt(from).number === doc.lineAt(Math.max(to - 1, from)).number;
+
+const computeInlineJinjaTagDecorations = (state, excludedRanges) => {
+  const doc = state.doc;
+  const tags = computeJinjaTagRanges(doc.toString());
+  const handledGroups = computeHandledBlockGroupIds(state);
+  const decos = [];
+  tags.forEach((tag) => {
+    if (tag.groupId == null) return; // unmatched/mismatched tag -- left as plain (error-highlighted) text
+    if (handledGroups.has(tag.groupId)) return; // already a full block-layout widget above
+    if (!isSameLine(doc, tag.from, tag.to)) return;
+    if (isInsideAnyRange(tag.from, excludedRanges)) return;
+    const raw = doc.sliceString(tag.from, tag.to);
+    decos.push(CmDecoration.replace({ widget: new InlineJinjaTagWidget(tag, raw, tag.from, tag.to) }).range(tag.from, tag.to));
+  });
+  return CmDecoration.set(decos, true);
+};
+
+const inlineJinjaTagPlugin = CmViewPlugin.fromClass(class {
+  constructor(view) {
+    this.decorations = computeInlineJinjaTagDecorations(view.state, computeExcludedInlineRanges(view.state));
+  }
+  update(update) {
+    if (update.docChanged || update.startState.field(jinjaExpandedField, false) !== update.state.field(jinjaExpandedField, false)) {
+      this.decorations = computeInlineJinjaTagDecorations(update.state, computeExcludedInlineRanges(update.state));
+    }
+  }
+}, {
+  decorations: (v) => v.decorations,
+  provide: (plugin) => CmEditorView.atomicRanges.of((view) => view.plugin(plugin)?.decorations || CmDecoration.none),
+});
+
 // Phase E of the Visual-editor rewrite: the "{% set name = expr %}"
 // single-line assignment chip, and KaTeX math ($...$ inline, $$...$$
 // display).
@@ -2044,7 +2165,7 @@ const createCodeMirrorView = () => {
 // widget/decoration extensions here without touching the Codi instance.
 const createVisualCodeMirrorView = () => {
   if (!visualCodeMirrorContainerRef.value || visualCodeMirrorView) return;
-  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaExpandedField, jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin, jinjaBlockField, setInlinePlugin, inlineMathPlugin, displayMathField, tableField, yamlMetadataField], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
+  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaExpandedField, jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin, jinjaBlockField, inlineJinjaTagPlugin, setInlinePlugin, inlineMathPlugin, displayMathField, tableField, yamlMetadataField], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
   visualTextareaRef.value = makeTextareaShim(visualCodeMirrorView);
 };
 
@@ -4270,6 +4391,40 @@ body.dark-theme .code-editor-wrapper .cm-content {
   margin-right: 3px;
   font-size: 0.78rem;
   vertical-align: middle;
+}
+
+/* Follow-up to Phase D: individual pills for inline-layout Jinja2 tags
+   (see InlineJinjaTagWidget) -- same shape/sizing as .j-var-chip, colored
+   by block type like .j-block-head-* is. */
+.j-inline-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background-color: var(--bg-tertiary, #f1f3f5);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 0 5px;
+  height: 18px;
+  line-height: 18px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin: 0 2px;
+  vertical-align: baseline;
+  user-select: none;
+}
+.j-inline-tag-for { background-color: var(--color-primary-light); border-color: var(--border-focus); }
+.j-inline-tag-if { background-color: var(--color-warning-light); border-color: var(--color-warning); }
+.j-inline-tag-macro, .j-inline-tag-set { background-color: var(--bg-tertiary, #f1f3f5); border-color: var(--border-color); }
+.j-inline-tag-close { opacity: 0.7; }
+.j-inline-tag-cond {
+  font-weight: 400;
+  opacity: 0.85;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
 }
 
 /* Phase D of the Visual-editor rewrite: for/if/macro/set block widgets
