@@ -59,6 +59,13 @@ async function testVisualEditor() {
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: 'networkidle2' });
   await new Promise((r) => setTimeout(r, 1500));
+  // Under CPU/memory pressure, WASM (Pyodide+Pandoc) init -- which the
+  // Visual tab's own mount doesn't strictly depend on, but which competes
+  // for the same main thread -- can take far longer than any fixed sleep;
+  // wait for a real readiness signal instead (same convention
+  // e2e_browser.e2e.js already uses).
+  await page.waitForFunction(() => window.store?.enginesReady === true, { timeout: 60000 }).catch(() => {});
+  await page.waitForFunction(() => Array.from(document.querySelectorAll('.code-editor-wrapper .cm-content')).some((el) => el.offsetParent !== null), { timeout: 20000 }).catch(() => {});
 
   await page.evaluate(() => {
     window.__visualEditorTest = {

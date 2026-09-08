@@ -72,6 +72,10 @@ async function testProjectWorkflow() {
   
   // 2. Upload the generated fixture workbook
   console.log('➡️ 2. Carregant la fixture generada elips_test_fixture.xlsx al projecte ProjecteLicitacio...');
+  // Under CPU/memory pressure the "create project" modal round-trip above
+  // can legitimately take longer than the fixed sleeps already here; wait
+  // for the real element instead of guessing a timeout.
+  await page.waitForSelector('input[accept*=".xlsx"]', { timeout: 30000 }).catch(() => {});
   const fileInput = await page.$('input[accept*=".xlsx"]');
   await fileInput.uploadFile(FIXTURE_FILE);
   await new Promise(r => setTimeout(r, 5000));

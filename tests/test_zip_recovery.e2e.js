@@ -50,6 +50,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: "networkidle2" });
   await new Promise(r => setTimeout(r, 2000));
+  // Under CPU/memory pressure the app's initial mount can legitimately take
+  // longer than any fixed sleep; wait for the real element instead of
+  // guessing a timeout (same convention e2e_browser.e2e.js already uses).
+  await page.waitForSelector('input[type="file"][accept*=".zip"]', { timeout: 30000 }).catch(() => {});
 
   console.log(`➡️ 1. Important paquet ZIP generat '${path.basename(ZIP_PATH)}'...`);
   const zipInput = await page.$('input[type="file"][accept*=".zip"]');

@@ -47,6 +47,12 @@ async function testNestedFeatures() {
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: 'networkidle2' });
   await new Promise(r => setTimeout(r, 1500));
+  // itemTitleFormula (scenario 1 below) and the calculated-field scenario
+  // further down both round-trip through the Pyodide/Python engine to
+  // evaluate — under CPU/memory pressure this can legitimately take longer
+  // than any fixed sleep, so wait for a real readiness signal instead of
+  // guessing a timeout (same convention e2e_browser.e2e.js already uses).
+  await page.waitForFunction(() => window.store?.enginesReady === true, { timeout: 60000 }).catch(() => {});
 
   // Switch to Dades tab
   await page.evaluate(() => {
@@ -121,6 +127,7 @@ async function testNestedFeatures() {
 
   // 1. Verify Title Formula
   console.log("➡️ 1. Verificant Títol amb Fórmula CONCAT(titol; ' ('; MONEDA(import); ')')...");
+  await page.waitForFunction(() => document.querySelectorAll('.nested-card-header strong').length > 0, { timeout: 20000 }).catch(() => {});
   const cardHeadersText = await page.evaluate(() => {
     const headers = Array.from(document.querySelectorAll('.nested-card-header strong'));
     return headers.map(h => h.textContent.trim());
