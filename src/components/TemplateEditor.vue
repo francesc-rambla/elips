@@ -1442,13 +1442,14 @@ const computeDisplayMathBlocks = (state) => {
   const text = doc.toString();
   const collapsedJinja = computeCollapsedJinjaRanges(state);
   const tables = computeTableRanges(state);
+  const yaml = computeYamlMetadataRanges(state);
   const blocks = [];
   DISPLAY_MATH_RE.lastIndex = 0;
   let m;
   while ((m = DISPLAY_MATH_RE.exec(text)) !== null) {
     const from = m.index;
     const to = from + m[0].length;
-    if (isInsideAnyRange(from, collapsedJinja) || isInsideAnyRange(from, tables)) continue;
+    if (isInsideAnyRange(from, collapsedJinja) || isInsideAnyRange(from, tables) || isInsideAnyRange(from, yaml)) continue;
     const startLine = doc.lineAt(from);
     const endLine = doc.lineAt(to - 1);
     if (startLine.text.trim() !== '$$' || endLine.text.trim() !== '$$') continue;
@@ -1467,7 +1468,7 @@ const computeDisplayMathRanges = (state) => computeDisplayMathBlocks(state).map(
 // ever tries to place a decoration of its own inside a span some other
 // plugin/field has already replaced -- CodeMirror rejects overlapping
 // replace decorations regardless of which plugin/field they came from.
-const computeExcludedInlineRanges = (state) => [...computeCollapsedJinjaRanges(state), ...computeTableRanges(state), ...computeDisplayMathRanges(state)];
+const computeExcludedInlineRanges = (state) => [...computeCollapsedJinjaRanges(state), ...computeTableRanges(state), ...computeDisplayMathRanges(state), ...computeYamlMetadataRanges(state)];
 
 const computeDisplayMathDecorations = (state) => {
   const ranges = computeDisplayMathBlocks(state).map((b) => CmDecoration.replace({ widget: new DisplayMathWidget(b.expr, b.from, b.to), block: true }).range(b.from, b.to));
@@ -1668,6 +1669,7 @@ const computeAllTables = (state) => {
   const doc = state.doc;
   const text = doc.toString();
   const collapsedJinja = computeCollapsedJinjaRanges(state);
+  const yaml = computeYamlMetadataRanges(state);
   const results = [];
 
   TRANSPOSED_TABLE_RE.lastIndex = 0;
@@ -1675,7 +1677,7 @@ const computeAllTables = (state) => {
   while ((m = TRANSPOSED_TABLE_RE.exec(text)) !== null) {
     const from = m.index;
     const to = from + m[0].length;
-    if (!isCleanLineSpan(doc, from, to) || isInsideAnyRange(from, collapsedJinja)) continue;
+    if (!isCleanLineSpan(doc, from, to) || isInsideAnyRange(from, collapsedJinja) || isInsideAnyRange(from, yaml)) continue;
     const parsed = parseTransposedTableMatch(m[1], m[2]);
     if (parsed) results.push({ from, to, ...parsed });
   }
@@ -1684,12 +1686,12 @@ const computeAllTables = (state) => {
   while ((m = DYNAMIC_TABLE_RE.exec(text)) !== null) {
     const from = m.index;
     const to = from + m[0].length;
-    if (!isCleanLineSpan(doc, from, to) || isInsideAnyRange(from, collapsedJinja)) continue;
+    if (!isCleanLineSpan(doc, from, to) || isInsideAnyRange(from, collapsedJinja) || isInsideAnyRange(from, yaml)) continue;
     const parsed = parseDynamicTableMatch(m[1], m[2]);
     if (parsed) results.push({ from, to, ...parsed });
   }
 
-  const claimedRanges = [...collapsedJinja, ...results.map((r) => [r.from, r.to])];
+  const claimedRanges = [...collapsedJinja, ...yaml, ...results.map((r) => [r.from, r.to])];
   findManualTables(doc, text, claimedRanges).forEach((t) => results.push(t));
 
   return results;
@@ -1833,6 +1835,79 @@ const tableField = CmStateField.define({
   ],
 });
 
+// Phase G of the Visual-editor rewrite: the Pandoc YAML front matter
+// ("---\n...\n---", only ever valid at the very start of the document) --
+// always collapsed to a single summary chip, never expanded inline (unlike
+// macro/set in Phase D): MetadataModal.vue already owns the full
+// parse/edit/serialize round-trip against the WHOLE document's
+// templateText (not a text span this widget would need to track), so
+// there's nothing to precisely replace here -- editing it, from either the
+// chip or the existing ribbon button, both go through the same unchanged
+// openMetadataModal()/onMetadataApply(newText) pair.
+class YamlMetadataWidget extends CmWidgetType {
+  constructor(rawYaml) {
+    super();
+    this.rawYaml = rawYaml;
+  }
+  toDOM() {
+    const row = document.createElement('div');
+    row.className = 'j-yaml-chip';
+    row.title = this.rawYaml;
+    const icon = document.createElement('span');
+    icon.className = 'j-yaml-icon';
+    icon.textContent = '📋';
+    const label = document.createElement('span');
+    label.textContent = 'Metadades Pandoc (YAML)';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'j-yaml-edit-btn';
+    btn.textContent = 'Edita';
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
+    btn.addEventListener('click', (e) => { e.stopPropagation(); openMetadataModal(); });
+    row.append(icon, label, btn);
+    row.addEventListener('mousedown', (e) => e.preventDefault());
+    row.addEventListener('dblclick', (e) => { e.stopPropagation(); openMetadataModal(); });
+    return row;
+  }
+  ignoreEvent() { return true; }
+}
+
+// Scans directly for the "---"/"---" line pair (matching extractYamlHeader's
+// own rule: only valid right at the start of the document) rather than
+// reusing that regex verbatim -- its trailing "(?:\r?\n|$)" consumes the
+// closing marker's own newline, which would make a generic line-boundary
+// check off-by-one; walking actual Line objects sidesteps that entirely.
+// Returns [0, closeLine.to] (a single-element array, matching the shape of
+// every other "excluded ranges" helper in this file) or [] if absent.
+const computeYamlMetadataRanges = (state) => {
+  const doc = state.doc;
+  if (doc.lines < 2 || doc.line(1).text.trim() !== '---') return [];
+  for (let n = 2; n <= doc.lines; n++) {
+    if (doc.line(n).text.trim() === '---') return [[0, doc.line(n).to]];
+  }
+  return [];
+};
+
+const computeYamlMetadataDecorations = (state) => {
+  const doc = state.doc;
+  if (doc.lines < 2 || doc.line(1).text.trim() !== '---') return CmDecoration.none;
+  for (let n = 2; n <= doc.lines; n++) {
+    if (doc.line(n).text.trim() !== '---') continue;
+    const rawYaml = n > 2 ? doc.sliceString(doc.line(2).from, doc.line(n).from - 1) : '';
+    return CmDecoration.set([CmDecoration.replace({ widget: new YamlMetadataWidget(rawYaml), block: true }).range(0, doc.line(n).to)]);
+  }
+  return CmDecoration.none;
+};
+
+const yamlMetadataField = CmStateField.define({
+  create(state) { return computeYamlMetadataDecorations(state); },
+  update(value, tr) {
+    if (tr.docChanged) return computeYamlMetadataDecorations(tr.state);
+    return value;
+  },
+  provide: (f) => CmEditorView.decorations.from(f),
+});
+
 // defaultKeymap ships plain editing (cursor movement, delete, indent...);
 // Ctrl+Z/Y are deliberately NOT bound here -- undoEdit/redoEdit (below) is
 // the single shared history across both tabs, wired directly in
@@ -1891,7 +1966,7 @@ const createCodeMirrorView = () => {
 // widget/decoration extensions here without touching the Codi instance.
 const createVisualCodeMirrorView = () => {
   if (!visualCodeMirrorContainerRef.value || visualCodeMirrorView) return;
-  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaExpandedField, jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin, jinjaBlockField, setInlinePlugin, inlineMathPlugin, displayMathField, tableField], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
+  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaExpandedField, jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin, jinjaBlockField, setInlinePlugin, inlineMathPlugin, displayMathField, tableField, yamlMetadataField], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
   visualTextareaRef.value = makeTextareaShim(visualCodeMirrorView);
 };
 
@@ -5431,5 +5506,36 @@ th[data-jinja-col-loop]::before {
 
 .j-table-th-clickable:hover {
   background-color: var(--color-primary-light);
+}
+
+/* Phase G of the Visual-editor rewrite: the collapsed Pandoc YAML
+   front-matter chip. */
+.j-yaml-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background-color: var(--bg-tertiary, #f1f3f5);
+  border: 1px dashed var(--color-primary);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 0 0 0.5rem 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  user-select: none;
+}
+
+.j-yaml-chip > span:nth-child(2) {
+  flex: 1;
+}
+
+.j-yaml-edit-btn {
+  border: none;
+  background-color: var(--color-primary);
+  color: white;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-weight: 600;
+  cursor: pointer;
 }
 </style>
