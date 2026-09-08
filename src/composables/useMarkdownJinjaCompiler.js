@@ -800,7 +800,7 @@ const extractInlineJinja = (text, compileInline) => {
 // more, for chained filters) and leaving the header row's column count out
 // of sync with the body's. Tracked via {{ / }} depth rather than a regex,
 // since a cell can contain more than one such expression.
-const splitTableLine = (line) => {
+export const splitTableLine = (line) => {
   const clean = line.trim().replace(/^\|/, '').replace(/\|$/, '');
   const cells = [];
   let depth = 0;
@@ -815,7 +815,7 @@ const splitTableLine = (line) => {
   return cells;
 };
 
-const alignFromDivider = (div) => {
+export const alignFromDivider = (div) => {
   if (div.startsWith(':') && div.endsWith(':')) return 'center';
   if (div.endsWith(':')) return 'right';
   return 'left';
@@ -825,15 +825,15 @@ const alignFromDivider = (div) => {
 // "(pres.parts | sum(attribute='Import')) | coin"), not a simple field path
 // — resolveFieldLabel's "take the text before the first |" heuristic makes
 // a mess of it. Give the chip a short, aggregate-shaped label instead.
-const friendlyTotalLabel = (raw) => {
+export const friendlyTotalLabel = (raw) => {
   if (/\|\s*sum\(attribute=/.test(raw) && /\)\s*\/\s*\(/.test(raw)) return 'Mitjana';
   if (/\|\s*sum\(attribute=/.test(raw)) return 'Suma';
   if (/\|\s*length\)/.test(raw)) return 'Compte';
   return 'Fórmula';
 };
 
-const TRANSPOSED_TABLE_RE = /<!--\s*TRANSPOSED_TABLE_START:(.*?)\s*-->([\s\S]*?)<!--\s*TRANSPOSED_TABLE_END\s*-->/g;
-const DYNAMIC_TABLE_RE = /<!--\s*DYNAMIC_TABLE_START:(.*?)\s*-->([\s\S]*?)<!--\s*DYNAMIC_TABLE_END\s*-->/g;
+export const TRANSPOSED_TABLE_RE = /<!--\s*TRANSPOSED_TABLE_START:(.*?)\s*-->([\s\S]*?)<!--\s*TRANSPOSED_TABLE_END\s*-->/g;
+export const DYNAMIC_TABLE_RE = /<!--\s*DYNAMIC_TABLE_START:(.*?)\s*-->([\s\S]*?)<!--\s*DYNAMIC_TABLE_END\s*-->/g;
 
 // Extracts our app-specific table syntax (marked with HTML comments; row/column
 // loop metadata lives in the comment itself, not in standard Markdown table

@@ -21,7 +21,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import { isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
 import { useLoopContext } from '../composables/useLoopContext';
-import { useMarkdownJinjaCompiler, htmlToMarkdown } from '../composables/useMarkdownJinjaCompiler';
+import { useMarkdownJinjaCompiler, htmlToMarkdown, splitTableLine, alignFromDivider, friendlyTotalLabel, TRANSPOSED_TABLE_RE, DYNAMIC_TABLE_RE } from '../composables/useMarkdownJinjaCompiler';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { useEditHistory } from '../composables/useEditHistory';
 import { EditorState as CmEditorState, StateField as CmStateField, StateEffect as CmStateEffect } from '@codemirror/state';
@@ -399,6 +399,11 @@ let activeMathEditRange = null;
 const tableModalInitialConfig = ref({});
 const tableModalIsEditing = ref(false);
 let activeEditTableNode = null;
+// {from, to} of the exact table TEXT SPAN being edited via a Phase F
+// TableWidget's "Edita taula" button, or null when inserting a brand new
+// table at the cursor -- same pattern as activeVarChipRange/
+// activeBlockEditRange/activeMathEditRange.
+let activeTableEditRange = null;
 
 // Cursor Selection Management
 let savedRange = null;
@@ -1436,13 +1441,14 @@ const computeDisplayMathBlocks = (state) => {
   const doc = state.doc;
   const text = doc.toString();
   const collapsedJinja = computeCollapsedJinjaRanges(state);
+  const tables = computeTableRanges(state);
   const blocks = [];
   DISPLAY_MATH_RE.lastIndex = 0;
   let m;
   while ((m = DISPLAY_MATH_RE.exec(text)) !== null) {
     const from = m.index;
     const to = from + m[0].length;
-    if (isInsideAnyRange(from, collapsedJinja)) continue;
+    if (isInsideAnyRange(from, collapsedJinja) || isInsideAnyRange(from, tables)) continue;
     const startLine = doc.lineAt(from);
     const endLine = doc.lineAt(to - 1);
     if (startLine.text.trim() !== '$$' || endLine.text.trim() !== '$$') continue;
@@ -1455,13 +1461,13 @@ const computeDisplayMathRanges = (state) => computeDisplayMathBlocks(state).map(
 
 // Combines every kind of "this text is actually hidden inside a bigger
 // block-replace widget" range this file knows about -- collapsed
-// macro/set blocks (Phase D) and clean display-math blocks (this phase) --
-// into one list, so no OTHER decoration (a {{ }} chip, a set-inline chip,
-// markdown styling, the plain highlighter, inline math) ever tries to
-// place a decoration of its own inside a span some other plugin/field has
-// already replaced -- CodeMirror rejects overlapping replace decorations
-// regardless of which plugin/field they came from.
-const computeExcludedInlineRanges = (state) => [...computeCollapsedJinjaRanges(state), ...computeDisplayMathRanges(state)];
+// macro/set blocks (Phase D), tables (Phase F) and clean display-math
+// blocks (Phase E) -- into one list, so no OTHER decoration (a {{ }} chip,
+// a set-inline chip, markdown styling, the plain highlighter, inline math)
+// ever tries to place a decoration of its own inside a span some other
+// plugin/field has already replaced -- CodeMirror rejects overlapping
+// replace decorations regardless of which plugin/field they came from.
+const computeExcludedInlineRanges = (state) => [...computeCollapsedJinjaRanges(state), ...computeTableRanges(state), ...computeDisplayMathRanges(state)];
 
 const computeDisplayMathDecorations = (state) => {
   const ranges = computeDisplayMathBlocks(state).map((b) => CmDecoration.replace({ widget: new DisplayMathWidget(b.expr, b.from, b.to), block: true }).range(b.from, b.to));
@@ -1476,6 +1482,348 @@ const displayMathField = CmStateField.define({
   update(value, tr) {
     if (tr.docChanged || tr.effects.some((e) => e.is(toggleJinjaExpandEffect))) {
       return computeDisplayMathDecorations(tr.state);
+    }
+    return value;
+  },
+  provide: (f) => [
+    CmEditorView.decorations.from(f),
+    CmEditorView.atomicRanges.of((view) => view.state.field(f, false) || CmDecoration.none),
+  ],
+});
+
+// Phase F of the Visual-editor rewrite: tables. Three source shapes, same
+// as TableModal.vue's own three modes -- "dynamic" (a row repeated via a
+// {% for %} loop) and "transposed" (a column repeated via a {% for %}
+// loop) are wrapped in this app's own "<!-- DYNAMIC_TABLE_START:... -->"/
+// "<!-- TRANSPOSED_TABLE_START:... -->" HTML-comment markers (parsed with
+// the exact same regexes/helpers -- TRANSPOSED_TABLE_RE, DYNAMIC_TABLE_RE,
+// splitTableLine, alignFromDivider -- the compiler's own extractCommentTables
+// uses, now exported for reuse); "manual" is a plain Markdown grid with no
+// markers at all. Every parse works directly off the raw document TEXT, not
+// off any rendered DOM -- unlike TableModal.vue's OLD DOM-reading
+// openTableModal (still used for the isCellMode/legacy path elsewhere in
+// this file... actually fully replaced below), there is no HTML detour on
+// the read side either, only on the one-shot, already-justified write side
+// (TableModal.vue itself still emits fresh HTML on Apply; onTableApply
+// still converts that once via htmlToMarkdown -- never a round-trip of
+// EXISTING content, exactly the same reasoning Phase A already established
+// for a brand new table's insertion, just now also reused for editing an
+// EXISTING one via a precise replace over its exact span).
+//
+// Only a table whose exact span (comment-to-comment, or header-line to last
+// body line) already lines up with clean line boundaries becomes a widget
+// -- the same "clean shape only, else plain text" discipline as every
+// earlier phase.
+const isCleanLineSpan = (doc, from, to) => {
+  if (to <= from) return false;
+  const fromLine = doc.lineAt(from);
+  const toLine = doc.lineAt(to - 1);
+  return fromLine.from === from && toLine.to === to;
+};
+
+const MANUAL_TABLE_DIVIDER_RE = /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/;
+
+// Plain Markdown tables (no "<!-- ..._TABLE_START -->" markers) -- a header
+// line immediately followed by a valid divider line, then as many "| ... |"
+// body lines as follow. `excludeRanges` keeps this from re-matching a table
+// already claimed by a comment-marked dynamic/transposed table above it (both
+// are, after all, just "| ... |" lines from this scan's point of view) or
+// hidden inside a collapsed macro/set.
+const findManualTables = (doc, text, excludeRanges) => {
+  const lines = text.split('\n');
+  const starts = [];
+  let offset = 0;
+  for (const l of lines) { starts.push(offset); offset += l.length + 1; }
+  const results = [];
+  let i = 0;
+  while (i < lines.length - 1) {
+    const headerLine = lines[i].trim();
+    const dividerLineTrim = lines[i + 1].trim();
+    if (headerLine.startsWith('|') && MANUAL_TABLE_DIVIDER_RE.test(dividerLineTrim) && !isInsideAnyRange(starts[i], excludeRanges)) {
+      const headers = splitTableLine(lines[i]);
+      const aligns = splitTableLine(lines[i + 1]).map(alignFromDivider);
+      const dividerFrom = starts[i + 1];
+      const dividerTo = dividerFrom + lines[i + 1].length;
+      let j = i + 2;
+      const rows = [];
+      while (j < lines.length && lines[j].trim().startsWith('|')) {
+        rows.push(splitTableLine(lines[j]));
+        j++;
+      }
+      results.push({
+        from: starts[i],
+        to: starts[j - 1] + lines[j - 1].length,
+        mode: 'manual',
+        config: { mode: 'manual', manualRows: rows.length + 1, manualCols: headers.length },
+        headers,
+        aligns,
+        rows,
+        dividerFrom,
+        dividerTo,
+      });
+      i = j;
+      continue;
+    }
+    i++;
+  }
+  return results;
+};
+
+// Ports openTableModal's DOM-reading logic (below) to work off the parsed
+// {headers, aligns, bodyLine, totalsLine} shape instead -- same resulting
+// `config` object TableModal.vue already expects.
+const parseDynamicTableMatch = (loopExprRaw, tableContent) => {
+  const loopExpr = loopExprRaw.trim();
+  const iterMatch = loopExpr.match(/^(\w+)\s+in\s+([\w.]+)/);
+  if (!iterMatch) return null;
+  const iteratorVar = iterMatch[1];
+  const selectedArray = iterMatch[2];
+
+  const lines = tableContent.trim().split('\n').filter((l) => l.trim().startsWith('|') || l.trim().startsWith('{%'));
+  const headerLine = lines.find((l) => l.startsWith('|') && !l.includes('---'));
+  const dividerLine = lines.find((l) => l.startsWith('|') && l.includes('---'));
+  const bodyLine = lines.find((l) => l.startsWith('|') && l.includes('{{'));
+  const endforIdx = lines.findIndex((l) => l.trim() === '{% endfor %}');
+  const totalsLine = endforIdx !== -1 ? lines.slice(endforIdx + 1).find((l) => l.startsWith('|')) : undefined;
+  if (!headerLine || !bodyLine) return null;
+
+  const headers = splitTableLine(headerLine);
+  const aligns = dividerLine ? splitTableLine(dividerLine).map(alignFromDivider) : [];
+  const bodyCells = splitTableLine(bodyLine);
+
+  const columns = bodyCells.map((cell, idx) => {
+    const m = cell.match(/\{\{\s*(.*?)\s*\}\}/);
+    const raw = m ? m[1].trim() : '';
+    const parts = raw.split('|');
+    const expr = parts[0].trim();
+    const filter = parts.slice(1).join('|').trim();
+    const key = expr.includes('.') ? expr.split('.').pop() : expr;
+    return { key, header: headers[idx] || key, align: aligns[idx] || 'left', selected: true, filter, totalFormula: '', totalCustomExpr: '' };
+  });
+
+  if (totalsLine) {
+    const totalsCells = splitTableLine(totalsLine);
+    const arr = selectedArray.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    columns.forEach((col, idx) => {
+      const m = (totalsCells[idx] || '').match(/\{\{\s*(.*?)\s*\}\}/);
+      const raw = m ? m[1].trim() : '';
+      if (!raw) return;
+      let mm = raw.match(new RegExp(`^\\(${arr}\\s*\\|\\s*sum\\(attribute='[^']+'\\)\\)(?:\\s*\\|\\s*.+)?$`));
+      if (mm) { col.totalFormula = 'sum'; return; }
+      mm = raw.match(new RegExp(`^\\(\\(${arr}\\s*\\|\\s*sum\\(attribute='[^']+'\\)\\)\\s*/\\s*\\(${arr}\\s*\\|\\s*length\\)\\)(?:\\s*\\|\\s*.+)?$`));
+      if (mm) { col.totalFormula = 'avg'; return; }
+      mm = raw.match(new RegExp(`^\\(${arr}\\s*\\|\\s*length\\)(?:\\s*\\|\\s*.+)?$`));
+      if (mm) { col.totalFormula = 'count'; return; }
+      col.totalFormula = 'custom';
+      col.totalCustomExpr = raw;
+    });
+  }
+
+  return { mode: 'dynamic', config: { mode: 'dynamic', iteratorVar, selectedArray, columns, totalsRow: !!totalsLine } };
+};
+
+const parseTransposedTableMatch = (meta, tableContent) => {
+  const parts = meta.split(';');
+  const loopExpr = parts[0].trim();
+  let colHeader = '';
+  let rowsStr = '';
+  parts.slice(1).forEach((p) => {
+    const [k, v] = p.split('=');
+    if (k === 'colHeader') colHeader = v;
+    if (k === 'rows') rowsStr = v;
+  });
+  const rowKeys = rowsStr ? rowsStr.split(',') : [];
+
+  const iterMatch = loopExpr.match(/^(\w+)\s+in\s+([\w.]+)/);
+  if (!iterMatch) return null;
+  const iteratorVar = iterMatch[1];
+  const selectedArray = iterMatch[2];
+
+  const lines = tableContent.trim().split('\n').filter((l) => l.trim().startsWith('|'));
+  if (lines.length < 2) return null;
+  const headers = splitTableLine(lines[0]);
+  const headerValues = headers.slice(1);
+  const finalColHeader = colHeader || findColHeaderKeyMatch(selectedArray, headerValues);
+
+  const bodyLines = lines.slice(2);
+  const columns = bodyLines.map((bl, idx) => {
+    const cells = splitTableLine(bl);
+    const rowLabel = cells[0] || 'Dada';
+    const key = rowKeys[idx] || findBestKeyMatch(selectedArray, rowLabel) || '';
+    const m = bl.match(/\{\{\s*(.*?)\s*\}\}/);
+    const raw = m ? m[1].trim() : '';
+    const filter = raw.split('|').slice(1).join('|').trim();
+    return { key, header: rowLabel, align: 'left', selected: true, filter };
+  });
+
+  return { mode: 'transposed', config: { mode: 'transposed', iteratorVar, selectedArray, selectedColHeaderKey: finalColHeader, columns } };
+};
+
+// Every table (of any of the three shapes) currently in the document, as
+// {from, to, mode, config, ...extra parse data the widget needs to render
+// its own preview}. Reused both by the widget-decoration builder below and
+// by computeTableRanges (part of computeExcludedInlineRanges), so a
+// document is only ever parsed for tables once per recompute.
+const computeAllTables = (state) => {
+  const doc = state.doc;
+  const text = doc.toString();
+  const collapsedJinja = computeCollapsedJinjaRanges(state);
+  const results = [];
+
+  TRANSPOSED_TABLE_RE.lastIndex = 0;
+  let m;
+  while ((m = TRANSPOSED_TABLE_RE.exec(text)) !== null) {
+    const from = m.index;
+    const to = from + m[0].length;
+    if (!isCleanLineSpan(doc, from, to) || isInsideAnyRange(from, collapsedJinja)) continue;
+    const parsed = parseTransposedTableMatch(m[1], m[2]);
+    if (parsed) results.push({ from, to, ...parsed });
+  }
+
+  DYNAMIC_TABLE_RE.lastIndex = 0;
+  while ((m = DYNAMIC_TABLE_RE.exec(text)) !== null) {
+    const from = m.index;
+    const to = from + m[0].length;
+    if (!isCleanLineSpan(doc, from, to) || isInsideAnyRange(from, collapsedJinja)) continue;
+    const parsed = parseDynamicTableMatch(m[1], m[2]);
+    if (parsed) results.push({ from, to, ...parsed });
+  }
+
+  const claimedRanges = [...collapsedJinja, ...results.map((r) => [r.from, r.to])];
+  findManualTables(doc, text, claimedRanges).forEach((t) => results.push(t));
+
+  return results;
+};
+
+const computeTableRanges = (state) => computeAllTables(state).map((t) => [t.from, t.to]);
+
+const buildTablePreviewTableEl = (headers, aligns, bodyRows, totalsRow, onHeaderClick) => {
+  const table = document.createElement('table');
+  table.className = 'j-table-preview';
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  headers.forEach((h, idx) => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    th.style.textAlign = aligns[idx] || 'left';
+    if (onHeaderClick) {
+      th.classList.add('j-table-th-clickable');
+      th.title = "Clica per canviar l'alineació de la columna";
+      th.addEventListener('mousedown', (e) => e.preventDefault());
+      th.addEventListener('click', (e) => { e.stopPropagation(); onHeaderClick(idx); });
+    }
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  bodyRows.forEach((cells) => {
+    const tr = document.createElement('tr');
+    cells.forEach((c, idx) => {
+      const td = document.createElement('td');
+      td.textContent = c;
+      td.style.textAlign = aligns[idx] || 'left';
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  if (totalsRow) {
+    const tr = document.createElement('tr');
+    tr.className = 'j-totals-row';
+    totalsRow.forEach((c, idx) => {
+      const td = document.createElement('td');
+      td.textContent = c;
+      td.style.textAlign = aligns[idx] || 'left';
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
+};
+
+const TOTAL_FORMULA_LABEL = { sum: 'Suma', avg: 'Mitjana', count: 'Compte' };
+
+// Only "manual" tables get header-click-to-toggle-alignment in this phase
+// (its divider row is unambiguous, single-line, plain text); dynamic/
+// transposed tables already expose per-column alignment in TableModal
+// itself, which stays the only way to change theirs -- a deliberate scope
+// reduction, not an oversight.
+const ALIGN_CYCLE = { left: 'center', center: 'right', right: 'left' };
+const ALIGN_TO_DIVIDER_CELL = { left: '---', center: ':---:', right: '---:' };
+
+const cycleManualColumnAlign = (entry, idx) => {
+  const view = visualCodeMirrorView;
+  if (!view) return;
+  const dividerText = view.state.doc.sliceString(entry.dividerFrom, entry.dividerTo);
+  const cells = splitTableLine(dividerText);
+  const current = alignFromDivider(cells[idx] || '---');
+  cells[idx] = ALIGN_TO_DIVIDER_CELL[ALIGN_CYCLE[current]];
+  view.dispatch({ changes: { from: entry.dividerFrom, to: entry.dividerTo, insert: `| ${cells.join(' | ')} |` } });
+};
+
+class TableWidget extends CmWidgetType {
+  constructor(entry) {
+    super();
+    this.entry = entry;
+  }
+  toDOM() {
+    const wrap = document.createElement('div');
+    wrap.className = `j-table-widget j-table-widget-${this.entry.mode}`;
+
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'table-edit-btn';
+    editBtn.textContent = '✎ Edita taula';
+    editBtn.title = 'Edita la configuració de la taula';
+    editBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openTableModalForRange({ from: this.entry.from, to: this.entry.to, config: this.entry.config });
+    });
+    wrap.appendChild(editBtn);
+
+    if (this.entry.mode === 'manual') {
+      wrap.appendChild(buildTablePreviewTableEl(this.entry.headers, this.entry.aligns, this.entry.rows, null, (idx) => cycleManualColumnAlign(this.entry, idx)));
+    } else if (this.entry.mode === 'dynamic') {
+      const cfg = this.entry.config;
+      const activeCols = cfg.columns.filter((c) => c.selected && c.key);
+      const badge = document.createElement('div');
+      badge.className = 'j-table-loop-badge';
+      badge.textContent = `🔁 per cada ${cfg.iteratorVar} de ${cfg.selectedArray}`;
+      wrap.appendChild(badge);
+      const bodyRow = activeCols.map((c) => resolveFieldLabel(`${cfg.iteratorVar}.${c.key}${c.filter ? ` | ${c.filter}` : ''}`));
+      const totalsRow = cfg.totalsRow ? activeCols.map((c) => (c.totalFormula ? (TOTAL_FORMULA_LABEL[c.totalFormula] || 'Fórmula') : '')) : null;
+      wrap.appendChild(buildTablePreviewTableEl(activeCols.map((c) => c.header), activeCols.map((c) => c.align), [bodyRow], totalsRow));
+    } else if (this.entry.mode === 'transposed') {
+      const cfg = this.entry.config;
+      const badge = document.createElement('div');
+      badge.className = 'j-table-loop-badge';
+      badge.textContent = `🔄 columnes per cada ${cfg.iteratorVar} de ${cfg.selectedArray}`;
+      wrap.appendChild(badge);
+      const headers = ['Dada', resolveFieldLabel(`${cfg.iteratorVar}.${cfg.selectedColHeaderKey}`)];
+      const rows = cfg.columns.filter((c) => c.selected && c.key).map((c) => [c.header, resolveFieldLabel(`${cfg.iteratorVar}.${c.key}${c.filter ? ` | ${c.filter}` : ''}`)]);
+      wrap.appendChild(buildTablePreviewTableEl(headers, ['left', 'center'], rows, null));
+    }
+
+    return wrap;
+  }
+  ignoreEvent() { return true; }
+}
+
+const computeTableDecorations = (state) => {
+  const ranges = computeAllTables(state).map((entry) => CmDecoration.replace({ widget: new TableWidget(entry), block: true }).range(entry.from, entry.to));
+  return CmDecoration.set(ranges, true);
+};
+
+// A StateField, same reason as jinjaBlockField/displayMathField: a table
+// spans several lines, and CodeMirror requires multi-line block:true
+// replace decorations to come from a StateField.
+const tableField = CmStateField.define({
+  create(state) { return computeTableDecorations(state); },
+  update(value, tr) {
+    if (tr.docChanged || tr.effects.some((e) => e.is(toggleJinjaExpandEffect))) {
+      return computeTableDecorations(tr.state);
     }
     return value;
   },
@@ -1543,7 +1891,7 @@ const createCodeMirrorView = () => {
 // widget/decoration extensions here without touching the Codi instance.
 const createVisualCodeMirrorView = () => {
   if (!visualCodeMirrorContainerRef.value || visualCodeMirrorView) return;
-  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaExpandedField, jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin, jinjaBlockField, setInlinePlugin, inlineMathPlugin, displayMathField], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
+  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaExpandedField, jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin, jinjaBlockField, setInlinePlugin, inlineMathPlugin, displayMathField, tableField], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
   visualTextareaRef.value = makeTextareaShim(visualCodeMirrorView);
 };
 
@@ -2210,6 +2558,7 @@ const onMathApply = ({ expr, type }) => {
 const openTableModal = (table = null) => {
   saveSelection();
   activeEditTableNode = table;
+  activeTableEditRange = null;
   tableModalIsEditing.value = !!table;
 
   if (table) {
@@ -2317,25 +2666,46 @@ const openTableModal = (table = null) => {
   isTableModalOpen.value = true;
 };
 
+// Counterpart to openTableModal above, for Phase F's TableWidget "Edita
+// taula" button: `range.config` already IS the exact shape
+// tableModalInitialConfig needs (computed by parseDynamicTableMatch/
+// parseTransposedTableMatch/findManualTables straight from the source
+// text), so there's no DOM to read at all here, unlike the dead
+// DOM-reading branches above.
+const openTableModalForRange = (range) => {
+  saveSelection();
+  activeEditTableNode = null;
+  activeTableEditRange = range;
+  tableModalIsEditing.value = true;
+  tableModalInitialConfig.value = range.config;
+  isTableModalOpen.value = true;
+};
+
 // TableModal.vue owns the mode/columns/array/iterator form state and
-// computes the resulting <table> HTML on apply. Phase A of the
-// Visual-editor rewrite: there's no canvas/table DOM to insert that HTML
-// into anymore (activeEditTableNode, set only by double-clicking an
-// existing rendered table, is never set today since none exists yet), so
-// it's converted to Markdown+Jinja2 source *once* here via the existing
-// htmlToMarkdown/dynamicTableToMarkdown/transposedTableToMarkdown
-// machinery (useMarkdownJinjaCompiler.js) — a one-shot conversion of
-// freshly-generated content, not a repeated round-trip of live-edited
-// content, so it doesn't reintroduce the fidelity problem this rewrite is
-// fixing. Phase F replaces this with a real table widget built directly
-// from TableModal's structured config, without an HTML detour at all.
+// computes the resulting <table> HTML on apply -- unchanged by Phase F, as
+// the plan intended. Editing an EXISTING table (activeTableEditRange, set
+// by openTableModalForRange above) replaces its exact [from,to) span;
+// inserting a brand NEW one is still a splice at the cursor. Either way the
+// HTML TableModal just emitted is converted to Markdown+Jinja2 *once* here
+// via htmlToMarkdown (useMarkdownJinjaCompiler.js) -- a one-shot conversion
+// of freshly-generated content the modal's own config produced this very
+// instant, never a round-trip of a table's previously-existing content
+// (which is instead read directly from source text by
+// parseDynamicTableMatch/parseTransposedTableMatch/findManualTables above,
+// with no HTML detour on that read side at all).
 const onTableApply = (html) => {
-  const el = activeShim();
-  if (!el) return;
   const wrapper = document.createElement('div');
   wrapper.innerHTML = html;
   const tableMarkdown = htmlToMarkdown(wrapper);
   if (!tableMarkdown) return;
+  if (activeTableEditRange) {
+    const range = activeTableEditRange;
+    activeTableEditRange = null;
+    visualCodeMirrorView?.dispatch({ changes: { from: range.from, to: range.to, insert: tableMarkdown.trim() } });
+    return;
+  }
+  const el = activeShim();
+  if (!el) return;
   const start = el.selectionStart;
   const end = el.selectionEnd;
   const insertText = `\n\n${tableMarkdown.trim()}\n\n`;
@@ -2619,9 +2989,6 @@ const {
   convertJinjaToChips,
   findBestKeyMatch,
   findColHeaderKeyMatch,
-  parseCommentTablesToHtml,
-  parseMarkdownTablesToHtml,
-  renderTableRowsToHtml,
   compileMarkdownToHtml,
 } = useMarkdownJinjaCompiler({
   store,
@@ -5037,5 +5404,32 @@ th[data-jinja-col-loop]::before {
   margin-bottom: 4px;
   font-weight: bold;
   font-family: var(--font-sans);
+}
+
+/* Phase F of the Visual-editor rewrite: table widgets (manual/dynamic/
+   transposed). The preview <table> itself reuses the generic table/th/td
+   rules above -- only the wrapper, the loop badge and the clickable-header
+   affordance are new here. */
+.j-table-widget {
+  margin: 0.4rem 0;
+}
+
+.j-table-loop-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-bottom: 2px;
+}
+
+.j-table-preview {
+  margin: 0.25rem 0 1rem 0;
+}
+
+.j-table-th-clickable {
+  cursor: pointer;
+}
+
+.j-table-th-clickable:hover {
+  background-color: var(--color-primary-light);
 }
 </style>
