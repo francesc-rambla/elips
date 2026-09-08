@@ -2472,6 +2472,20 @@ const availableVariables = computed(() => {
     }
   }
 
+  // 0.5. Variables defined anywhere in the template via a {% set %} tag --
+  // computed at render time, so (like macro params) they're offered
+  // regardless of whether an Excel is loaded, and regardless of cursor
+  // position (a SET variable, unlike a loop/macro-local name, is usable
+  // for the rest of the template once defined).
+  for (const name of collectSetVariableNames(editorText.value)) {
+    list.push({
+      path: name,
+      label: `${name} (variable SET)`,
+      category: 'setVariable',
+      isContext: false
+    });
+  }
+
   if (!store.excelJsonData) return list;
 
   // 1. Contextual variables if cursor or node is inside an active FOR loop
@@ -2529,6 +2543,11 @@ const availableVariables = computed(() => {
   walkVars(store.excelJsonData, '');
   return list;
 });
+
+// Flat list of every {% set %}-defined variable name in the template --
+// used by the sidebar's own always-visible "Variables" card (see template
+// below) and its "Carrega un Excel..." empty-state guard.
+const setVariableNames = computed(() => Array.from(collectSetVariableNames(editorText.value)));
 
 const availableArrays = computed(() => {
   if (!store.excelJsonData) return [];
@@ -3335,6 +3354,22 @@ const collectMacroNames = (text) => {
   return names;
 };
 
+// Collects every variable name assigned via a {% set %} tag anywhere in
+// the template -- both the inline "name = expr" form and the block form
+// ("{% set name %}...{% endset %}") -- independent of cursor position.
+// Used so a SET-defined variable is never flagged as undefined, and to
+// list them in the sidebar's own "variables" category.
+const collectSetVariableNames = (text) => {
+  const names = new Set();
+  if (!text) return names;
+  const inlineRe = /\{%\s*set\s+([a-zA-Z_]\w*)\s*=\s*[\s\S]*?%\}/g;
+  let m;
+  while ((m = inlineRe.exec(text)) !== null) names.add(m[1]);
+  const blockRe = /\{%\s*set\s+([a-zA-Z_]\w*)\s*%\}/g;
+  while ((m = blockRe.exec(text)) !== null) names.add(m[1]);
+  return names;
+};
+
 // On-demand reactive state for undefined variables (updated ONLY when "Comprova Plantilla" button is clicked)
 const undefinedVariablesList = ref([]);
 const hasCheckedTemplate = ref(false);
@@ -3380,11 +3415,12 @@ const checkTemplateVariables = async () => {
   const text = editorText.value || '';
   const varsWithCtx = extractVariablesWithStaticContext(text);
   const macroNames = collectMacroNames(text);
+  const setNames = collectSetVariableNames(text);
   const undefinedList = [];
 
   for (const item of varsWithCtx) {
     const macroParams = (item.macroStack || []).flatMap(m => m.params || []);
-    if (item.expr && !isVariableDefinedInSchema(item.expr, item.loopStack, macroParams, macroNames)) {
+    if (item.expr && !isVariableDefinedInSchema(item.expr, item.loopStack, macroParams, macroNames, setNames)) {
       if (!undefinedList.includes(item.expr)) {
         undefinedList.push(item.expr);
       }
@@ -4076,7 +4112,7 @@ onUnmounted(() => {
         </div>
       </div>
       
-      <div v-if="!store.excelJsonData && !activeMacroContext" style="font-size:0.75rem; color:var(--text-muted); font-style:italic">
+      <div v-if="!store.excelJsonData && !activeMacroContext && setVariableNames.length === 0" style="font-size:0.75rem; color:var(--text-muted); font-style:italic">
         Carrega un Excel per generar la llista de variables disponibles.
       </div>
 
@@ -4138,6 +4174,31 @@ onUnmounted(() => {
           >
             <span style="font-weight: 600;">{{ param }}</span>
             <span class="variable-badge present" style="font-size:0.58rem; background-color: var(--color-success); color: white;">paràmetre</span>
+          </div>
+        </div>
+
+        <!-- SET Variables Card: every {% set %}-defined name found anywhere
+             in the template -- unlike the macro/loop cards above, not
+             gated on cursor position, since a SET variable stays usable
+             for the rest of the template once defined. -->
+        <div v-if="setVariableNames.length > 0" style="background-color: var(--color-primary-light); padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border-focus); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;">
+          <div style="font-size: 0.68rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase; display: flex; align-items: center; justify-content: space-between;">
+            <span style="display: flex; align-items: center; gap: 4px;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+              Variables
+            </span>
+            <span class="variable-badge present" style="background-color: var(--color-primary); color: white; font-size: 0.58rem;">SET</span>
+          </div>
+          <div
+            v-for="name in setVariableNames"
+            :key="name"
+            class="variable-item present"
+            style="background-color: var(--bg-card); margin: 0; font-size: 0.72rem; padding: 2px 6px; justify-content: space-between;"
+            @click="sidebarCopyInsert(`{{ ${name} }}`)"
+            :title="`Insereix variable ${name}`"
+          >
+            <span style="font-weight: 600;">{{ name }}</span>
+            <span class="variable-badge present" style="font-size:0.58rem; background-color: var(--color-primary); color: white;">variable</span>
           </div>
         </div>
 

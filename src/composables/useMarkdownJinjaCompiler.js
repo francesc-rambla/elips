@@ -1001,7 +1001,7 @@ const extractYamlHeader = (text) => {
  */
 export function useMarkdownJinjaCompiler({ store, activeLoopStack, hasCheckedTemplate, resolveFieldLabel, resolvePath }) {
   // Helper to check if a Jinja variable expression exists in the schema or active loop context
-  const isVariableDefinedInSchema = (exprStr, loopStack = [], macroParams = [], macroNames = null) => {
+  const isVariableDefinedInSchema = (exprStr, loopStack = [], macroParams = [], macroNames = null, setNames = null) => {
     if (!exprStr || typeof exprStr !== 'string') return true;
 
     let cleanExpr = exprStr.split('|')[0].trim();
@@ -1030,6 +1030,11 @@ export function useMarkdownJinjaCompiler({ store, activeLoopStack, hasCheckedTem
     // Macro parameter -- a local name bound by the caller, never part of
     // the data schema; can't validate any deeper structure past it either.
     if (macroParams && macroParams.includes(firstPart)) return true;
+
+    // Variable defined by a {% set %} tag (inline "name = expr" or block
+    // "name %}...{% endset %}") -- computed at render time, never a
+    // schema path either; can't validate any deeper structure past it.
+    if (setNames && setNames.has(firstPart)) return true;
 
     const gData = store.excelJsonData;
     const metas = store.editorMetadata || [];
