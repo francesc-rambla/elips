@@ -21,7 +21,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import { isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
 import { useLoopContext } from '../composables/useLoopContext';
-import { useMarkdownJinjaCompiler, htmlToMarkdown, splitTableLine, alignFromDivider, friendlyTotalLabel, TRANSPOSED_TABLE_RE, DYNAMIC_TABLE_RE } from '../composables/useMarkdownJinjaCompiler';
+import { useMarkdownJinjaCompiler, htmlToMarkdown, splitTableLine, alignFromDivider, friendlyTotalLabel, TRANSPOSED_TABLE_RE, DYNAMIC_TABLE_RE, ICON_LOOP, ICON_IF, ICON_MACRO, ICON_SET, ICON_COLLAPSE, ICON_INLINE_TOGGLE, ICON_TRASH, ICON_EDIT } from '../composables/useMarkdownJinjaCompiler';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { useEditHistory } from '../composables/useEditHistory';
 import { EditorState as CmEditorState, StateField as CmStateField, StateEffect as CmStateEffect } from '@codemirror/state';
@@ -620,6 +620,28 @@ const markdownStylePlugin = CmViewPlugin.fromClass(class {
 // useMarkdownJinjaCompiler.js.
 const VAR_CHIP_RE = /\{\{\s*(.*?)\s*\}\}/g;
 
+// A widget's default ignoreEvent() ignores EVERY event whose target is
+// somewhere inside its DOM -- including a plain click that isn't on any of
+// the widget's own interactive elements, which stops CodeMirror's own
+// fallback "place the cursor at the nearest valid position" behavior from
+// ever running for it. For a small, common target like a variable chip or
+// an inline tag pill -- easy to click near/on while just trying to
+// position the cursor in the surrounding text -- that reads as "clicking
+// near a chip doesn't work". Only 'mousedown' (each widget's own listener
+// already calls preventDefault() on it, purely to stop the native
+// text-selection drag a click would otherwise start) and 'dblclick'
+// (opens an edit modal) are ever actually handled by these widgets'
+// listeners, so only those two need to stay ignored; every other event
+// (crucially, plain 'click') is left for CodeMirror to process normally.
+// Reserved for widgets simple enough that letting CodeMirror's own click
+// handling run alongside them can't step on an internal button mid-click
+// -- block-layout widgets with several buttons of their own (Phase D)
+// stay fully ignored instead, since jinjaBlockField already rebuilds
+// their entire DOM from scratch on every selection change (see its own
+// comment), which could otherwise yank a button out from under an
+// in-progress click.
+const ignoreEventExceptClick = (event) => event.type === 'mousedown' || event.type === 'dblclick';
+
 class VarChipWidget extends CmWidgetType {
   constructor(raw, label, from, to) {
     super();
@@ -640,7 +662,7 @@ class VarChipWidget extends CmWidgetType {
     });
     return span;
   }
-  ignoreEvent() { return true; }
+  ignoreEvent(event) { return ignoreEventExceptClick(event); }
 }
 
 const computeVarChipDecorations = (text, collapsedRanges = []) => {
@@ -818,7 +840,11 @@ const jinjaTagMatchPlugin = CmViewPlugin.fromClass(class {
 // its own widget is a later refinement (see the plan: "Bloc-layout
 // primer... inline-layout després") -- not required for this phase, and
 // deliberately not attempted here.
-const JINJA_BLOCK_ICON = { for: '🔁', if: '🔀', macro: 'ƒ', set: '=' };
+// Monochrome (stroke="currentColor") SVGs, reused verbatim from the app's
+// own ribbon/toolbar icon set (useMarkdownJinjaCompiler.js) rather than
+// emoji, so block/inline widgets pick up the app's actual visual language
+// (and its light/dark theme color) instead of the OS's own emoji glyphs.
+const JINJA_BLOCK_ICON = { for: ICON_LOOP, if: ICON_IF, macro: ICON_MACRO, set: ICON_SET };
 const JINJA_BLOCK_LABEL = { for: 'FOR', if: 'SI', macro: 'MACRO', set: 'SET' };
 // Only macro/set default to collapsed (see the plan) -- for/if are always
 // fully expanded, there is no view-only "folded" state for them.
@@ -1005,7 +1031,7 @@ const toggleJinjaBlockToInline = (open, close) => {
 };
 
 class JinjaHeadWidget extends CmWidgetType {
-  constructor(type, openRaw, open, close, branchLines, collapsible, isExpanded, hasEmptyBodyAfter, nextLineFrom) {
+  constructor(type, openRaw, open, close, branchLines, collapsible, isExpanded, hasEmptyBodyAfter, nextLineFrom, isFocused) {
     super();
     this.type = type;
     this.openRaw = openRaw;
@@ -1016,6 +1042,7 @@ class JinjaHeadWidget extends CmWidgetType {
     this.isExpanded = isExpanded;
     this.hasEmptyBodyAfter = hasEmptyBodyAfter;
     this.nextLineFrom = nextLineFrom;
+    this.isFocused = isFocused;
   }
   toDOM() {
     const cond = parseBlockTagCondition(this.openRaw, this.type, this.open.from);
@@ -1027,7 +1054,7 @@ class JinjaHeadWidget extends CmWidgetType {
       const chevron = document.createElement('button');
       chevron.type = 'button';
       chevron.className = 'j-block-btn j-block-chevron';
-      chevron.textContent = '▾';
+      chevron.innerHTML = ICON_COLLAPSE;
       chevron.title = 'Col·lapsa';
       chevron.addEventListener('mousedown', (e) => e.preventDefault());
       chevron.addEventListener('click', (e) => {
@@ -1039,7 +1066,7 @@ class JinjaHeadWidget extends CmWidgetType {
 
     const icon = document.createElement('span');
     icon.className = 'j-block-icon';
-    icon.textContent = JINJA_BLOCK_ICON[this.type] || '{%';
+    icon.innerHTML = JINJA_BLOCK_ICON[this.type] || '{%';
     const label = document.createElement('span');
     label.className = 'j-block-label';
     label.textContent = JINJA_BLOCK_LABEL[this.type] || this.type.toUpperCase();
@@ -1058,55 +1085,67 @@ class JinjaHeadWidget extends CmWidgetType {
     }
     row.appendChild(condSpan);
 
-    const actions = document.createElement('span');
-    actions.className = 'j-block-actions';
-    const allowed = JINJA_TAG_ALLOWED_BRANCHES[this.type];
-    const elseEntry = this.branchLines.find((b) => b.tag.kind === 'else');
-    const hasElse = !!elseEntry;
-    if (allowed?.has('elif')) {
-      const btn = document.createElement('button');
-      btn.type = 'button'; btn.className = 'j-block-btn'; btn.textContent = '+ ELIF';
-      btn.title = hasElse ? "Afegeix una branca ELIF abans de l'ELSE existent" : 'Afegeix una branca ELIF al final del bloc';
-      btn.addEventListener('mousedown', (e) => e.preventDefault());
-      btn.addEventListener('click', (e) => { e.stopPropagation(); addElifBranch(this.type, this.close, hasElse ? elseEntry.line : null); });
-      actions.appendChild(btn);
+    // "El detall dels blocs només es mostri quan hi siguis dins": the
+    // action buttons (+ELIF/+ELSE/toggle-layout/delete) are only real
+    // work while editing THIS block, so they're pure clutter for every
+    // OTHER block on screen -- shown only while the cursor sits somewhere
+    // between this block's open and close tags (isFocused, computed in
+    // computeJinjaBlockDecorations from the current selection). The icon/
+    // label/condition above stay visible either way; those are what let
+    // you read the document's structure at a glance, not "detail".
+    if (this.isFocused) {
+      const actions = document.createElement('span');
+      actions.className = 'j-block-actions';
+      const allowed = JINJA_TAG_ALLOWED_BRANCHES[this.type];
+      const elseEntry = this.branchLines.find((b) => b.tag.kind === 'else');
+      const hasElse = !!elseEntry;
+      if (allowed?.has('elif')) {
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'j-block-btn'; btn.textContent = '+ ELIF';
+        btn.title = hasElse ? "Afegeix una branca ELIF abans de l'ELSE existent" : 'Afegeix una branca ELIF al final del bloc';
+        btn.addEventListener('mousedown', (e) => e.preventDefault());
+        btn.addEventListener('click', (e) => { e.stopPropagation(); addElifBranch(this.type, this.close, hasElse ? elseEntry.line : null); });
+        actions.appendChild(btn);
+      }
+      if (allowed?.has('else') && !hasElse) {
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'j-block-btn'; btn.textContent = '+ ELSE';
+        btn.title = 'Afegeix una branca ELSE al final del bloc';
+        btn.addEventListener('mousedown', (e) => e.preventDefault());
+        btn.addEventListener('click', (e) => { e.stopPropagation(); addElseBranch(this.close); });
+        actions.appendChild(btn);
+      }
+      if (!this.collapsible) {
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'j-block-btn'; btn.innerHTML = ICON_INLINE_TOGGLE;
+        btn.title = 'Canvia a format en línia';
+        btn.addEventListener('mousedown', (e) => e.preventDefault());
+        btn.addEventListener('click', (e) => { e.stopPropagation(); toggleJinjaBlockToInline(this.open, this.close); });
+        actions.appendChild(btn);
+      }
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button'; delBtn.className = 'j-block-btn j-block-delete'; delBtn.innerHTML = ICON_TRASH;
+      delBtn.title = 'Elimina aquest bloc sencer';
+      delBtn.addEventListener('mousedown', (e) => e.preventDefault());
+      delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteJinjaBlock(this.open, this.close); });
+      actions.appendChild(delBtn);
+      row.appendChild(actions);
     }
-    if (allowed?.has('else') && !hasElse) {
-      const btn = document.createElement('button');
-      btn.type = 'button'; btn.className = 'j-block-btn'; btn.textContent = '+ ELSE';
-      btn.title = 'Afegeix una branca ELSE al final del bloc';
-      btn.addEventListener('mousedown', (e) => e.preventDefault());
-      btn.addEventListener('click', (e) => { e.stopPropagation(); addElseBranch(this.close); });
-      actions.appendChild(btn);
-    }
-    if (!this.collapsible) {
-      const btn = document.createElement('button');
-      btn.type = 'button'; btn.className = 'j-block-btn'; btn.textContent = '⇄';
-      btn.title = 'Canvia a format en línia';
-      btn.addEventListener('mousedown', (e) => e.preventDefault());
-      btn.addEventListener('click', (e) => { e.stopPropagation(); toggleJinjaBlockToInline(this.open, this.close); });
-      actions.appendChild(btn);
-    }
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button'; delBtn.className = 'j-block-btn j-block-delete'; delBtn.textContent = '🗑';
-    delBtn.title = 'Elimina aquest bloc sencer';
-    delBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteJinjaBlock(this.open, this.close); });
-    actions.appendChild(delBtn);
-    row.appendChild(actions);
     wrapper.appendChild(row);
 
-    if (this.hasEmptyBodyAfter) wrapper.appendChild(buildAddBodyLineButton(this.nextLineFrom));
+    if (this.isFocused && this.hasEmptyBodyAfter) wrapper.appendChild(buildAddBodyLineButton(this.nextLineFrom));
 
     return wrapper;
   }
   ignoreEvent() { return true; }
 }
 
-// Shared by JinjaHeadWidget/JinjaBranchWidget: whenever a block's header or
-// a branch is immediately followed by another widget's line with no real
-// body text in between (a freshly-written "{% if x %}\n{% endif %}", or one
-// hand-edited down to nothing), there is otherwise no line left to click
+// Shared by JinjaHeadWidget/JinjaBranchWidget/JinjaFootWidget: whenever a
+// block's header, a branch, or its footer is immediately followed by
+// another widget's line with no real body text in between -- a freshly-
+// written "{% if x %}\n{% endif %}", one hand-edited down to nothing, or
+// simply two unrelated blocks sitting right next to each other with no
+// blank line separating them -- there is otherwise no line left to click
 // into at all -- this splices a blank line in at that exact point and
 // drops the cursor on it.
 const buildAddBodyLineButton = (nextLineFrom) => {
@@ -1121,7 +1160,7 @@ const buildAddBodyLineButton = (nextLineFrom) => {
 };
 
 class JinjaBranchWidget extends CmWidgetType {
-  constructor(type, branchTag, branchRaw, deleteRange, hasEmptyBodyAfter, nextLineFrom) {
+  constructor(type, branchTag, branchRaw, deleteRange, hasEmptyBodyAfter, nextLineFrom, isFocused) {
     super();
     this.type = type;
     this.branchTag = branchTag;
@@ -1129,6 +1168,7 @@ class JinjaBranchWidget extends CmWidgetType {
     this.deleteRange = deleteRange;
     this.hasEmptyBodyAfter = hasEmptyBodyAfter;
     this.nextLineFrom = nextLineFrom;
+    this.isFocused = isFocused;
   }
   toDOM() {
     const wrapper = document.createElement('div');
@@ -1160,15 +1200,17 @@ class JinjaBranchWidget extends CmWidgetType {
       spacer.style.flex = '1';
       row.appendChild(spacer);
     }
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button'; delBtn.className = 'j-block-btn j-block-delete'; delBtn.textContent = '🗑';
-    delBtn.title = 'Elimina aquesta branca';
-    delBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteJinjaBranch(this.deleteRange); });
-    row.appendChild(delBtn);
+    if (this.isFocused) {
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button'; delBtn.className = 'j-block-btn j-block-delete'; delBtn.innerHTML = ICON_TRASH;
+      delBtn.title = 'Elimina aquesta branca';
+      delBtn.addEventListener('mousedown', (e) => e.preventDefault());
+      delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteJinjaBranch(this.deleteRange); });
+      row.appendChild(delBtn);
+    }
     wrapper.appendChild(row);
 
-    if (this.hasEmptyBodyAfter) wrapper.appendChild(buildAddBodyLineButton(this.nextLineFrom));
+    if (this.isFocused && this.hasEmptyBodyAfter) wrapper.appendChild(buildAddBodyLineButton(this.nextLineFrom));
 
     return wrapper;
   }
@@ -1176,18 +1218,26 @@ class JinjaBranchWidget extends CmWidgetType {
 }
 
 class JinjaFootWidget extends CmWidgetType {
-  constructor(type) {
+  constructor(type, hasEmptyBodyAfter, nextLineFrom, isFocused) {
     super();
     this.type = type;
+    this.hasEmptyBodyAfter = hasEmptyBodyAfter;
+    this.nextLineFrom = nextLineFrom;
+    this.isFocused = isFocused;
   }
   toDOM() {
+    const wrapper = document.createElement('div');
     const row = document.createElement('div');
     row.className = `j-block-foot j-block-head-${this.type}`;
     const label = document.createElement('span');
     label.className = 'j-block-label';
     label.textContent = `FI ${JINJA_BLOCK_LABEL[this.type] || this.type.toUpperCase()}`;
     row.appendChild(label);
-    return row;
+    wrapper.appendChild(row);
+
+    if (this.isFocused && this.hasEmptyBodyAfter) wrapper.appendChild(buildAddBodyLineButton(this.nextLineFrom));
+
+    return wrapper;
   }
   ignoreEvent() { return true; }
 }
@@ -1203,7 +1253,7 @@ class JinjaCollapsedWidget extends CmWidgetType {
     const row = document.createElement('div');
     row.className = `j-block-collapsed j-block-head-${this.type}`;
     const chevron = document.createElement('button');
-    chevron.type = 'button'; chevron.className = 'j-block-btn j-block-chevron'; chevron.textContent = '▸';
+    chevron.type = 'button'; chevron.className = 'j-block-btn j-block-chevron j-block-chevron-expand'; chevron.innerHTML = ICON_COLLAPSE;
     chevron.title = 'Expandeix';
     chevron.addEventListener('mousedown', (e) => e.preventDefault());
     chevron.addEventListener('click', (e) => {
@@ -1212,7 +1262,7 @@ class JinjaCollapsedWidget extends CmWidgetType {
     });
     const icon = document.createElement('span');
     icon.className = 'j-block-icon';
-    icon.textContent = JINJA_BLOCK_ICON[this.type] || '{%';
+    icon.innerHTML = JINJA_BLOCK_ICON[this.type] || '{%';
     const label = document.createElement('span');
     label.className = 'j-block-label';
     label.textContent = JINJA_BLOCK_LABEL[this.type] || this.type.toUpperCase();
@@ -1229,6 +1279,7 @@ const computeJinjaBlockDecorations = (state) => {
   const doc = state.doc;
   const tags = computeJinjaTagRanges(doc.toString());
   const expanded = state.field(jinjaExpandedField, false) || new Set();
+  const cursorPos = state.selection.main.head;
   const byGroup = new Map();
   tags.forEach((t) => {
     if (t.groupId == null) return;
@@ -1236,17 +1287,24 @@ const computeJinjaBlockDecorations = (state) => {
     byGroup.get(t.groupId).push(t);
   });
 
-  const ranges = [];
+  // First pass: figure out which groups qualify as full block-layout (tag
+  // alone on its own line -- Phase D), and collect the plain LINE NUMBERS
+  // every one of their header/branch/footer widgets will occupy. Needed up
+  // front, before building any actual widget, so a block's FOOTER can tell
+  // whether it's immediately followed by some OTHER, unrelated block's own
+  // header with no blank line between them (an "empty gap between two
+  // sibling blocks", not just an empty body inside the same block) --
+  // which requires knowing about every group's widget lines regardless of
+  // which order they get processed in below.
+  const groupInfos = [];
   byGroup.forEach((members) => {
     const open = members.find((t) => t.kind === 'open');
     const close = members.find((t) => t.kind === 'close');
     if (!open || !close) return; // unterminated/mismatched -- left as plain text, surfaced elsewhere as an error
     const type = open.openType;
-
     const openLine = wholeLineTag(doc, open.from, open.to);
     const closeLine = wholeLineTag(doc, close.from, close.to);
     if (!openLine || !closeLine) return; // inline layout (or mixed) -- deferred, see file header comment
-
     const branches = members.filter((t) => t.kind === 'elif' || t.kind === 'else').sort((a, b) => a.from - b.from);
     const branchLines = [];
     let allBranchesOk = true;
@@ -1256,9 +1314,29 @@ const computeJinjaBlockDecorations = (state) => {
       branchLines.push({ tag: b, line: bl });
     }
     if (!allBranchesOk) return;
+    groupInfos.push({ type, open, close, openLine, closeLine, branchLines });
+  });
 
+  const allWidgetLineNumbers = new Set();
+  groupInfos.forEach((g) => {
+    allWidgetLineNumbers.add(g.openLine.number);
+    g.branchLines.forEach((b) => allWidgetLineNumbers.add(b.line.number));
+    allWidgetLineNumbers.add(g.closeLine.number);
+  });
+
+  const ranges = [];
+  groupInfos.forEach(({ type, open, close, openLine, closeLine, branchLines }) => {
     const collapsible = JINJA_BLOCK_COLLAPSIBLE.has(type);
     const isExpanded = !collapsible || expanded.has(open.from);
+    // "El detall dels blocs només es mostri quan hi siguis dins": true
+    // whenever the cursor sits anywhere between this block's own open and
+    // close tags (inclusive) -- see JinjaHeadWidget/JinjaBranchWidget's own
+    // comment for what that toggles. A cursor nested inside an INNER block
+    // is, by this same check, also "inside" every ancestor block wrapping
+    // it, which is exactly the wanted behavior (every enclosing block on
+    // the path to the cursor shows full detail; unrelated siblings stay
+    // compact).
+    const isFocused = cursorPos >= openLine.from && cursorPos <= closeLine.to;
 
     if (collapsible && !isExpanded) {
       ranges.push(CmDecoration.replace({
@@ -1268,7 +1346,7 @@ const computeJinjaBlockDecorations = (state) => {
       return;
     }
 
-    // boundaries[i] -> boundaries[i+1] is each "gap" (body span) in the
+    // boundaries[i] -> boundaries[i+1] is each "gap" (body span) WITHIN the
     // block; used both for the body-line marks below and to tell the
     // header/each branch widget whether it's immediately followed by
     // another widget's line with no real body text in between (an empty
@@ -1279,7 +1357,7 @@ const computeJinjaBlockDecorations = (state) => {
     ranges.push(CmDecoration.replace({
       widget: new JinjaHeadWidget(
         type, doc.sliceString(open.from, open.to), open, close, branchLines, collapsible, isExpanded,
-        boundaries[1].number === openLine.number + 1, boundaries[1].from,
+        boundaries[1].number === openLine.number + 1, boundaries[1].from, isFocused,
       ),
       block: true,
     }).range(openLine.from, openLine.to));
@@ -1292,14 +1370,22 @@ const computeJinjaBlockDecorations = (state) => {
         widget: new JinjaBranchWidget(
           type, tag, doc.sliceString(tag.from, tag.to),
           { from: line.from, to: nextBoundary.from },
-          nextBoundary.number === line.number + 1, nextBoundary.from,
+          nextBoundary.number === line.number + 1, nextBoundary.from, isFocused,
         ),
         block: true,
       }).range(line.from, line.to));
     });
 
+    // The footer's own "immediately followed by something with no gap"
+    // check is necessarily a GLOBAL one -- unlike the header/branch cases
+    // above, whatever comes right after a block's closing tag is never
+    // part of THIS SAME group (there's nothing left of it to be), so it
+    // can only be a sibling/outer block's own widget line -- checked
+    // against allWidgetLineNumbers, built from every group up front.
+    const afterCloseLineNum = closeLine.number + 1;
+    const footerHasGapAfter = afterCloseLineNum <= doc.lines && allWidgetLineNumbers.has(afterCloseLineNum);
     ranges.push(CmDecoration.replace({
-      widget: new JinjaFootWidget(type),
+      widget: new JinjaFootWidget(type, footerHasGapAfter, footerHasGapAfter ? doc.line(afterCloseLineNum).from : null, isFocused),
       block: true,
     }).range(closeLine.from, closeLine.to));
 
@@ -1321,11 +1407,13 @@ const computeJinjaBlockDecorations = (state) => {
 // other Phase B/C plugins above provide. tr.effects is checked directly
 // (rather than comparing jinjaExpandedField's old/new value) since the
 // collapse toggle is the ONLY thing that can change this field without
-// also changing the document.
+// also changing the document. selectionSet is ALSO watched now: each
+// widget's own isFocused (cursor-inside-this-block) depends on the
+// current selection, not just the document text.
 const jinjaBlockField = CmStateField.define({
   create(state) { return computeJinjaBlockDecorations(state); },
   update(value, tr) {
-    if (tr.docChanged || tr.effects.some((e) => e.is(toggleJinjaExpandEffect))) {
+    if (tr.docChanged || !tr.startState.selection.eq(tr.state.selection) || tr.effects.some((e) => e.is(toggleJinjaExpandEffect))) {
       return computeJinjaBlockDecorations(tr.state);
     }
     return value;
@@ -1395,8 +1483,14 @@ class InlineJinjaTagWidget extends CmWidgetType {
     span.className = `j-inline-tag${colorType ? ` j-inline-tag-${colorType}` : ''}${this.tag.kind === 'close' ? ' j-inline-tag-close' : ''}`;
     span.title = this.raw;
 
+    if (this.tag.kind === 'open' && JINJA_BLOCK_ICON[colorType]) {
+      const icon = document.createElement('span');
+      icon.className = 'j-block-icon';
+      icon.innerHTML = JINJA_BLOCK_ICON[colorType];
+      span.appendChild(icon);
+    }
     const label = document.createElement('span');
-    if (this.tag.kind === 'open') label.textContent = `${JINJA_BLOCK_ICON[colorType] || ''} ${JINJA_BLOCK_LABEL[colorType] || colorType}`;
+    if (this.tag.kind === 'open') label.textContent = JINJA_BLOCK_LABEL[colorType] || colorType;
     else if (this.tag.kind === 'close') label.textContent = `FI ${JINJA_BLOCK_LABEL[colorType] || colorType || ''}`;
     else label.textContent = INLINE_TAG_KIND_LABEL[this.tag.kind] || this.tag.kind;
     span.appendChild(label);
@@ -1416,7 +1510,7 @@ class InlineJinjaTagWidget extends CmWidgetType {
     }
     return span;
   }
-  ignoreEvent() { return true; }
+  ignoreEvent(event) { return ignoreEventExceptClick(event); }
 }
 
 // A tag can never legitimately span a line break in this app's own
@@ -1499,7 +1593,7 @@ class SetInlineChipWidget extends CmWidgetType {
     });
     return span;
   }
-  ignoreEvent() { return true; }
+  ignoreEvent(event) { return ignoreEventExceptClick(event); }
 }
 
 const computeSetInlineDecorations = (text, expandedSet, excludedRanges) => {
@@ -1567,7 +1661,7 @@ class InlineMathWidget extends CmWidgetType {
     });
     return span;
   }
-  ignoreEvent() { return true; }
+  ignoreEvent(event) { return ignoreEventExceptClick(event); }
 }
 
 // Only "$" pairs whose content is NON-EMPTY become an inline-math widget --
@@ -1625,7 +1719,7 @@ class DisplayMathWidget extends CmWidgetType {
     });
     return div;
   }
-  ignoreEvent() { return true; }
+  ignoreEvent(event) { return ignoreEventExceptClick(event); }
 }
 
 // Only a "$$...$$" whose opening/closing markers each sit ALONE on their
@@ -1898,6 +1992,17 @@ const computeAllTables = (state) => {
 
 const computeTableRanges = (state) => computeAllTables(state).map((t) => [t.from, t.to]);
 
+// A small monochrome icon span for a table's loop badge -- kept separate
+// from the interpolated iterator/array text that follows it (appended as
+// a plain string via Element.append, never innerHTML) so neither ever
+// runs user/config-supplied text through the HTML parser.
+const buildLoopBadgeIcon = (svg) => {
+  const icon = document.createElement('span');
+  icon.className = 'j-block-icon';
+  icon.innerHTML = svg;
+  return icon;
+};
+
 const buildTablePreviewTableEl = (headers, aligns, bodyRows, totalsRow, onHeaderClick) => {
   const table = document.createElement('table');
   table.className = 'j-table-preview';
@@ -1991,7 +2096,8 @@ class TableWidget extends CmWidgetType {
       const activeCols = cfg.columns.filter((c) => c.selected && c.key);
       const badge = document.createElement('div');
       badge.className = 'j-table-loop-badge';
-      badge.textContent = `🔁 per cada ${cfg.iteratorVar} de ${cfg.selectedArray}`;
+      badge.appendChild(buildLoopBadgeIcon(ICON_LOOP));
+      badge.append(` per cada ${cfg.iteratorVar} de ${cfg.selectedArray}`);
       wrap.appendChild(badge);
       const bodyRow = activeCols.map((c) => resolveFieldLabel(`${cfg.iteratorVar}.${c.key}${c.filter ? ` | ${c.filter}` : ''}`));
       const totalsRow = cfg.totalsRow ? activeCols.map((c) => (c.totalFormula ? (TOTAL_FORMULA_LABEL[c.totalFormula] || 'Fórmula') : '')) : null;
@@ -2000,7 +2106,8 @@ class TableWidget extends CmWidgetType {
       const cfg = this.entry.config;
       const badge = document.createElement('div');
       badge.className = 'j-table-loop-badge';
-      badge.textContent = `🔄 columnes per cada ${cfg.iteratorVar} de ${cfg.selectedArray}`;
+      badge.appendChild(buildLoopBadgeIcon(ICON_LOOP));
+      badge.append(` columnes per cada ${cfg.iteratorVar} de ${cfg.selectedArray}`);
       wrap.appendChild(badge);
       const headers = ['Dada', resolveFieldLabel(`${cfg.iteratorVar}.${cfg.selectedColHeaderKey}`)];
       const rows = cfg.columns.filter((c) => c.selected && c.key).map((c) => [c.header, resolveFieldLabel(`${cfg.iteratorVar}.${c.key}${c.filter ? ` | ${c.filter}` : ''}`)]);
@@ -2126,11 +2233,11 @@ const CM_SAFE_KEYMAP = cmDefaultKeymap.filter((b) => {
 // syntax-highlighting set) -- both share lineNumbers/lineWrapping/the safe
 // keymap/the update-listener shape, so that divergence is additive, not a
 // fork of this function.
-const createCmView = (containerEl, extraExtensions, placeholderText) => {
+const createCmView = (containerEl, extraExtensions, placeholderText, showLineNumbers = true) => {
   const state = CmEditorState.create({
     doc: editorText.value || '',
     extensions: [
-      CmLineNumbers(),
+      ...(showLineNumbers ? [CmLineNumbers()] : []),
       CmEditorView.lineWrapping,
       ...extraExtensions,
       cmPlaceholder(placeholderText),
@@ -2160,12 +2267,20 @@ const createCodeMirrorView = () => {
   textareaRef.value = makeTextareaShim(codeMirrorView);
 };
 
-// Visual tab, Phase A: looks exactly like Codi for now (same highlighting/
-// tag-matching plugins, no rich decorations yet) -- later phases add
-// widget/decoration extensions here without touching the Codi instance.
+// The Visual tab is a second CodeMirror view over the exact same
+// editorText as Codi, layered with all the chip/block/table/math widget
+// decorations built up across Phases B-H -- but deliberately WITHOUT a
+// line-number gutter: CodeMirror numbers physical DOCUMENT lines, which no
+// longer lines up with what's actually on screen once block-layout
+// widgets (Phase D) replace several real lines with one taller rendered
+// row, or a collapsed macro/set (also Phase D) hides many lines inside a
+// single line's worth of space -- a gutter number here would count
+// document lines that aren't visually where the number sits, reading as
+// "not tracking correctly" rather than as useful navigation. Codi keeps
+// its gutter (no widgets there to throw the count off).
 const createVisualCodeMirrorView = () => {
   if (!visualCodeMirrorContainerRef.value || visualCodeMirrorView) return;
-  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaExpandedField, jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin, jinjaBlockField, inlineJinjaTagPlugin, setInlinePlugin, inlineMathPlugin, displayMathField, tableField, yamlMetadataField], 'Escriu la teva plantilla Jinja2 en Markdown aquí...');
+  visualCodeMirrorView = createCmView(visualCodeMirrorContainerRef.value, [jinjaExpandedField, jinjaHighlightPlugin, jinjaTagMatchPlugin, markdownStylePlugin, varChipPlugin, jinjaBlockField, inlineJinjaTagPlugin, setInlinePlugin, inlineMathPlugin, displayMathField, tableField, yamlMetadataField], 'Escriu la teva plantilla Jinja2 en Markdown aquí...', false);
   visualTextareaRef.value = makeTextareaShim(visualCodeMirrorView);
 };
 
@@ -2600,10 +2715,10 @@ const formatCodeText = (cmd, arg = null) => {
   const el = activeShim();
   if (!el) return;
   el.focus();
-  const start = el.selectionStart || 0;
-  const end = el.selectionEnd || 0;
+  let start = el.selectionStart || 0;
+  let end = el.selectionEnd || 0;
   const fullText = editorText.value || '';
-  const selectedText = fullText.substring(start, end);
+  let selectedText = fullText.substring(start, end);
 
   let replacement = '';
   let newCursorPos = start;
@@ -2626,7 +2741,17 @@ const formatCodeText = (cmd, arg = null) => {
     const tag = (arg || '').toUpperCase().replace(/[<>]/g, '');
     const prefixes = { 'H1': '# ', 'H2': '## ', 'H3': '### ', 'H4': '#### ', 'H5': '##### ', 'H6': '###### ', 'P': '' };
     const pfx = prefixes[tag] !== undefined ? prefixes[tag] : '';
-    const lines = (selectedText || 'Títol').split('\n');
+    // A paragraph/heading style always applies to a whole line -- with
+    // nothing selected (just a collapsed cursor), that's the cursor's own
+    // current line, never a placeholder word inserted in its place (the
+    // old "Títol" fallback silently discarded whatever the user actually
+    // had -- or was about to type -- there).
+    if (!selectedText) {
+      while (start > 0 && fullText[start - 1] !== '\n') start--;
+      while (end < fullText.length && fullText[end] !== '\n') end++;
+      selectedText = fullText.substring(start, end);
+    }
+    const lines = selectedText.split('\n');
     replacement = lines.map(line => {
       const clean = line.replace(/^#{1,6}\s*/, '');
       return pfx ? `${pfx}${clean}` : clean;
@@ -4395,24 +4520,26 @@ body.dark-theme .code-editor-wrapper .cm-content {
 
 /* Follow-up to Phase D: individual pills for inline-layout Jinja2 tags
    (see InlineJinjaTagWidget) -- same shape/sizing as .j-var-chip, colored
-   by block type like .j-block-head-* is. */
+   by block type like .j-block-head-* is. Small on purpose, like the
+   block-layout delimiters above. */
 .j-inline-tag {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   background-color: var(--bg-tertiary, #f1f3f5);
   border: 1px solid var(--border-color);
   border-radius: 3px;
-  padding: 0 5px;
-  height: 18px;
-  line-height: 18px;
+  padding: 0 4px;
+  height: 16px;
+  line-height: 16px;
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 600;
   margin: 0 2px;
   vertical-align: baseline;
   user-select: none;
 }
+.j-inline-tag .j-block-icon svg { width: 10px; height: 10px; }
 .j-inline-tag-for { background-color: var(--color-primary-light); border-color: var(--border-focus); }
 .j-inline-tag-if { background-color: var(--color-warning-light); border-color: var(--color-warning); }
 .j-inline-tag-macro, .j-inline-tag-set { background-color: var(--bg-tertiary, #f1f3f5); border-color: var(--border-color); }
@@ -4428,27 +4555,35 @@ body.dark-theme .code-editor-wrapper .cm-content {
 }
 
 /* Phase D of the Visual-editor rewrite: for/if/macro/set block widgets
-   (header/branch/footer line-replacements + collapsed macro/set summary). */
+   (header/branch/footer line-replacements + collapsed macro/set summary).
+   Kept deliberately small/low-profile ("els delimitadors dels blocs siguin
+   el més petits possible") -- these are structural chrome around the
+   user's own content, not content themselves. */
 .j-block-head, .j-block-branch, .j-block-foot, .j-block-collapsed {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
+  gap: 4px;
+  padding: 1px 6px;
   font-family: var(--font-mono);
-  font-size: 0.78rem;
-  border-radius: 4px;
+  font-size: 0.7rem;
+  border-radius: 3px;
   user-select: none;
+  line-height: 1.5;
 }
 
-.j-block-head, .j-block-collapsed { margin-top: 4px; font-weight: 600; }
+.j-block-head, .j-block-collapsed { margin-top: 2px; font-weight: 600; }
 .j-block-branch { margin-left: 0; }
-.j-block-foot { margin-bottom: 4px; opacity: 0.75; }
+.j-block-foot { margin-bottom: 2px; opacity: 0.7; }
 
 .j-block-head-for { background-color: var(--color-primary-light); border: 1px solid var(--border-focus); }
 .j-block-head-if { background-color: var(--color-warning-light); border: 1px solid var(--color-warning); }
 .j-block-head-macro, .j-block-head-set { background-color: var(--bg-tertiary, #f1f3f5); border: 1px solid var(--border-color); }
 
-.j-block-icon { font-size: 0.85rem; }
+/* Monochrome SVGs (the app's own ribbon icon set, stroke="currentColor")
+   instead of emoji -- sized down to sit neatly inline with the small text
+   around them. */
+.j-block-icon { display: inline-flex; opacity: 0.85; }
+.j-block-icon svg { width: 11px; height: 11px; display: block; }
 .j-block-label { font-weight: 700; letter-spacing: 0.02em; opacity: 0.8; }
 
 .j-block-cond {
@@ -4462,20 +4597,25 @@ body.dark-theme .code-editor-wrapper .cm-content {
 }
 .j-block-cond:hover { text-decoration: underline dotted; }
 
-.j-block-actions { display: inline-flex; gap: 2px; flex-shrink: 0; }
+.j-block-actions { display: inline-flex; gap: 1px; flex-shrink: 0; }
 
 .j-block-btn {
+  display: inline-flex;
+  align-items: center;
   border: none;
   background: none;
   cursor: pointer;
-  font-size: 0.72rem;
-  padding: 1px 5px;
+  font-size: 0.68rem;
+  line-height: 1.4;
+  padding: 1px 4px;
   border-radius: 3px;
   opacity: 0.7;
   color: inherit;
 }
+.j-block-btn svg { width: 10px; height: 10px; display: block; }
 .j-block-btn:hover { opacity: 1; background-color: rgba(0, 0, 0, 0.08); }
-.j-block-chevron { font-size: 0.7rem; }
+.j-block-chevron svg { width: 9px; height: 9px; }
+.j-block-chevron-expand svg { transform: rotate(180deg); }
 .j-block-delete:hover { background-color: rgba(220, 38, 38, 0.15); }
 
 /* "+ afegeix contingut" -- shown under a header/branch line whenever it's
@@ -4654,33 +4794,6 @@ body.dark-theme .code-editor-wrapper .cm-content {
   background-color: transparent !important;
   display: inline-block !important;
   outline: none;
-}
-
-.j-inline-tag {
-  background-color: rgba(2, 132, 199, 0.1);
-  color: var(--color-primary, #0284c7);
-  padding: 1px 4px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  border-radius: 4px;
-  margin: 0 2px;
-  font-family: var(--font-mono, monospace);
-  user-select: none;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-}
-
-/* Inline if/for tags identify themselves by icon only — the literal
-   "{% ... %}" text stays in the title tooltip instead of cluttering
-   running text. */
-.j-inline-tag-icon {
-  display: inline-flex;
-  align-items: center;
-}
-
-.j-inline-tag-text {
-  display: none;
 }
 
 /* The switch-to-block button sits inside the open tag itself (next to its
