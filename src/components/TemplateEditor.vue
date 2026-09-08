@@ -917,10 +917,14 @@ const parseBlockTagCondition = (raw, kind, docFrom) => {
   return { text: m[1], from: docFrom + condStart, to: docFrom + condStart + m[1].length };
 };
 
-// Both "afegir ELIF" and "afegir ELSE" always insert their new branch
-// immediately before the block's close tag, regardless of where inside the
-// block the header button was clicked -- the plan's deliberate
-// simplification over the old canvas system's cursor-aware insertion.
+// "afegir ELSE" always inserts immediately before the block's close tag.
+// "afegir ELIF" does too, UNLESS the block already has an ELSE branch --
+// real Jinja2 requires every elif to come before the (optional, trailing)
+// else, so inserting a new one there would produce invalid syntax; instead
+// it's inserted right before that existing ELSE. Either way, insertion
+// position never depends on where inside the block the header button was
+// clicked -- the plan's deliberate simplification over the old canvas
+// system's cursor-aware insertion.
 const addElseBranch = (closeTag) => {
   const view = visualCodeMirrorView;
   if (!view) return;
@@ -928,11 +932,24 @@ const addElseBranch = (closeTag) => {
   view.dispatch({ changes: { from: closeLine.from, to: closeLine.from, insert: '{% else %}\n\n' } });
 };
 
-const addElifBranch = (type, closeTag) => {
+const addElifBranch = (type, closeTag, beforeLine = null) => {
   const view = visualCodeMirrorView;
   if (!view) return;
-  const closeLine = view.state.doc.lineAt(closeTag.from);
-  openBlockModalForRange('elif', { from: closeLine.from, to: closeLine.from, kind: 'new-elif', text: '' });
+  const insertLine = beforeLine || view.state.doc.lineAt(closeTag.from);
+  openBlockModalForRange('elif', { from: insertLine.from, to: insertLine.from, kind: 'new-elif', text: '' });
+};
+
+// Splices a single blank line in at `pos` and moves the cursor onto it --
+// used by the "+ afegeix contingut" affordance every block-widget line
+// (header or branch) shows when it's immediately followed by another
+// widget line with no real body text in between (e.g. a freshly-written
+// "{% if x %}\n{% endif %}", or one hand-edited down to nothing) --
+// otherwise there would be no line left to click into at all.
+const insertBlankBodyLineAt = (pos) => {
+  const view = visualCodeMirrorView;
+  if (!view) return;
+  view.dispatch({ changes: { from: pos, to: pos, insert: '\n' }, selection: { anchor: pos } });
+  view.focus();
 };
 
 // "Elimina aquest bloc": removes the open tag's whole line through the
@@ -950,6 +967,19 @@ const deleteJinjaBlock = (open, close) => {
   const closeLine = doc.lineAt(close.from);
   const to = closeLine.to < doc.length ? closeLine.to + 1 : closeLine.to;
   view.dispatch({ changes: { from: openLine.from, to, insert: '' } });
+};
+
+// "Elimina aquesta branca" (ELIF/ELSE only -- the block-level delete above
+// covers the header/whole-block case): removes just the branch's own tag
+// line through the start of whatever comes next (another branch, or the
+// close tag), i.e. the branch's tag AND its own body -- leaving a body
+// orphaned under the wrong branch would silently change what the template
+// means, so it's never split from its tag.
+const deleteJinjaBranch = (range) => {
+  const view = visualCodeMirrorView;
+  if (!view) return;
+  if (!confirm('Vols eliminar aquesta branca (etiqueta i contingut)?')) return;
+  view.dispatch({ changes: { from: range.from, to: range.to, insert: '' } });
 };
 
 // "Canvia a format en línia": a plain text transform, independent of widget
@@ -975,18 +1005,21 @@ const toggleJinjaBlockToInline = (open, close) => {
 };
 
 class JinjaHeadWidget extends CmWidgetType {
-  constructor(type, openRaw, open, close, branches, collapsible, isExpanded) {
+  constructor(type, openRaw, open, close, branchLines, collapsible, isExpanded, hasEmptyBodyAfter, nextLineFrom) {
     super();
     this.type = type;
     this.openRaw = openRaw;
     this.open = open;
     this.close = close;
-    this.branches = branches;
+    this.branchLines = branchLines;
     this.collapsible = collapsible;
     this.isExpanded = isExpanded;
+    this.hasEmptyBodyAfter = hasEmptyBodyAfter;
+    this.nextLineFrom = nextLineFrom;
   }
   toDOM() {
     const cond = parseBlockTagCondition(this.openRaw, this.type, this.open.from);
+    const wrapper = document.createElement('div');
     const row = document.createElement('div');
     row.className = `j-block-head j-block-head-${this.type}`;
 
@@ -1028,13 +1061,14 @@ class JinjaHeadWidget extends CmWidgetType {
     const actions = document.createElement('span');
     actions.className = 'j-block-actions';
     const allowed = JINJA_TAG_ALLOWED_BRANCHES[this.type];
-    const hasElse = this.branches.some((b) => b.kind === 'else');
-    if (allowed?.has('elif') && !hasElse) {
+    const elseEntry = this.branchLines.find((b) => b.tag.kind === 'else');
+    const hasElse = !!elseEntry;
+    if (allowed?.has('elif')) {
       const btn = document.createElement('button');
       btn.type = 'button'; btn.className = 'j-block-btn'; btn.textContent = '+ ELIF';
-      btn.title = 'Afegeix una branca ELIF al final del bloc';
+      btn.title = hasElse ? "Afegeix una branca ELIF abans de l'ELSE existent" : 'Afegeix una branca ELIF al final del bloc';
       btn.addEventListener('mousedown', (e) => e.preventDefault());
-      btn.addEventListener('click', (e) => { e.stopPropagation(); addElifBranch(this.type, this.close); });
+      btn.addEventListener('click', (e) => { e.stopPropagation(); addElifBranch(this.type, this.close, hasElse ? elseEntry.line : null); });
       actions.appendChild(btn);
     }
     if (allowed?.has('else') && !hasElse) {
@@ -1060,20 +1094,44 @@ class JinjaHeadWidget extends CmWidgetType {
     delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteJinjaBlock(this.open, this.close); });
     actions.appendChild(delBtn);
     row.appendChild(actions);
+    wrapper.appendChild(row);
 
-    return row;
+    if (this.hasEmptyBodyAfter) wrapper.appendChild(buildAddBodyLineButton(this.nextLineFrom));
+
+    return wrapper;
   }
   ignoreEvent() { return true; }
 }
 
+// Shared by JinjaHeadWidget/JinjaBranchWidget: whenever a block's header or
+// a branch is immediately followed by another widget's line with no real
+// body text in between (a freshly-written "{% if x %}\n{% endif %}", or one
+// hand-edited down to nothing), there is otherwise no line left to click
+// into at all -- this splices a blank line in at that exact point and
+// drops the cursor on it.
+const buildAddBodyLineButton = (nextLineFrom) => {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'j-block-add-body';
+  btn.textContent = '+ afegeix contingut';
+  btn.title = 'Insereix una línia de contingut dins del bloc';
+  btn.addEventListener('mousedown', (e) => e.preventDefault());
+  btn.addEventListener('click', (e) => { e.stopPropagation(); insertBlankBodyLineAt(nextLineFrom); });
+  return btn;
+};
+
 class JinjaBranchWidget extends CmWidgetType {
-  constructor(type, branchTag, branchRaw) {
+  constructor(type, branchTag, branchRaw, deleteRange, hasEmptyBodyAfter, nextLineFrom) {
     super();
     this.type = type;
     this.branchTag = branchTag;
     this.branchRaw = branchRaw;
+    this.deleteRange = deleteRange;
+    this.hasEmptyBodyAfter = hasEmptyBodyAfter;
+    this.nextLineFrom = nextLineFrom;
   }
   toDOM() {
+    const wrapper = document.createElement('div');
     const row = document.createElement('div');
     row.className = `j-block-branch j-block-head-${this.type}`;
     const label = document.createElement('span');
@@ -1094,8 +1152,25 @@ class JinjaBranchWidget extends CmWidgetType {
         });
       }
       row.appendChild(condSpan);
+    } else {
+      // ELSE has no condition to show -- a plain flex:1 spacer pushes the
+      // delete button to the row's end, same visual result as .j-block-cond
+      // (which already carries flex:1) does for an ELIF row.
+      const spacer = document.createElement('span');
+      spacer.style.flex = '1';
+      row.appendChild(spacer);
     }
-    return row;
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button'; delBtn.className = 'j-block-btn j-block-delete'; delBtn.textContent = '🗑';
+    delBtn.title = 'Elimina aquesta branca';
+    delBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteJinjaBranch(this.deleteRange); });
+    row.appendChild(delBtn);
+    wrapper.appendChild(row);
+
+    if (this.hasEmptyBodyAfter) wrapper.appendChild(buildAddBodyLineButton(this.nextLineFrom));
+
+    return wrapper;
   }
   ignoreEvent() { return true; }
 }
@@ -1193,14 +1268,32 @@ const computeJinjaBlockDecorations = (state) => {
       return;
     }
 
+    // boundaries[i] -> boundaries[i+1] is each "gap" (body span) in the
+    // block; used both for the body-line marks below and to tell the
+    // header/each branch widget whether it's immediately followed by
+    // another widget's line with no real body text in between (an empty
+    // body -- see buildAddBodyLineButton's comment) and, if so, exactly
+    // where to splice a fresh blank line in.
+    const boundaries = [openLine, ...branchLines.map((b) => b.line), closeLine];
+
     ranges.push(CmDecoration.replace({
-      widget: new JinjaHeadWidget(type, doc.sliceString(open.from, open.to), open, close, branches, collapsible, isExpanded),
+      widget: new JinjaHeadWidget(
+        type, doc.sliceString(open.from, open.to), open, close, branchLines, collapsible, isExpanded,
+        boundaries[1].number === openLine.number + 1, boundaries[1].from,
+      ),
       block: true,
     }).range(openLine.from, openLine.to));
 
-    branchLines.forEach(({ tag, line }) => {
+    branchLines.forEach(({ tag, line }, idx) => {
+      // idx's own position in `boundaries` is idx+1 (index 0 is openLine);
+      // the boundary right after it is idx+2.
+      const nextBoundary = boundaries[idx + 2];
       ranges.push(CmDecoration.replace({
-        widget: new JinjaBranchWidget(type, tag, doc.sliceString(tag.from, tag.to)),
+        widget: new JinjaBranchWidget(
+          type, tag, doc.sliceString(tag.from, tag.to),
+          { from: line.from, to: nextBoundary.from },
+          nextBoundary.number === line.number + 1, nextBoundary.from,
+        ),
         block: true,
       }).range(line.from, line.to));
     });
@@ -1210,7 +1303,6 @@ const computeJinjaBlockDecorations = (state) => {
       block: true,
     }).range(closeLine.from, closeLine.to));
 
-    const boundaries = [openLine, ...branchLines.map((b) => b.line), closeLine];
     for (let i = 0; i < boundaries.length - 1; i++) {
       for (let ln = boundaries[i].number + 1; ln < boundaries[i + 1].number; ln++) {
         const bodyLine = doc.line(ln);
@@ -4230,6 +4322,28 @@ body.dark-theme .code-editor-wrapper .cm-content {
 .j-block-btn:hover { opacity: 1; background-color: rgba(0, 0, 0, 0.08); }
 .j-block-chevron { font-size: 0.7rem; }
 .j-block-delete:hover { background-color: rgba(220, 38, 38, 0.15); }
+
+/* "+ afegeix contingut" -- shown under a header/branch line whenever it's
+   immediately followed by another widget line with no real body text in
+   between (see buildAddBodyLineButton), so there's always something to
+   click to get a real, cursor-reachable line inside an otherwise-empty
+   block/branch. */
+.j-block-add-body {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px dashed var(--border-color);
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  padding: 3px 10px;
+  margin: -4px 0 4px 0;
+  cursor: pointer;
+}
+.j-block-add-body:hover { color: var(--color-primary); border-color: var(--color-primary); background-color: var(--color-primary-light); }
 
 /* Body lines between a block's header/branch/footer widgets -- real,
    still-editable text, only ever given a left border + slight indent so
