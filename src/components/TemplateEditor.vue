@@ -65,7 +65,6 @@ const undoEdit = () => {
   isApplyingHistory = true;
   editorText.value = prev;
   nextTick(() => {
-    syncCodeToVisual();
     isApplyingHistory = false;
   });
 };
@@ -76,7 +75,6 @@ const redoEdit = () => {
   isApplyingHistory = true;
   editorText.value = next;
   nextTick(() => {
-    syncCodeToVisual();
     isApplyingHistory = false;
   });
 };
@@ -90,9 +88,6 @@ if (props.isCellMode) {
       // now being edited (openCellEditor() in DataInspector.vue) — undo
       // history from whatever was open before must never carry over.
       editHistory.reset(newVal || '');
-      nextTick(() => {
-        syncCodeToVisual();
-      });
     }
   }, { immediate: true });
 
@@ -109,9 +104,6 @@ if (props.isCellMode) {
       // out from under us means a different document/project/version-history
       // restore just loaded, not an edit — reset, don't accumulate.
       editHistory.reset(newVal || '');
-      nextTick(() => {
-        syncCodeToVisual();
-      });
     }
   }, { immediate: true });
 
@@ -141,15 +133,11 @@ const restoreBackupTemplate = () => {
     editorText.value = backup;
     store.templateText = backup;
     store.addLog("S'ha restaurat la plantilla des de la còpia de seguretat automàtica.", "success");
-    nextTick(() => {
-      syncCodeToVisual();
-    });
   }
 };
 
 
 // DOM refs
-const canvasRef = ref(null);
 // textareaRef is NOT a template ref here: it starts null, then
 // createCodeMirrorView() (see the CodeMirror setup below) assigns it the
 // textarea-shaped adapter object described there.
@@ -406,9 +394,7 @@ let activeEditTableNode = null;
 let activeTableEditRange = null;
 
 // Cursor Selection Management
-let savedRange = null;
 let activeEditNode = null;
-let activeBlockForNewBranch = null; // Pointer to block when adding a new ELIF branch
 // {from, to} of the exact "{{ ... }}" span being edited via a VarChipWidget
 // double-click (Phase C of the Visual-editor rewrite), or null when
 // inserting a fresh variable -- a plain text range, not a DOM node like
@@ -2001,10 +1987,10 @@ const emitGenerate = () => {
 
 // Loop-context resolution (which {% for %} loop the cursor is inside, its
 // data array, and its columns) lives in useLoopContext.js — extracted since
-// it doesn't depend on any DOM-wiring/modal-opening logic, only on the editor's
-// own refs and store. activeEditNode/savedRange are plain `let`s (mutated by
-// selection-tracking code below), not reactive refs, so the composable
-// receives getters instead of the values themselves.
+// it doesn't depend on any DOM-wiring/modal-opening logic, only on the
+// cursor's offset into the shared source text (Phase H: replaced the old
+// DOM-ancestor walk over the Visual canvas, which had quietly stopped
+// working at all once that canvas was removed in Phase A).
 const {
   activeLoopContext,
   activeLoopStack,
@@ -2018,13 +2004,9 @@ const {
   updateActiveLoopContext,
   getSubArraysForArray,
 } = useLoopContext({
-  canvasRef,
-  textareaRef,
   editorText,
-  activeEditorTab,
   store,
-  getActiveEditNode: () => activeEditNode,
-  getSavedRange: () => savedRange,
+  getActiveShim: () => activeShim(),
 });
 
 // Live preview of the variable modal's expression + filter chain, evaluated
@@ -2395,25 +2377,6 @@ const sidebarTree = computed(() => {
   return result;
 });
 
-// Save cursor range inside the visual canvas
-const saveSelection = () => {
-  const sel = window.getSelection();
-  if (sel.rangeCount > 0) {
-    const range = sel.getRangeAt(0);
-    if (canvasRef.value && canvasRef.value.contains(range.commonAncestorContainer)) {
-      savedRange = range.cloneRange();
-    }
-  }
-};
-
-const restoreSelection = () => {
-  if (savedRange) {
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(savedRange);
-  }
-};
-
 // Formatting commands for Code Mode
 // Formats editorText via a plain string splice against whichever tab is
 // active's shim (both tabs are CodeMirror since Phase A of the
@@ -2463,7 +2426,6 @@ const formatCodeText = (cmd, arg = null) => {
     nextTick(() => {
       el.focus();
       el.setSelectionRange(newCursorPos, newCursorPos);
-      syncCodeToVisual();
     });
   }
 };
@@ -2485,7 +2447,6 @@ const formatBlock = (headerTag) => {
 // like the old canvas-based version of this function took. applyVariable
 // below dispatches the edited result back over exactly that range.
 const openVarModal = (range = null) => {
-  saveSelection();
   activeLoopContext.value = getActiveLoopContext();
   let rawFilter = '';
   if (range) {
@@ -2515,10 +2476,9 @@ const EDIT_TITLES = { for: 'Editar Bucle (FOR)', elif: 'Editar branca O SI (ELIF
 const NEW_TITLES = { for: 'Nou Bucle (FOR)', macro: 'Nou Macro', set: 'Nou Bloc SET' };
 
 const openBlockModal = (type, node = null) => {
-  saveSelection();
   blockType.value = type;
   activeBlockEditRange = null;
-  activeLoopContext.value = getActiveLoopContext(node);
+  activeLoopContext.value = getActiveLoopContext();
 
   if (type === 'elif' && !node) {
     activeEditNode = null;
@@ -2558,7 +2518,6 @@ const openBlockModal = (type, node = null) => {
 // open/elif tag already in the source); 'new-elif' opens the modal empty,
 // for a branch that doesn't exist yet (see addElifBranch).
 const openBlockModalForRange = (type, range) => {
-  saveSelection();
   blockType.value = type;
   activeEditNode = null;
   activeBlockEditRange = range;
@@ -2578,7 +2537,6 @@ const openBlockModalForRange = (type, range) => {
 
 // Math Modal Trigger
 const openMathModal = (node = null) => {
-  saveSelection();
   activeMathEditRange = null;
   if (node && (node.tagName === 'SPAN' || node.tagName === 'DIV' || node.classList.contains('latex-chip'))) {
     activeMathNode = node;
@@ -2596,7 +2554,6 @@ const openMathModal = (node = null) => {
 // DisplayMathWidget double-click: there's no DOM node to pass, only the
 // exact "$...$"/"$$...$$" TEXT SPAN being edited (see activeMathEditRange).
 const openMathModalForRange = (range) => {
-  saveSelection();
   activeMathNode = null;
   activeMathEditRange = range;
   mathModalInitialExpr.value = range.expr;
@@ -2631,7 +2588,6 @@ const onMathApply = ({ expr, type }) => {
 
 // Advanced Table Modal Trigger
 const openTableModal = (table = null) => {
-  saveSelection();
   activeEditTableNode = table;
   activeTableEditRange = null;
   tableModalIsEditing.value = !!table;
@@ -2748,7 +2704,6 @@ const openTableModal = (table = null) => {
 // text), so there's no DOM to read at all here, unlike the dead
 // DOM-reading branches above.
 const openTableModalForRange = (range) => {
-  saveSelection();
   activeEditTableNode = null;
   activeTableEditRange = range;
   tableModalIsEditing.value = true;
@@ -2857,50 +2812,6 @@ const sidebarCopyInsert = (expr) => {
   }, 50);
 };
 
-// Insert variables at cursor inside the IF condition box in the modal
-// Helper to insert ELIF / ELSE branch at the current cursor location inside an IF block
-const insertBranchAtCursorOrFooter = (ifBlock, branchElement, bodyElement) => {
-  let targetContent = null;
-  const sel = window.getSelection();
-  
-  if (sel && sel.rangeCount > 0) {
-    const range = sel.getRangeAt(0);
-    let node = range.commonAncestorContainer;
-    while (node && node !== ifBlock) {
-      if (node.nodeType === Node.ELEMENT_NODE && node.classList && node.classList.contains('j-content')) {
-        targetContent = node;
-        break;
-      }
-      node = node.parentNode;
-    }
-  }
-  
-  if (!targetContent && savedRange) {
-    let node = savedRange.commonAncestorContainer;
-    while (node && node !== ifBlock) {
-      if (node.nodeType === Node.ELEMENT_NODE && node.classList && node.classList.contains('j-content')) {
-        targetContent = node;
-        break;
-      }
-      node = node.parentNode;
-    }
-  }
-  
-  if (targetContent && targetContent.parentNode === ifBlock) {
-    targetContent.after(branchElement);
-    branchElement.after(bodyElement);
-  } else {
-    const footer = ifBlock.querySelector('.j-footer');
-    if (footer) {
-      footer.before(branchElement);
-      footer.before(bodyElement);
-    } else {
-      ifBlock.appendChild(branchElement);
-      ifBlock.appendChild(bodyElement);
-    }
-  }
-};
-
 // BlockModal.vue owns the expr/forItemVar/forArrayVar form state and
 // reports the final expression string on apply. A NEW for/if/macro/set is
 // a precise text splice at the cursor (block-layout shape, each tag alone
@@ -2940,50 +2851,6 @@ const onBlockApply = (expr) => {
     nextTick(() => el.setSelectionRange(start + blockText.length, start + blockText.length));
   }
   isBlockModalOpen.value = false;
-};
-
-const toggleTableAlignment = (th) => {
-  const cur = th.getAttribute('data-align') || 'left';
-  const nextAlign = cur === 'left' ? 'center' : (cur === 'center' ? 'right' : 'left');
-  th.setAttribute('data-align', nextAlign);
-  th.style.textAlign = nextAlign;
-  
-  const thIdx = Array.from(th.parentNode.children).indexOf(th);
-  th.closest('table').querySelectorAll('tr').forEach(row => {
-    const cell = row.children[thIdx];
-    if (cell) cell.style.textAlign = nextAlign;
-  });
-  
-  syncVisualToCode();
-};
-
-// Set Row Loops (Jinja Row Repeat in Tables)
-const configureRowLoop = () => {
-  saveSelection();
-  if (!savedRange) return;
-  
-  let node = savedRange.startContainer;
-  if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
-  const tr = node.closest('tr');
-  
-  if (!tr || tr.parentNode.tagName === 'THEAD') {
-    alert("Situa el cursor a dins d'una fila normal de la taula.");
-    return;
-  }
-  
-  const currentFor = tr.getAttribute('data-jinja-for') || '';
-  const loopExpr = prompt("Expressió del bucle FOR (ex: lot in objecte.lots):", currentFor);
-  
-  if (loopExpr === null) return;
-  
-  if (loopExpr.trim() === '') {
-    tr.removeAttribute('data-jinja-for');
-    tr.classList.remove('j-row-loop');
-  } else {
-    tr.setAttribute('data-jinja-for', loopExpr);
-    tr.classList.add('j-row-loop');
-  }
-  syncVisualToCode();
 };
 
 // BI-DIRECTIONAL PARSERS: HTML DOM ⇄ MARKDOWN + JINJA2
@@ -3055,16 +2922,19 @@ const hasCheckedTemplate = ref(false);
 // null while unchecked or when the last check found nothing wrong.
 const templateSyntaxError = ref(null);
 
-// Markdown<->Jinja2<->HTML compiler cluster (isVariableDefinedInSchema, createJinjaVarChip, table
-// parsers, compileMarkdownToHtml...) lives in useMarkdownJinjaCompiler.js since these functions call
-// each other directly and are not meaningfully separable.
+// Schema/loop-aware helpers (isVariableDefinedInSchema, findBestKeyMatch,
+// findColHeaderKeyMatch) live in useMarkdownJinjaCompiler.js alongside the
+// Markdown<->HTML compiler cluster since these functions call each other
+// directly and are not meaningfully separable -- but only these three are
+// still consumed here: createJinjaVarChip/convertJinjaToChips/
+// compileMarkdownToHtml (the canvas-rendering half) were removed from this
+// destructuring in Phase H once their only callers in this file
+// (syncCodeToVisual and friends) were deleted; the compiler file still
+// exports them internally where its own HTML-building code needs them.
 const {
   isVariableDefinedInSchema,
-  createJinjaVarChip,
-  convertJinjaToChips,
   findBestKeyMatch,
   findColHeaderKeyMatch,
-  compileMarkdownToHtml,
 } = useMarkdownJinjaCompiler({
   store,
   activeLoopStack,
@@ -3125,235 +2995,14 @@ const checkTemplateVariables = async () => {
   } else {
     store.addLog(`⚠️ S'han detectat ${undefinedList.length} variables no definides a la plantilla: ${undefinedList.join(', ')}`, "warning");
   }
-
-  syncCodeToVisual();
 };
 
-// Sync loops
-// syncVisualToCode/syncCodeToVisual and the ~5 other modal blocks below are intentionally left in
-// this file for this refactor phase: syncCodeToVisual alone wires ~15 other component functions as
-// DOM event handlers (.onclick/.ondblclick) on the compiled canvas, so it is too tightly coupled to
-// extract without changing behavior. Left as a candidate for a future dedicated phase.
-const syncVisualToCode = () => {
-  if (canvasRef.value && activeEditorTab.value === 'visual') {
-    const parsed = htmlToMarkdown(canvasRef.value);
-    // Safety guard: do not overwrite editorText with empty text if canvas was blanked due to error
-    if (parsed || !editorText.value) {
-      editorText.value = parsed;
-    }
-  }
-};
-
-const syncCodeToVisual = () => {
-  if (canvasRef.value) {
-    // Rebuilding innerHTML below wipes the browser's selection. If the canvas
-    // currently holds focus (i.e. this rebuild was triggered by an in-place
-    // interactive edit — ELIF/ELSE/trash/layout-toggle/"Comprova Plantilla" —
-    // rather than an external content swap like a tab switch or undo/redo),
-    // capture the caret offset now and restore it after the rebuild so the
-    // user doesn't lose their editing position on every small structural edit.
-    const shouldPreserveCaret = !!(document.activeElement && canvasRef.value.contains(document.activeElement));
-    const caretOffset = shouldPreserveCaret ? getCaretCharacterOffsetWithin(canvasRef.value) : 0;
-    // Rebuilding innerHTML below also resets scrollTop to 0 — preserved
-    // regardless of focus (unlike the caret above), since a rebuild can be
-    // triggered by something with no connection to what's focused right
-    // now (e.g. project/template data finishing an async load a moment
-    // after the initial render) and shouldn't silently throw away whatever
-    // scroll position — the user's, or one restoreCaretState() just set —
-    // was showing.
-    const scrollFraction = getScrollFraction(canvasRef.value);
-
-    try {
-      const html = compileMarkdownToHtml(editorText.value);
-      if (html !== undefined && html !== null) {
-        canvasRef.value.innerHTML = html;
-      }
-    } catch (err) {
-      console.error("Error al compilar la plantilla visual:", err);
-    }
-    
-    canvasRef.value.querySelectorAll('.pandoc-metadata-chip').forEach(c => {
-      c.onclick = (e) => { e.stopPropagation(); openMetadataModal(); };
-      const btn = c.querySelector('.btn-edit-metadata');
-      if (btn) btn.onclick = (e) => { e.stopPropagation(); openMetadataModal(); };
-    });
-    
-    canvasRef.value.querySelectorAll('.j-var-chip').forEach(c => {
-      c.ondblclick = (e) => { e.stopPropagation(); openVarModal(c); };
-    });
-
-    // {% set name = expr %} leaf chip: single click toggles collapsed
-    // ("name" only) vs expanded ("name = expr") in place -- no recompile, a
-    // pure CSS/attribute toggle, same mechanism as .jinja-block's collapse
-    // below. Double-click edits it (mirrors .j-var-chip's own dblclick above).
-    canvasRef.value.querySelectorAll('.j-set-chip').forEach(c => {
-      c.onclick = (e) => {
-        e.stopPropagation();
-        c.dataset.collapsed = c.dataset.collapsed === 'true' ? 'false' : 'true';
-      };
-      c.ondblclick = (e) => { e.stopPropagation(); openBlockModal('set-inline', c); };
-    });
-
-    canvasRef.value.querySelectorAll('.latex-chip').forEach(c => {
-      c.ondblclick = (e) => { e.stopPropagation(); openMathModal(c); };
-    });
-    
-    canvasRef.value.querySelectorAll('table').forEach(table => {
-      table.querySelectorAll('th').forEach(th => {
-        th.onclick = () => toggleTableAlignment(th);
-      });
-      table.ondblclick = (e) => {
-        e.stopPropagation();
-        openTableModal(table);
-      };
-      const editBtn = table.previousElementSibling;
-      if (editBtn?.classList.contains('table-edit-btn')) {
-        editBtn.onclick = (e) => { e.stopPropagation(); openTableModal(table); };
-      }
-    });
-
-    canvasRef.value.querySelectorAll('.jinja-block').forEach(block => {
-      const isInline = block.classList.contains('inline') || block.getAttribute('data-layout') === 'inline';
-      const type = block.getAttribute('data-type') || 'if';
-      
-      if (isInline) {
-        // Only the dedicated button (next to the open tag's icon) switches
-        // layout now -- clicking the tag itself used to do this too, but
-        // per user feedback that was unreliable/easy to miss; a single
-        // explicit, always-visible button is clearer.
-        const toBlockBtn = block.querySelector('.btn-to-block');
-        if (toBlockBtn) {
-          toBlockBtn.onclick = (e) => {
-            e.stopPropagation();
-            block.setAttribute('data-layout', 'block');
-            block.classList.remove('inline');
-            syncVisualToCode();
-            syncCodeToVisual();
-          };
-        }
-      } else {
-        // macro/set render collapsed by default (see COLLAPSIBLE_BLOCK_TYPES
-        // in useMarkdownJinjaCompiler.js) -- clicking the compact chip, or
-        // the head's collapse button once expanded, just flips
-        // data-collapsed; CSS alone (.jinja-block[data-collapsed]) handles
-        // showing/hiding the head/content/footer vs. the chip. No recompile,
-        // so any in-progress body edits are untouched by the toggle.
-        const collapsedChip = block.querySelector(':scope > .j-collapsed-chip');
-        if (collapsedChip) {
-          collapsedChip.onclick = (e) => { e.stopPropagation(); block.dataset.collapsed = 'false'; };
-        }
-        const collapseBtn = block.querySelector('.btn-collapse');
-        if (collapseBtn) {
-          collapseBtn.onclick = (e) => { e.stopPropagation(); block.dataset.collapsed = 'true'; };
-        }
-
-        const condText = block.querySelector('.j-cond-text');
-        if (condText) {
-          condText.onclick = (e) => {
-            e.stopPropagation();
-            openBlockModal(type, e.target);
-          };
-        }
-
-        // The label/condition are hidden until the block has focus-within
-        // (collapsed-to-icon styling) — this button stays visible even then,
-        // so there's always a way in to edit the condition.
-        const headEditBtn = block.querySelector('.j-head-edit-btn');
-        if (headEditBtn && condText) {
-          headEditBtn.onclick = (e) => {
-            e.stopPropagation();
-            openBlockModal(type, condText);
-          };
-        }
-
-        const trashBtn = block.querySelector('.btn-trash');
-        if (trashBtn) {
-          trashBtn.onclick = () => {
-            block.remove();
-            syncVisualToCode();
-          };
-        }
-        
-        const layoutBtn = block.querySelector('.btn-layout');
-        if (layoutBtn) {
-          layoutBtn.onclick = (e) => {
-            e.stopPropagation();
-            block.setAttribute('data-layout', 'inline');
-            block.classList.add('inline');
-            syncVisualToCode();
-            syncCodeToVisual();
-          };
-        }
-        
-        const elifBtn = block.querySelector('.btn-elif');
-        if (elifBtn) {
-          elifBtn.onclick = (e) => {
-            e.stopPropagation();
-            saveSelection();
-            activeBlockForNewBranch = block;
-            openBlockModal('elif');
-          };
-        }
-
-        const elseBtn = block.querySelector('.btn-else');
-        if (elseBtn) {
-          elseBtn.onclick = (e) => {
-            e.stopPropagation();
-            saveSelection();
-            elseBtn.style.display = 'none';
-            const branch = document.createElement('div');
-            branch.className = 'j-branch';
-            branch.setAttribute('data-type', 'else');
-            branch.innerHTML = `
-              <div style="display:flex;align-items:center;gap:4px;">🛑 <span style="font-weight:700;color:#b45309;">EN CAS CONTRARI</span></div>
-              <button class="j-btn-mini btn-branch-trash" style="background-color:var(--color-danger);color:white;border:none;" title="Elimina la branca">🗑️</button>
-            `;
-            branch.querySelector('.btn-branch-trash').onclick = () => {
-              elseBtn.style.display = 'inline-block';
-              if (branch.nextElementSibling && branch.nextElementSibling.classList.contains('j-content')) {
-                branch.nextElementSibling.remove();
-              }
-              branch.remove();
-              syncVisualToCode();
-            };
-            
-            const body = document.createElement('div');
-            body.className = 'j-content';
-            body.setAttribute('contenteditable', 'true');
-            body.innerHTML = '<br>';
-            
-            insertBranchAtCursorOrFooter(block, branch, body);
-            syncVisualToCode();
-          };
-        }
-        
-        block.querySelectorAll('.j-branch').forEach(b => {
-          const bType = b.getAttribute('data-type');
-          if (bType === 'elif') {
-            b.querySelector('.j-cond-text').onclick = (e) => {
-              e.stopPropagation();
-              openBlockModal('elif', e.target);
-            };
-          }
-          b.querySelector('.btn-branch-trash').onclick = () => {
-            if (bType === 'else' && elseBtn) elseBtn.style.display = 'inline-block';
-            b.nextElementSibling.remove();
-            b.remove();
-            syncVisualToCode();
-          };
-        });
-      }
-    });
-
-    ensureTrailingEditableLine(canvasRef.value);
-
-    if (shouldPreserveCaret && caretOffset > 0) {
-      canvasRef.value.focus();
-      setCaretCharacterOffsetWithin(canvasRef.value, caretOffset);
-    }
-    setScrollFraction(canvasRef.value, scrollFraction);
-  }
-};
+// syncVisualToCode/syncCodeToVisual (the contenteditable-canvas <->
+// editorText bridge) were the last piece of the old Visual-canvas
+// rendering pipeline still reachable from live code -- deleted in Phase H
+// (Convergència Codi/Visual i neteja de codi mort) once canvasRef.value
+// was confirmed permanently null everywhere (no template element has
+// bound it since Phase A), making both functions unconditional no-ops.
 
 // Handle Tab Switches
 // Both tabs are CodeMirror over the same editorText since Phase A of the
@@ -3385,108 +3034,32 @@ const switchTab = (tab) => {
   });
 };
 
-// Helper to identify atomic visual chips (variables, math formulas, inline tags)
-const isAtomicChip = (node) => {
-  return node && node.nodeType === Node.ELEMENT_NODE && (
-    node.classList.contains('j-var-chip') ||
-    node.classList.contains('latex-chip') ||
-    node.classList.contains('j-inline-tag') ||
-    node.classList.contains('j-set-chip')
-  );
-};
-
-const getParentAtomicChip = (node) => {
-  let curr = node;
-  while (curr && curr !== canvasRef.value) {
-    if (isAtomicChip(curr)) return curr;
-    curr = curr.parentNode;
-  }
-  return null;
-};
-
-const moveCaretBefore = (el) => {
-  let prev = el.previousSibling;
-  if (!prev || prev.nodeType !== Node.TEXT_NODE) {
-    prev = document.createTextNode('');
-    el.parentNode.insertBefore(prev, el);
-  }
-  const range = document.createRange();
-  range.setStart(prev, prev.textContent.length);
-  range.collapse(true);
-  const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(range);
-  saveSelection();
-};
-
-const moveCaretAfter = (el) => {
-  let next = el.nextSibling;
-  if (!next || next.nodeType !== Node.TEXT_NODE) {
-    next = document.createTextNode('');
-    el.parentNode.insertBefore(next, el.nextSibling);
-  }
-  const range = document.createRange();
-  range.setStart(next, 0);
-  range.collapse(true);
-  const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(range);
-  saveSelection();
-};
-
-// Keystrokes observers inside canvas to handle atomic chips & backspaces properly
-// onCanvasKeyDown (atomic-chip arrow-key/backspace navigation for the old
-// contenteditable canvas) was deleted in Phase A of the Visual-editor
-// rewrite along with the canvas itself -- CodeMirror's own atomicRanges
-// facet is the planned replacement once Phase C/D introduce chip/block
-// widgets to navigate around (see the phased plan). isAtomicChip/
-// getParentAtomicChip/moveCaretBefore/moveCaretAfter are left in place,
-// unreachable for now (still referenced by the dead-but-not-yet-deleted
-// syncCodeToVisual()/getPositionAtomicAncestor() chain below, cleaned up
-// together in Phase H).
-
-const ensureTrailingEditableLine = (canvas) => {
-  if (!canvas) return;
-  const lastChild = canvas.lastElementChild || canvas.lastChild;
-  
-  if (!lastChild || (lastChild.nodeType === Node.ELEMENT_NODE && (
-    lastChild.classList.contains('jinja-block') ||
-    lastChild.tagName === 'TABLE' ||
-    lastChild.classList.contains('pandoc-metadata-chip') ||
-    lastChild.getAttribute('contenteditable') === 'false'
-  ))) {
-    const p = document.createElement('p');
-    p.className = 'trailing-editable-line';
-    p.innerHTML = '<br>';
-    canvas.appendChild(p);
-  }
-};
-
-// moveCaretToElementEnd/onCanvasClick/onCanvasMouseUp/onCanvasCopyOrCut/
-// onCanvasPaste were deleted in Phase A along with the contenteditable
-// canvas: CodeMirror's native selection/click and clipboard handling
-// (already relied on, unmodified, by the Codi tab) covers all of this for
-// the Visual tab automatically now -- no custom copy/cut/paste code needed
-// (Markdown/Jinja2 source text is what a CodeMirror view's clipboard
-// already contains, never HTML).
+// onCanvasKeyDown/moveCaretToElementEnd/onCanvasClick/onCanvasMouseUp/
+// onCanvasCopyOrCut/onCanvasPaste were deleted in Phase A along with the
+// contenteditable canvas -- CodeMirror's own atomicRanges facet (used by
+// every chip/block widget since Phases C/D) and its native selection/
+// click/clipboard handling cover all of this for the Visual tab
+// automatically now. isAtomicChip/getParentAtomicChip/moveCaretBefore/
+// moveCaretAfter/ensureTrailingEditableLine (DOM-Range helpers those old
+// handlers depended on) and syncCodeToVisual/syncVisualToCode's own
+// canvas-only chip/block click wiring above were the last reachable-but-
+// no-op remnants of that whole pipeline -- deleted together in Phase H.
 
 // --- Pandoc YAML Metadata Modal State & Logic ---
 const isMetadataModalOpen = ref(false);
 const metadataModalRef = ref(null);
 
 const openMetadataModal = () => {
-  saveSelection();
   isMetadataModalOpen.value = true;
 };
 
-// MetadataModal.vue computes the new full template text (it owns its own form
-// state and YAML parsing); writing it back into the shared editor state and
-// re-rendering the canvas stays a parent concern, same split as every other
-// extracted modal.
+// MetadataModal.vue computes the new full template text (it owns its own
+// form state and YAML parsing) and reports it back here; writing it into
+// the shared editor state is all that's left to do (both CodeMirror views
+// pick it up automatically via the watch(editorText, ...) above).
 const onMetadataApply = (newText) => {
   store.templateText = newText;
   editorText.value = newText;
-  syncCodeToVisual();
   store.addLog("Bloc de metadades Pandoc actualitzat a la plantilla.", "success");
 };
 
@@ -3537,7 +3110,6 @@ const specialCharCategories = [
 ];
 
 const openSpecialCharModal = () => {
-  saveSelection();
   isSpecialCharModalOpen.value = true;
 };
 
@@ -3638,200 +3210,14 @@ const handleGlobalKeyDown = (e) => {
   }
 };
 
-// Helper to get character offset inside contenteditable
-const getCaretCharacterOffsetWithin = (element) => {
-  let caretOffset = 0;
-  let targetRange = null;
-  const sel = window.getSelection();
-  
-  if (sel && sel.rangeCount > 0) {
-    const r = sel.getRangeAt(0);
-    if (element && element.contains(r.commonAncestorContainer)) {
-      targetRange = r;
-    }
-  }
-  
-  if (!targetRange && savedRange && element && element.contains(savedRange.commonAncestorContainer)) {
-    targetRange = savedRange;
-  }
-  
-  if (targetRange && element) {
-    try {
-      const preCaretRange = targetRange.cloneRange();
-      preCaretRange.selectNodeContents(element);
-      preCaretRange.setEnd(targetRange.endContainer, targetRange.endOffset);
-      caretOffset = preCaretRange.toString().length;
-    } catch (err) {
-      console.warn("Could not calculate caret offset", err);
-    }
-  }
-  
-  return caretOffset;
-};
-
-// Helper to set character offset inside contenteditable
-// A table with a row/column loop (DYNAMIC_TABLE/TRANSPOSED_TABLE) or a
-// .jinja-block is serialized to Markdown by a custom turndown rule that
-// reads the *whole* element's structure from scratch (dynamicTableToMarkdown,
-// transposedTableToMarkdown, jinjaBlockToMarkdown in
-// useMarkdownJinjaCompiler.js) rather than concatenating each child's own
-// independently-converted text. Handed a *partial* DOM clone (as
-// sourceOffsetFromVisualCaret's prefix-range technique does), these rules
-// don't know the clone is incomplete — they still emit a fully-formed block,
-// unconditionally closed with {% endfor %}/{% endif %}/<!-- ..._END --> —
-// so a position landing inside one of these doesn't just approximate, it
-// can come out wildly wrong. Treated as atomic here too, snapping to
-// whichever edge of the *whole* table/block is closer.
-const getPositionAtomicAncestor = (node) => {
-  const chip = getParentAtomicChip(node);
-  if (chip) return chip;
-  let curr = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-  while (curr && curr !== canvasRef.value) {
-    if (curr.classList?.contains('jinja-block')) return curr;
-    if (curr.tagName === 'TABLE' && (curr.querySelector('[data-jinja-for]') || curr.querySelector('[data-jinja-col-loop]'))) return curr;
-    curr = curr.parentElement;
-  }
-  return null;
-};
-
-// Chips are short enough that "inside" isn't a meaningful position anyway
-// (contenteditable="false" — a real cursor can never land there even though
-// the Range API technically allows constructing one there); tables/blocks
-// are treated the same way for the reason above, at the cost of losing
-// precision *within* one (landing at its start or end rather than the exact
-// row/cell) in exchange for never landing somewhere nonsensical. Given a
-// (node, offset) pair that might fall inside either, returns the nearest
-// position just before/after the whole element instead; anything else
-// passes through unchanged.
-const snapOutOfAtomicChip = (node, offset) => {
-  const special = getPositionAtomicAncestor(node);
-  if (!special || !special.parentNode) return { node, offset };
-  let withinOffset = 0;
-  if (node.nodeType === Node.TEXT_NODE) {
-    const r = document.createRange();
-    r.selectNodeContents(special);
-    r.setEnd(node, Math.min(offset, node.length));
-    withinOffset = r.toString().length;
-  } else if (offset > 0) {
-    withinOffset = (special.textContent || '').length;
-  }
-  const totalLen = (special.textContent || '').length;
-  const closerToStart = withinOffset <= totalLen / 2;
-  const parent = special.parentNode;
-  const specialIndex = Array.prototype.indexOf.call(parent.childNodes, special);
-  return { node: parent, offset: closerToStart ? specialIndex : specialIndex + 1 };
-};
-
-const setCaretCharacterOffsetWithin = (element, offset) => {
-  if (!element || offset <= 0) return;
-  let charCount = 0;
-  const range = document.createRange();
-  range.setStart(element, 0);
-  range.collapse(true);
-
-  const nodeStack = [element];
-  let node;
-  let found = false;
-  let targetNode = null;
-  let targetOffset = 0;
-
-  while (!found && (node = nodeStack.pop())) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      const nextCharCount = charCount + node.length;
-      if (offset <= nextCharCount) {
-        targetNode = node;
-        targetOffset = offset - charCount;
-        found = true;
-      }
-      charCount = nextCharCount;
-    } else {
-      let i = node.childNodes.length;
-      while (i--) {
-        nodeStack.push(node.childNodes[i]);
-      }
-    }
-  }
-
-  if (found) {
-    const snapped = snapOutOfAtomicChip(targetNode, targetOffset);
-    range.setStart(snapped.node, snapped.offset);
-    range.collapse(true);
-
-    const sel = window.getSelection();
-    if (sel) {
-      sel.removeAllRanges();
-      sel.addRange(range);
-    }
-    savedRange = range.cloneRange();
-  }
-};
-
-// Approximates the offset within editorText (the Markdown+Jinja2 source)
-// corresponding to the current caret position in the visual canvas: the
-// length of the Markdown that the canvas content *up to the caret* converts
-// to via htmlToMarkdown — the same conversion that keeps editorText in sync
-// with the canvas everywhere else (originally inlined in onCanvasPaste),
-// so it's exact for plain text and a close best-effort near chip/block
-// boundaries. Never destructive — worst case a restored caret lands a
-// character or two off, self-correcting on the next edit.
-const sourceOffsetFromVisualCaret = () => {
-  if (!canvasRef.value) return 0;
-  const sel = window.getSelection();
-  let range = null;
-  if (sel && sel.rangeCount > 0 && canvasRef.value.contains(sel.getRangeAt(0).commonAncestorContainer)) {
-    range = sel.getRangeAt(0);
-  } else if (savedRange && canvasRef.value.contains(savedRange.commonAncestorContainer)) {
-    range = savedRange;
-  }
-  if (!range) return 0;
-  const snapped = snapOutOfAtomicChip(range.startContainer, range.startOffset);
-  const prefixRange = document.createRange();
-  prefixRange.selectNodeContents(canvasRef.value);
-  prefixRange.setEnd(snapped.node, snapped.offset);
-  return htmlToMarkdown(prefixRange.cloneContents()).length;
-};
-
-// The inverse: approximates where in the rendered visual canvas a given
-// offset within editorText (source) lands. Compiling *just the prefix* up
-// to that offset (the first version of this function) breaks down for any
-// multi-line construct that needs its own closing marker to parse at all —
-// a source offset inside a {% for %}...{% endfor %} loop, a DYNAMIC_TABLE/
-// TRANSPOSED_TABLE block, or a math block truncates before the closing
-// {% endfor %}/<!-- ..._END --> the prefix never reaches, so it renders as
-// something wildly different (often empty) rather than "the same document,
-// cut short". Instead, splice a unique marker into the *full* text (whose
-// structure is always complete) and find where markdown-it/htmlToMarkdown
-// placed it in the rendered text — accurate whenever the marker lands in
-// ordinary text or inside a {{ variable }} expression (it becomes part of
-// the chip's own label, which still contains the marker string); falls back
-// to the coarser prefix-length approximation only if the marker doesn't
-// survive intact (e.g. it landed inside a {% tag %} or an HTML comment).
-const VISUAL_CARET_MARKER = '◈JCURSORMARK◈';
-
-const visualCaretFromSourceOffset = (offset) => {
-  if (!canvasRef.value) return;
-  const fullText = editorText.value || '';
-  const at = Math.min(Math.max(offset, 0), fullText.length);
-  let renderedLength = 0;
-  try {
-    const markedText = fullText.slice(0, at) + VISUAL_CARET_MARKER + fullText.slice(at);
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = compileMarkdownToHtml(markedText);
-    const markerIdx = (tempDiv.textContent || '').indexOf(VISUAL_CARET_MARKER);
-    if (markerIdx !== -1) {
-      renderedLength = markerIdx;
-    } else {
-      const prefixDiv = document.createElement('div');
-      prefixDiv.innerHTML = compileMarkdownToHtml(fullText.slice(0, at));
-      renderedLength = (prefixDiv.textContent || '').length;
-    }
-  } catch (err) {
-    console.warn('Could not estimate visual caret position', err);
-    return;
-  }
-  setCaretCharacterOffsetWithin(canvasRef.value, renderedLength);
-};
-
+// getCaretCharacterOffsetWithin/getPositionAtomicAncestor/
+// snapOutOfAtomicChip/setCaretCharacterOffsetWithin (DOM-Range caret
+// helpers for the contenteditable canvas) and sourceOffsetFromVisualCaret/
+// visualCaretFromSourceOffset (the source-offset <-> canvas-caret
+// translation they existed for) were deleted in Phase H once both tabs
+// became CodeMirror views over the same text (Phase A onward): "caret
+// position" is already the same character offset in both, with nothing
+// left to translate -- see switchTab above.
 // A single canonical position — an offset into editorText, the Markdown+
 // Jinja2 source that's the one real source of truth regardless of which tab
 // is active — replaces the old, disjoint caretCode/caretVisual keys (each
@@ -3902,7 +3288,6 @@ const restoreCaretState = () => {
 const isSelectionWithinActiveEditor = () => document.activeElement === activeShim()?.contentDOM;
 
 const handleSelectionChange = () => {
-  saveSelection();
   if (isSelectionWithinActiveEditor()) saveCaretState();
   updateActiveLoopContext();
 };

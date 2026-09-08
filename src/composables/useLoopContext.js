@@ -21,31 +21,28 @@ import { universalFindSchema } from './useSchemaResolver';
 
 /**
  * Resolves Jinja `{% for %}` loop context inside TemplateEditor.vue: given the
- * user's current cursor position (visual canvas or code textarea), figures out
- * which loop(s) it's nested in, what data array each one iterates, and what
- * columns/fields are available on that array — used to build the variable
- * sidebar, the loop-aware autocomplete, and to resolve relative paths like
- * "part.import" back to "pres.parts.import" while inside a loop.
+ * user's current cursor position (Visual or Codi tab — both are CodeMirror
+ * views over the exact same source text since the Visual-editor rewrite),
+ * figures out which loop(s) it's nested in, what data array each one
+ * iterates, and what columns/fields are available on that array — used to
+ * build the variable sidebar, the loop-aware autocomplete, and to resolve
+ * relative paths like "part.import" back to "pres.parts.import" while
+ * inside a loop.
  *
- * A factory (not plain exports) because `getActiveLoopStack` needs read access
- * to the editor's DOM refs and to `activeEditNode`/`savedRange` — two plain
- * `let` variables in TemplateEditor.vue (not reactive refs) that track the
- * last-focused editable node/selection Range. They can't be passed by
- * reference, so the caller passes getter functions instead; JS closures keep
- * these live without needing Vue reactivity.
+ * A factory (not plain exports) because `getActiveLoopStack` needs read
+ * access to whichever CodeMirror shim is currently active. It can't be
+ * passed by reference, so the caller passes a getter function instead
+ * (`getActiveShim`); JS closures keep it live without needing Vue
+ * reactivity.
  *
  * `activeLoopStack`/`activeLoopContext` are created here and returned so
  * TemplateEditor.vue's template and other functions can keep reading/writing
  * them exactly as before (this is the same ref, not a copy).
  */
 export function useLoopContext({
-  canvasRef,
-  textareaRef,
   editorText,
-  activeEditorTab,
   store,
-  getActiveEditNode,
-  getSavedRange,
+  getActiveShim,
 }) {
   const activeLoopContext = ref(null); // { iterator, arrayPath, columns }
   const activeLoopStack = ref([]); // Stack of active loop contexts [{ iterator, arrayPath, columns }] ordered by depth (innermost first)
@@ -247,90 +244,43 @@ export function useLoopContext({
     return Array.from(columnSet);
   };
 
-  // Traverse upwards to see if a node or selection is inside a FOR loop block (returns full stack ordered by depth)
-  const getActiveLoopStack = (targetNode = null) => {
+  // Which {% for %} loop(s) the cursor is currently nested in, resolved
+  // purely from the cursor's OFFSET into the shared source text -- the same
+  // approach for both tabs, since both are CodeMirror views over the exact
+  // same editorText. Scans every "{% for iter in path %}"/"{% endfor %}" tag
+  // up to the end of the cursor's current line (matching the historical
+  // "Code Mode" behavior, kept as-is: a loop's own header line already
+  // counts as "inside" it, so typing the very line "{% for x in y %}" shows
+  // that loop's context immediately, without needing the cursor past it).
+  const getActiveLoopStack = () => {
     const rawLoopBlocks = [];
+    const shim = getActiveShim();
+    if (shim) {
+      const pos = shim.selectionStart || 0;
+      const nextNewline = editorText.value.indexOf('\n', pos);
+      const endOfLinePos = nextNewline !== -1 ? nextNewline : editorText.value.length;
+      const codeBefore = editorText.value.substring(0, endOfLinePos);
 
-    if (activeEditorTab.value === 'visual') {
-      let node = targetNode;
-      if (!node) {
-        const activeEditNode = getActiveEditNode();
-        const savedRange = getSavedRange();
-        if (activeEditNode) {
-          node = activeEditNode;
-        } else if (savedRange) {
-          node = savedRange.commonAncestorContainer;
-        } else {
-          const sel = window.getSelection();
-          if (sel && sel.rangeCount > 0) {
-            node = sel.getRangeAt(0).commonAncestorContainer;
-          }
+      const regex = /\{%\s*(for\s+([a-zA-Z0-9_\.]+)\s+in\s+([^%\}]+)|endfor)\s*%\}/g;
+      let m;
+      const forStack = [];
+      while ((m = regex.exec(codeBefore)) !== null) {
+        if (m[1].startsWith('for')) {
+          const iter = m[2].trim();
+          const rawPath = m[3].trim().split('|')[0].trim();
+          forStack.push({ iterator: iter, arrayPath: rawPath });
+        } else if (m[1] === 'endfor') {
+          forStack.pop();
         }
       }
 
-      while (node && canvasRef.value && node !== canvasRef.value) {
-        const el = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
-        if (el) {
-          let condStr = '';
-
-          if (el.getAttribute && el.getAttribute('data-type') === 'for') {
-            condStr = el.getAttribute('data-cond') || '';
-            if (!condStr) {
-              const condTextNode = el.querySelector('.j-cond-text');
-              if (condTextNode) condStr = condTextNode.getAttribute('data-cond') || condTextNode.textContent || '';
-            }
-          } else if (el.getAttribute && el.getAttribute('data-jinja-for')) {
-            condStr = el.getAttribute('data-jinja-for') || '';
-          } else if (el.getAttribute && el.getAttribute('data-jinja-col-loop')) {
-            condStr = el.getAttribute('data-jinja-col-loop') || '';
-          }
-
-          if (condStr) {
-            const match = condStr.match(/(\w+)\s+in\s+([^%\}\n]+)/);
-            if (match) {
-              const iterator = match[1].trim();
-              const rawPath = match[2].trim().split('|')[0].trim();
-
-              if (!rawLoopBlocks.some(s => s.iterator === iterator)) {
-                rawLoopBlocks.push({
-                  iterator,
-                  arrayPath: rawPath
-                });
-              }
-            }
-          }
-        }
-        node = node.parentNode;
-      }
-    } else {
-      // Code Mode stack parser based on cursor position in textareaRef
-      if (textareaRef.value) {
-        const pos = textareaRef.value.selectionStart || 0;
-        const nextNewline = editorText.value.indexOf('\n', pos);
-        const endOfLinePos = nextNewline !== -1 ? nextNewline : editorText.value.length;
-        const codeBefore = editorText.value.substring(0, endOfLinePos);
-
-        const regex = /\{%\s*(for\s+([a-zA-Z0-9_\.]+)\s+in\s+([^%\}]+)|endfor)\s*%\}/g;
-        let m;
-        const forStack = [];
-        while ((m = regex.exec(codeBefore)) !== null) {
-          if (m[1].startsWith('for')) {
-            const iter = m[2].trim();
-            const rawPath = m[3].trim().split('|')[0].trim();
-            forStack.push({ iterator: iter, arrayPath: rawPath });
-          } else if (m[1] === 'endfor') {
-            forStack.pop();
-          }
-        }
-
-        for (let i = forStack.length - 1; i >= 0; i--) {
-          const item = forStack[i];
-          if (!rawLoopBlocks.some(s => s.iterator === item.iterator)) {
-            rawLoopBlocks.push({
-              iterator: item.iterator,
-              arrayPath: item.arrayPath
-            });
-          }
+      for (let i = forStack.length - 1; i >= 0; i--) {
+        const item = forStack[i];
+        if (!rawLoopBlocks.some(s => s.iterator === item.iterator)) {
+          rawLoopBlocks.push({
+            iterator: item.iterator,
+            arrayPath: item.arrayPath
+          });
         }
       }
     }
@@ -353,8 +303,8 @@ export function useLoopContext({
     return resolvedStack.reverse();
   };
 
-  const getActiveLoopContext = (targetNode = null) => {
-    const stack = getActiveLoopStack(targetNode);
+  const getActiveLoopContext = () => {
+    const stack = getActiveLoopStack();
     return stack.length > 0 ? stack[0] : null;
   };
 
