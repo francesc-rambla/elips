@@ -2322,6 +2322,7 @@ const emitGenerate = () => {
 const {
   activeLoopContext,
   activeLoopStack,
+  activeMacroContext,
   isInternalMetadataKey,
   resolvePath,
   findAnyArrayByName,
@@ -2453,20 +2454,37 @@ const resolveFieldLabel = (rawExpr) => {
 
 // Computed properties for the modal data browser
 const availableVariables = computed(() => {
-  if (!store.excelJsonData) return [];
   const list = [];
-  
+
+  // 0. Contextual variables if the cursor is inside an active {% macro %}
+  // body -- macro parameters are local names bound by the caller, never
+  // schema paths, so they're offered regardless of whether an Excel is
+  // even loaded (a macro can be written before any data source exists).
+  if (activeMacroContext.value) {
+    const mctx = activeMacroContext.value;
+    for (const param of mctx.params) {
+      list.push({
+        path: param,
+        label: `${param} (paràmetre de ${mctx.name})`,
+        category: 'macroParam',
+        isContext: true
+      });
+    }
+  }
+
+  if (!store.excelJsonData) return list;
+
   // 1. Contextual variables if cursor or node is inside an active FOR loop
   if (activeLoopContext.value) {
     const ctx = activeLoopContext.value;
     for (const col of ctx.columns) {
       if (isInternalMetadataKey(col)) continue;
       const cLabel = getFieldCustomLabel(col);
-      list.push({ 
-        path: `${ctx.iterator}.${col}`, 
-        label: cLabel !== col ? `${cLabel} (${ctx.iterator}.${col})` : `Bucle actiu (${ctx.iterator}.${col})`, 
+      list.push({
+        path: `${ctx.iterator}.${col}`,
+        label: cLabel !== col ? `${cLabel} (${ctx.iterator}.${col})` : `Bucle actiu (${ctx.iterator}.${col})`,
         category: 'loopContext',
-        isContext: true 
+        isContext: true
       });
     }
   }
@@ -3130,18 +3148,52 @@ const sidebarInsertLoop = (subKey, fullPath, iteratorName, fields) => {
   sidebarCopyInsert(blockCode);
 };
 
+// Whether `pos` sits inside an already-open {{ ... }} or {% ... %}
+// construct on its own line (these expressions are single-line by
+// convention throughout this editor -- see the block-layout/inline-layout
+// distinction used everywhere else). Used by sidebarCopyInsert below to
+// decide whether to insert a bare variable name or wrap it in {{ }}.
+const isInsideJinjaExpr = (text, pos) => {
+  const lineStart = text.lastIndexOf('\n', pos - 1) + 1;
+  let lineEnd = text.indexOf('\n', pos);
+  if (lineEnd === -1) lineEnd = text.length;
+  const before = text.slice(lineStart, pos);
+  const after = text.slice(pos, lineEnd);
+
+  const lastOpenVar = before.lastIndexOf('{{');
+  const lastCloseVar = before.lastIndexOf('}}');
+  if (lastOpenVar > lastCloseVar) return after.includes('}}');
+
+  const lastOpenTag = before.lastIndexOf('{%');
+  const lastCloseTag = before.lastIndexOf('%}');
+  if (lastOpenTag > lastCloseTag) return after.includes('%}');
+
+  return false;
+};
+
 // Sidebar copy insert variable / block handler -- a precise text splice
 // into whichever tab's shim is active (Phase A of the Visual-editor
 // rewrite: both tabs are CodeMirror now, so the DOM-Range insertion this
 // used to do for the Visual tab specifically no longer applies; Phase C/D
-// render the chip/block widgets on top of this same raw text).
+// render the chip/block widgets on top of this same raw text). Callers
+// pre-wrap `expr` in {{ }} for historical reasons, but whether to actually
+// wrap depends on where the cursor is: inserting inside an existing
+// {{ }}/{% %} construct should only ever add the bare name.
 const sidebarCopyInsert = (expr) => {
   const isBlock = expr.includes('{%') || expr.includes('\n');
   const txt = activeShim();
   if (!txt) return;
   const start = txt.selectionStart || 0;
   const end = txt.selectionEnd || 0;
-  const insertText = isBlock ? `\n\n${expr.trim()}\n\n` : (expr.startsWith('{{') ? expr : `{{ ${expr} }}`);
+
+  let insertText;
+  if (isBlock) {
+    insertText = `\n\n${expr.trim()}\n\n`;
+  } else {
+    const bareExpr = (expr.startsWith('{{') && expr.endsWith('}}')) ? expr.slice(2, -2).trim() : expr;
+    insertText = isInsideJinjaExpr(editorText.value, start) ? bareExpr : `{{ ${bareExpr} }}`;
+  }
+
   editorText.value = editorText.value.substring(0, start) + insertText + editorText.value.substring(end);
   setTimeout(() => {
     txt.focus();
@@ -3195,12 +3247,16 @@ const onBlockApply = (expr) => {
 // htmlToMarkdown lives in useMarkdownJinjaCompiler.js (imported above).
 
 // Static AST extractor for loop stacks at any point in template text (independent of user caret position!)
+// Also tracks an analogous macro stack (name + params) so that macro
+// parameters and calls can be excluded from the "undefined variable" check
+// in checkTemplateVariables below -- they're never schema paths.
 const extractVariablesWithStaticContext = (text) => {
   if (!text) return [];
   const varsWithContext = [];
-  const tagRegex = /(\{\{[\s\S]*?\}\}|\{%\s*for\s+[\s\S]*?%\}|\{%\s*endfor\s*%\}|\{%\s*(?:if|elif)\s+[\s\S]*?%\})/g;
+  const tagRegex = /(\{\{[\s\S]*?\}\}|\{%\s*for\s+[\s\S]*?%\}|\{%\s*endfor\s*%\}|\{%\s*macro\s+[\s\S]*?%\}|\{%\s*endmacro\s*%\}|\{%\s*(?:if|elif)\s+[\s\S]*?%\})/g;
 
   let currentLoopStack = [];
+  let currentMacroStack = [];
   let match;
 
   while ((match = tagRegex.exec(text)) !== null) {
@@ -3220,6 +3276,19 @@ const extractVariablesWithStaticContext = (text) => {
       if (currentLoopStack.length > 0) {
         currentLoopStack.pop();
       }
+    } else if (/^\{%\s*macro\s+/.test(fullTag)) {
+      const macroMatch = fullTag.match(/^\{%\s*macro\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)/);
+      if (macroMatch) {
+        const params = macroMatch[2].split(',').map(p => p.trim().split('=')[0].trim()).filter(Boolean);
+        currentMacroStack.push({ name: macroMatch[1], params, startIndex: matchIndex });
+      } else {
+        const nameMatch = fullTag.match(/^\{%\s*macro\s+([a-zA-Z_]\w*)/);
+        currentMacroStack.push({ name: nameMatch ? nameMatch[1] : '', params: [], startIndex: matchIndex });
+      }
+    } else if (/^\{%\s*endmacro\s*%\}$/.test(fullTag.replace(/\s+/g, ''))) {
+      if (currentMacroStack.length > 0) {
+        currentMacroStack.pop();
+      }
     } else if (fullTag.startsWith('{{')) {
       const inner = fullTag.slice(2, -2).trim();
       varsWithContext.push({
@@ -3227,7 +3296,8 @@ const extractVariablesWithStaticContext = (text) => {
         raw: inner,
         expr: inner.split('|')[0].trim(),
         index: matchIndex,
-        loopStack: [...currentLoopStack]
+        loopStack: [...currentLoopStack],
+        macroStack: [...currentMacroStack]
       });
     } else if (/^\{%\s*(if|elif)\s+/.test(fullTag)) {
       const blockMatch = fullTag.match(/^\{%\s*(if|elif)\s+(.*?)\s*%\}/);
@@ -3241,7 +3311,8 @@ const extractVariablesWithStaticContext = (text) => {
               raw: t,
               expr: t,
               index: matchIndex,
-              loopStack: [...currentLoopStack]
+              loopStack: [...currentLoopStack],
+              macroStack: [...currentMacroStack]
             });
           }
         }
@@ -3250,6 +3321,18 @@ const extractVariablesWithStaticContext = (text) => {
   }
 
   return varsWithContext;
+};
+
+// Collects every {% macro name(...) %} name anywhere in the template,
+// independent of cursor position or nesting -- used so a macro CALL
+// ({{ macroName(args) }}) is never flagged as an undefined variable.
+const collectMacroNames = (text) => {
+  const names = new Set();
+  if (!text) return names;
+  const re = /\{%\s*macro\s+([a-zA-Z_]\w*)\s*\(/g;
+  let m;
+  while ((m = re.exec(text)) !== null) names.add(m[1]);
+  return names;
 };
 
 // On-demand reactive state for undefined variables (updated ONLY when "Comprova Plantilla" button is clicked)
@@ -3296,10 +3379,12 @@ const jumpToTemplateLine = (lineno) => {
 const checkTemplateVariables = async () => {
   const text = editorText.value || '';
   const varsWithCtx = extractVariablesWithStaticContext(text);
+  const macroNames = collectMacroNames(text);
   const undefinedList = [];
 
   for (const item of varsWithCtx) {
-    if (item.expr && !isVariableDefinedInSchema(item.expr, item.loopStack)) {
+    const macroParams = (item.macroStack || []).flatMap(m => m.params || []);
+    if (item.expr && !isVariableDefinedInSchema(item.expr, item.loopStack, macroParams, macroNames)) {
       if (!undefinedList.includes(item.expr)) {
         undefinedList.push(item.expr);
       }
@@ -3991,7 +4076,7 @@ onUnmounted(() => {
         </div>
       </div>
       
-      <div v-if="!store.excelJsonData" style="font-size:0.75rem; color:var(--text-muted); font-style:italic">
+      <div v-if="!store.excelJsonData && !activeMacroContext" style="font-size:0.75rem; color:var(--text-muted); font-style:italic">
         Carrega un Excel per generar la llista de variables disponibles.
       </div>
 
@@ -4027,6 +4112,35 @@ onUnmounted(() => {
       </div>
 
       <template v-else>
+        <!-- Active Macro Context Card: parameters of the {% macro %} the
+             cursor is currently inside, shown as insertable context chips
+             grouped under the macro's own name (mirrors the loop-stack
+             cards below, but there's only ever one enclosing macro). -->
+        <div v-if="activeMacroContext" style="background-color: var(--color-success-light); padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--color-success); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;">
+          <div style="font-size: 0.68rem; font-weight: bold; color: var(--color-success); text-transform: uppercase; display: flex; align-items: center; justify-content: space-between;">
+            <span style="display: flex; align-items: center; gap: 4px;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M8 9h8M8 13h5"/></svg>
+              Macro: {{ activeMacroContext.name }}
+            </span>
+            <span class="variable-badge present" style="background-color: var(--color-success); color: white; font-size: 0.58rem;">paràmetres</span>
+          </div>
+
+          <div v-if="activeMacroContext.params.length === 0" style="font-size:0.7rem; color:var(--text-muted); font-style:italic">
+            Aquesta macro no té paràmetres.
+          </div>
+          <div
+            v-for="param in activeMacroContext.params"
+            :key="param"
+            class="variable-item present"
+            style="background-color: var(--bg-card); margin: 0; font-size: 0.72rem; padding: 2px 6px; justify-content: space-between;"
+            @click="sidebarCopyInsert(`{{ ${param} }}`)"
+            :title="`Insereix paràmetre ${param}`"
+          >
+            <span style="font-weight: 600;">{{ param }}</span>
+            <span class="variable-badge present" style="font-size:0.58rem; background-color: var(--color-success); color: white;">paràmetre</span>
+          </div>
+        </div>
+
         <!-- Active Loop Stack Cards (ordered by depth: innermost loop first) -->
         <div v-for="(ctx, idx) in activeLoopStack" :key="ctx.iterator + idx" style="background-color: var(--color-primary-light); padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border-focus); margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;">
           <div style="font-size: 0.68rem; font-weight: bold; color: var(--color-primary); text-transform: uppercase; display: flex; align-items: center; justify-content: space-between;">

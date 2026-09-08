@@ -1001,7 +1001,7 @@ const extractYamlHeader = (text) => {
  */
 export function useMarkdownJinjaCompiler({ store, activeLoopStack, hasCheckedTemplate, resolveFieldLabel, resolvePath }) {
   // Helper to check if a Jinja variable expression exists in the schema or active loop context
-  const isVariableDefinedInSchema = (exprStr, loopStack = []) => {
+  const isVariableDefinedInSchema = (exprStr, loopStack = [], macroParams = [], macroNames = null) => {
     if (!exprStr || typeof exprStr !== 'string') return true;
 
     let cleanExpr = exprStr.split('|')[0].trim();
@@ -1014,6 +1014,22 @@ export function useMarkdownJinjaCompiler({ store, activeLoopStack, hasCheckedTem
       'true', 'false', 'none', 'null', 'undefined'
     ]);
     if (jinjaKeywords.has(cleanExpr.toLowerCase())) return true;
+
+    const firstPart = cleanExpr.split('.')[0];
+
+    // Macro call, e.g. {{ macroName(args) }} -- the call parens were
+    // already stripped above, so cleanExpr is just the macro's name.
+    if (macroNames && cleanExpr === firstPart && macroNames.has(firstPart)) return true;
+
+    // Bare iterator reference, e.g. {{ part }} instead of {{ part.field }}
+    // -- iterators themselves aren't schema paths (they're loop-local
+    // names), only their dotted fields are; the dotted case is resolved
+    // via loopStack -> resolvedExpr below as before.
+    if (cleanExpr === firstPart && loopStack && loopStack.some((l) => l && l.iterator === firstPart)) return true;
+
+    // Macro parameter -- a local name bound by the caller, never part of
+    // the data schema; can't validate any deeper structure past it either.
+    if (macroParams && macroParams.includes(firstPart)) return true;
 
     const gData = store.excelJsonData;
     const metas = store.editorMetadata || [];

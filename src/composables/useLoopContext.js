@@ -46,6 +46,7 @@ export function useLoopContext({
 }) {
   const activeLoopContext = ref(null); // { iterator, arrayPath, columns }
   const activeLoopStack = ref([]); // Stack of active loop contexts [{ iterator, arrayPath, columns }] ordered by depth (innermost first)
+  const activeMacroContext = ref(null); // { name, params } for the innermost {% macro %} the cursor is inside, or null
 
   const isInternalMetadataKey = (k) => {
     return k === 'editor_metadata' || k === '_hierarchy_schema';
@@ -308,10 +309,42 @@ export function useLoopContext({
     return stack.length > 0 ? stack[0] : null;
   };
 
+  // Same cursor-offset backward-scan technique as getActiveLoopStack, but
+  // over {% macro name(params) %}/{% endmacro %} tags -- the innermost
+  // macro whose body the cursor is currently inside, along with its
+  // parameter names (macro params are local names bound by the caller,
+  // never schema paths, so they're surfaced separately from loop columns).
+  const getActiveMacroContext = () => {
+    const shim = getActiveShim();
+    if (!shim) return null;
+    const pos = shim.selectionStart || 0;
+    const nextNewline = editorText.value.indexOf('\n', pos);
+    const endOfLinePos = nextNewline !== -1 ? nextNewline : editorText.value.length;
+    const codeBefore = editorText.value.substring(0, endOfLinePos);
+
+    const regex = /\{%\s*(macro\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)|endmacro)\s*%\}/g;
+    let m;
+    const macroStack = [];
+    while ((m = regex.exec(codeBefore)) !== null) {
+      if (m[1].startsWith('macro')) {
+        const params = (m[3] || '')
+          .split(',')
+          .map((p) => p.trim().split('=')[0].trim())
+          .filter(Boolean);
+        macroStack.push({ name: m[2], params });
+      } else {
+        macroStack.pop();
+      }
+    }
+
+    return macroStack.length > 0 ? macroStack[macroStack.length - 1] : null;
+  };
+
   const updateActiveLoopContext = () => {
     const stack = getActiveLoopStack();
     activeLoopStack.value = stack;
     activeLoopContext.value = stack.length > 0 ? stack[0] : null;
+    activeMacroContext.value = getActiveMacroContext();
   };
 
   const getSubArraysForArray = (arrayPath, currentStack = null) => {
@@ -402,6 +435,7 @@ export function useLoopContext({
   return {
     activeLoopContext,
     activeLoopStack,
+    activeMacroContext,
     isInternalMetadataKey,
     resolvePath,
     findAnyArrayByName,
@@ -409,6 +443,7 @@ export function useLoopContext({
     resolveColumnsForArray,
     getActiveLoopStack,
     getActiveLoopContext,
+    getActiveMacroContext,
     updateActiveLoopContext,
     getSubArraysForArray,
   };

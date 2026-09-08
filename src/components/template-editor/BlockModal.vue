@@ -213,7 +213,7 @@ defineExpose({ apply });
             >
               <span style="font-weight: 600;">{{ v.path }}</span>
               <span style="font-size: 0.6rem; font-weight: 600;" :style="{ color: v.isContext ? 'var(--color-success-dark)' : (v.category === 'array' || v.category === 'arrayExpr' ? 'var(--color-primary-dark)' : 'var(--text-muted)') }">
-                {{ v.isContext ? 'bucle' : (v.category === 'array' ? 'llista' : (v.category === 'arrayExpr' ? 'recompte' : (v.category === 'arrayItem' ? 'element' : 'clau'))) }}
+                {{ v.category === 'macroParam' ? 'paràmetre' : (v.isContext ? 'bucle' : (v.category === 'array' ? 'llista' : (v.category === 'arrayExpr' ? 'recompte' : (v.category === 'arrayItem' ? 'element' : 'clau')))) }}
               </span>
             </div>
           </div>
