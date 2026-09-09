@@ -609,6 +609,9 @@ const getElementType = (groupName, elementName) => {
     if (t === 'Percentage' || t === 'Percentatge' || t === 'Porcentaje' || t === 'Percent' || t === '%') {
       return 'Percentage';
     }
+    if (t === 'Currency' || t === 'Moneda' || t === 'Divisa') {
+      return 'Currency';
+    }
     if (['Select', 'Computed', 'Table', 'Date', 'Boolean'].includes(t)) {
       return t;
     }
@@ -621,6 +624,16 @@ const getElementType = (groupName, elementName) => {
   }
 
   return meta ? (meta.type || 'Text') : 'Text';
+};
+
+// Currency display: two decimals + the field's own configured symbol
+// (default €) -- no scale conversion needed (unlike Percentage), the
+// stored value IS the amount.
+const formatCurrencyDisplay = (val, symbol) => {
+  if (val === undefined || val === null || val === '') return '';
+  const num = typeof val === 'number' ? val : parseFloat(String(val).replace(',', '.'));
+  if (isNaN(num)) return String(val);
+  return `${num.toFixed(2)} ${symbol || '€'}`;
 };
 
 const getElementOptions = (groupName, elementName) => {
@@ -1757,7 +1770,7 @@ onMounted(() => {
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-muted); opacity: 0.85; flex-shrink: 0;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                       <span style="flex-grow: 1;">
-                        {{ getElementType(name, item.key) === 'Percentage' ? (formatPercentageDisplay(store.excelJsonData[name][item.key]) + ' %') : (store.excelJsonData[name][item.key] !== undefined ? store.excelJsonData[name][item.key] : 0) }}
+                        {{ getElementType(name, item.key) === 'Percentage' ? (formatPercentageDisplay(store.excelJsonData[name][item.key]) + ' %') : (getElementType(name, item.key) === 'Currency' ? formatCurrencyDisplay(store.excelJsonData[name][item.key], getElementMetadata(name, item.key)?.currencySymbol) : (store.excelJsonData[name][item.key] !== undefined ? store.excelJsonData[name][item.key] : 0)) }}
                       </span>
                       <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
                     </div>
@@ -1863,7 +1876,24 @@ onMounted(() => {
                       >
                       <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.8rem; color: var(--text-muted); pointer-events: none;">%</span>
                     </div>
-                    
+
+                    <!-- Currency Type -->
+                    <div v-else-if="getElementType(name, item.key) === 'Currency'" style="display: flex; align-items: center; gap: 4px; flex-grow: 1;">
+                      <input
+                        :id="'data-field-' + name + '-' + item.key"
+                        :data-path="name + '.' + item.key"
+                        type="number"
+                        step="any"
+                        v-model="store.excelJsonData[name][item.key]"
+                        @input="onCellInput"
+                        @blur="onCellBlur"
+                        @change="onCellBlur"
+                        class="data-input"
+                        style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                      >
+                      <span style="font-weight: 600; font-size: 0.8rem; color: var(--text-muted); flex-shrink: 0;">{{ getElementMetadata(name, item.key)?.currencySymbol || '€' }}</span>
+                    </div>
+
                     <!-- Table Sub-structure Type -->
                     <div 
                       v-else-if="getElementType(name, item.key) === 'Table'"

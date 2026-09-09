@@ -131,7 +131,8 @@ watch(() => props.modelValue, (newVal) => {
         ...item,
         isCalculated: isCalc,
         calcFn: fn,
-        calcFormula: item.calcFormula || ''
+        calcFormula: item.calcFormula || '',
+        currencySymbol: item.currencySymbol || '€'
       };
     });
   }
@@ -292,7 +293,8 @@ const addNewFieldToConfig = () => {
       calcFormula: '',
       gridRow: '',
       gridOrder: '',
-      gridFill: false
+      gridFill: false,
+      currencySymbol: '€'
     });
   }
 };
@@ -668,6 +670,7 @@ const openFormulaEditor = (item) => {
                     <option value="Text">Text</option>
                     <option value="Number">Número</option>
                     <option value="Percentage">Percentatge (%)</option>
+                    <option value="Currency">Moneda</option>
                     <option value="Date">Data</option>
                     <option value="Boolean">Booleà</option>
                     <option value="Select">Desplegable</option>
@@ -741,6 +744,20 @@ const openFormulaEditor = (item) => {
                       <option value="">-- Tria Taula / Matriu --</option>
                       <option v-for="tbl in getAvailableTables()" :key="tbl" :value="tbl">{{ tbl }}</option>
                     </select>
+                  </template>
+
+                  <!-- Currency Config -->
+                  <template v-else-if="item.type === 'Currency'">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                      <label style="font-size: 0.72rem; color: var(--text-muted); white-space: nowrap;">Símbol:</label>
+                      <input
+                        type="text"
+                        v-model="item.currencySymbol"
+                        class="data-input"
+                        placeholder="€"
+                        style="width: 70px; font-size: 0.75rem; height: 26px;"
+                      />
+                    </div>
                   </template>
 
                   <!-- Calculation / Formula Config Section -->

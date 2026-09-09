@@ -342,6 +342,9 @@ export async function saveGroupConfig(store, { groupPath, legacyGroupNames = [],
     if (item.type === 'Table') {
       meta.vectorPath = item.vectorPath;
     }
+    if (item.type === 'Currency') {
+      meta.currencySymbol = item.currencySymbol || '€';
+    }
 
     if (item.width) meta.width = item.width;
     if (item.gridRow) meta.gridRow = item.gridRow;

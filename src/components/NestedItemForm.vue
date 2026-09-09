@@ -95,7 +95,7 @@ const store = useWorkspaceStore();
             title="🔒 Camp calculat automàticament"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary); flex-shrink: 0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
-            <span style="flex-grow: 1;">{{ helpers.getElementType(entry.key) === 'Percentage' ? (helpers.formatPercentageDisplay(item[entry.key]) + ' %') : (item[entry.key] !== undefined ? item[entry.key] : 0) }}</span>
+            <span style="flex-grow: 1;">{{ helpers.getElementType(entry.key) === 'Percentage' ? (helpers.formatPercentageDisplay(item[entry.key]) + ' %') : (helpers.getElementType(entry.key) === 'Currency' ? helpers.formatCurrencyDisplay(item[entry.key], helpers.getElementMetadata(entry.key)?.currencySymbol) : (item[entry.key] !== undefined ? item[entry.key] : 0)) }}</span>
             <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px;">Calculat</span>
           </div>
 
@@ -164,6 +164,20 @@ const store = useWorkspaceStore();
             class="data-input"
             style="flex-grow: 1; height: 32px;"
           >
+
+          <!-- Currency Type -->
+          <div v-else-if="helpers.getElementType(entry.key) === 'Currency'" style="display: flex; align-items: center; gap: 4px; flex-grow: 1;">
+            <input
+              :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
+              :data-path="helpers.getItemPath(idx, entry.key)"
+              type="number"
+              step="any"
+              v-model="item[entry.key]"
+              class="data-input"
+              style="flex-grow: 1; height: 32px;"
+            >
+            <span style="font-weight: 600; font-size: 0.82rem; color: var(--text-muted); flex-shrink: 0;">{{ helpers.getElementMetadata(entry.key)?.currencySymbol || '€' }}</span>
+          </div>
 
           <!-- Boolean Type -->
           <select

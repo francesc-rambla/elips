@@ -518,6 +518,9 @@ const getElementType = (elementName) => {
     if (t === 'Percentage' || t === 'Percentatge' || t === 'Porcentaje' || t === 'Percent' || t === '%') {
       return 'Percentage';
     }
+    if (t === 'Currency' || t === 'Moneda' || t === 'Divisa') {
+      return 'Currency';
+    }
     if (['Select', 'Computed', 'Table', 'Date', 'Boolean'].includes(t)) {
       return t;
     }
@@ -530,6 +533,16 @@ const getElementType = (elementName) => {
   }
 
   return meta ? (meta.type || 'Text') : 'Text';
+};
+
+// Currency display: two decimals + the field's own configured symbol
+// (default €) -- no scale conversion needed (unlike Percentage), the
+// stored value IS the amount.
+const formatCurrencyDisplay = (val, symbol) => {
+  if (val === undefined || val === null || val === '') return '';
+  const num = typeof val === 'number' ? val : parseFloat(String(val).replace(',', '.'));
+  if (isNaN(num)) return String(val);
+  return `${num.toFixed(2)} ${symbol || '€'}`;
 };
 
 const resolveSelectOptions = (meta) => {
@@ -654,17 +667,20 @@ const readOnlyCellDisplay = (row, col) => {
     const num = parseFloat(val);
     return isNaN(num) ? val : num.toFixed(2);
   }
+  if (type === 'Currency') {
+    return formatCurrencyDisplay(val, getElementMetadata(col)?.currencySymbol);
+  }
   return val !== undefined && val !== null ? val : '';
 };
 
-// Right-aligns numeric-ish columns (Number/Percentage) in the read-only
-// table -- readOnlyCellDisplay already formats their VALUE with two
-// decimals; this is the matching column/header alignment. Always explicit
-// (never left implicit) since a bare <th> defaults to center-aligned text
-// in every browser, unlike a <td>.
+// Right-aligns numeric-ish columns (Number/Percentage/Currency) in the
+// read-only table -- readOnlyCellDisplay already formats their VALUE with
+// two decimals; this is the matching column/header alignment. Always
+// explicit (never left implicit) since a bare <th> defaults to
+// center-aligned text in every browser, unlike a <td>.
 const getReadOnlyCellStyle = (col) => {
   const type = getElementType(col);
-  return { textAlign: (type === 'Number' || type === 'Percentage') ? 'right' : 'left' };
+  return { textAlign: (type === 'Number' || type === 'Percentage' || type === 'Currency') ? 'right' : 'left' };
 };
 
 const isCellModalOpen = ref(false);
@@ -1238,12 +1254,20 @@ const itemToMoveIndex = ref(null);
 const availableMoveTargets = ref([]);
 const selectedTargetParent = ref(null);
 
-const getItemLabel = (item, fallback) => {
+// `groupName` defaults to props.arrayKey (this instance's own group) --
+// callers walking OTHER groups' data (see openMoveModal's walkForTargets)
+// must pass that item's OWN schema group explicitly, or its title formula
+// gets evaluated against the WRONG group's field names (bug reported: a
+// CONCAT formula referencing fields that don't exist on that item falls
+// back to showing the literal field name, per resolveToken's own fallback
+// below -- making every move-target candidate show the same wrong text).
+const getItemLabel = (item, fallback, groupName = null) => {
   if (!item || typeof item !== 'object') return fallback;
 
-  const titleFormula = getItemTitleFormula(props.arrayKey);
+  const effectiveGroupName = groupName || props.arrayKey;
+  const titleFormula = getItemTitleFormula(effectiveGroupName);
   if (titleFormula) {
-    const evaluated = evaluateItemTitleFormula(titleFormula, item, props.arrayKey, fallback);
+    const evaluated = evaluateItemTitleFormula(titleFormula, item, effectiveGroupName, fallback);
     if (evaluated && evaluated.trim()) {
       return evaluated.trim();
     }
@@ -1267,15 +1291,20 @@ const openMoveModal = (idx) => {
   selectedTargetParent.value = null;
   const targets = [];
   
-  const walkForTargets = (obj, pathPrefix = '', parentLabel = 'Arrel') => {
+  // schemaPath tracks the DOTTED, INDEX-FREE schema path in parallel with
+  // pathPrefix (a data path WITH array indices) -- needed to evaluate each
+  // candidate's OWN itemTitleFormula (see getItemLabel's own doc comment),
+  // since a candidate walked here can belong to a completely different
+  // group than props.arrayKey.
+  const walkForTargets = (obj, pathPrefix = '', parentLabel = 'Arrel', schemaPath = '') => {
     if (!obj || typeof obj !== 'object') return;
-    
+
     if (Array.isArray(obj)) {
       obj.forEach((elem, elemIdx) => {
         if (elem && typeof elem === 'object') {
           const elemP = `${pathPrefix}[${elemIdx}]`;
-          const elemLbl = getItemLabel(elem, `${parentLabel} #${elemIdx + 1}`);
-          
+          const elemLbl = getItemLabel(elem, `${parentLabel} #${elemIdx + 1}`, schemaPath);
+
           if (Array.isArray(elem[props.arrayKey]) && elem !== props.parentObj) {
             targets.push({
               container: elem,
@@ -1283,10 +1312,10 @@ const openMoveModal = (idx) => {
               label: `${elemLbl}`
             });
           }
-          
+
           Object.entries(elem).forEach(([k, v]) => {
             if (k !== '_hierarchy_schema' && Array.isArray(v)) {
-              walkForTargets(v, `${elemP}.${k}`, elemLbl);
+              walkForTargets(v, `${elemP}.${k}`, elemLbl, schemaPath ? `${schemaPath}.${k}` : k);
             }
           });
         }
@@ -1295,8 +1324,9 @@ const openMoveModal = (idx) => {
       Object.entries(obj).forEach(([k, v]) => {
         if (k === 'editor_metadata' || k === '_hierarchy_schema') return;
         const curP = pathPrefix ? `${pathPrefix}.${k}` : k;
+        const curSchemaPath = schemaPath ? `${schemaPath}.${k}` : k;
         if (Array.isArray(v)) {
-          walkForTargets(v, curP, k);
+          walkForTargets(v, curP, k, curSchemaPath);
         } else if (typeof v === 'object' && v !== null) {
           if (Array.isArray(v[props.arrayKey]) && v !== props.parentObj) {
             targets.push({
@@ -1305,7 +1335,7 @@ const openMoveModal = (idx) => {
               label: `${k} (${curP})`
             });
           }
-          walkForTargets(v, curP, k);
+          walkForTargets(v, curP, k, curSchemaPath);
         }
       });
     }
@@ -1356,7 +1386,8 @@ const itemFormHelpers = {
   openCellEditor,
   getFieldCardStyle,
   getItemRowBlocks,
-  formatPercentageDisplay
+  formatPercentageDisplay,
+  formatCurrencyDisplay
 };
 </script>
 
@@ -1539,7 +1570,7 @@ const itemFormHelpers = {
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-muted); opacity: 0.85; flex-shrink: 0;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                     <span style="flex-grow: 1;">
-                      {{ getElementType(h) === 'Percentage' ? (formatPercentageDisplay(row[h]) + ' %') : (row[h] !== undefined ? row[h] : 0) }}
+                      {{ getElementType(h) === 'Percentage' ? (formatPercentageDisplay(row[h]) + ' %') : (getElementType(h) === 'Currency' ? formatCurrencyDisplay(row[h], getElementMetadata(h)?.currencySymbol) : (row[h] !== undefined ? row[h] : 0)) }}
                     </span>
                     <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
                   </div>
@@ -1622,6 +1653,20 @@ const itemFormHelpers = {
                       placeholder="0"
                     >
                     <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.78rem; color: var(--text-muted); pointer-events: none;">%</span>
+                  </div>
+
+                  <!-- Currency Type -->
+                  <div v-else-if="getElementType(h) === 'Currency'" style="display: flex; align-items: center; gap: 4px; flex-grow: 1;">
+                    <input
+                      :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
+                      :data-path="getItemPath(rIdx, h)"
+                      type="number"
+                      step="any"
+                      v-model="row[h]"
+                      class="data-input"
+                      style="flex-grow: 1; height: 28px; font-size: 0.78rem;"
+                    >
+                    <span style="font-weight: 600; font-size: 0.78rem; color: var(--text-muted); flex-shrink: 0;">{{ getElementMetadata(h)?.currencySymbol || '€' }}</span>
                   </div>
 
                   <!-- Boolean Type -->
