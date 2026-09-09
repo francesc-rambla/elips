@@ -645,9 +645,26 @@ const readOnlyCellDisplay = (row, col) => {
     return pills.map(p => p.label).join(', ');
   }
   if (type === 'Percentage') {
-    return val !== undefined && val !== null && val !== '' ? `${formatPercentageDisplay(val)} %` : '';
+    if (val === undefined || val === null || val === '') return '';
+    const num = parseFloat(formatPercentageDisplay(val));
+    return isNaN(num) ? '' : `${num.toFixed(2)} %`;
+  }
+  if (type === 'Number') {
+    if (val === undefined || val === null || val === '') return '';
+    const num = parseFloat(val);
+    return isNaN(num) ? val : num.toFixed(2);
   }
   return val !== undefined && val !== null ? val : '';
+};
+
+// Right-aligns numeric-ish columns (Number/Percentage) in the read-only
+// table -- readOnlyCellDisplay already formats their VALUE with two
+// decimals; this is the matching column/header alignment. Always explicit
+// (never left implicit) since a bare <th> defaults to center-aligned text
+// in every browser, unlike a <td>.
+const getReadOnlyCellStyle = (col) => {
+  const type = getElementType(col);
+  return { textAlign: (type === 'Number' || type === 'Percentage') ? 'right' : 'left' };
 };
 
 const isCellModalOpen = ref(false);
@@ -1165,6 +1182,10 @@ const addNestedItem = () => {
   // visibleCount semantics above (addTabularRow's old behaviour).
   if (isRootTabular.value && visibleCount.value !== null && visibleCount.value < list.length) {
     visibleCount.value += 1;
+    // Opens straight into the edit form when the added row wouldn't
+    // otherwise show any editable field at all (showReadOnlyTable) -- see
+    // openRowEditModal's own doc comment.
+    if (showReadOnlyTable.value) openRowEditModal(visibleCount.value - 1);
     return;
   }
 
@@ -1185,6 +1206,7 @@ const addNestedItem = () => {
 
   list.push(newRow);
   if (isRootTabular.value && visibleCount.value !== null) visibleCount.value += 1;
+  if (showReadOnlyTable.value) openRowEditModal(list.length - 1);
 };
 
 const deleteNestedItem = (idx) => {
@@ -1326,13 +1348,15 @@ const itemFormHelpers = {
   getFieldLabel,
   getElementType,
   getElementMetadata,
+  isCalculatedField,
   openMultiSelectModal,
   getSelectedPills,
   resolveSelectOptions,
   getItemPath,
   openCellEditor,
   getFieldCardStyle,
-  getItemRowBlocks
+  getItemRowBlocks,
+  formatPercentageDisplay
 };
 </script>
 
@@ -1410,15 +1434,15 @@ const itemFormHelpers = {
         <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
           <thead>
             <tr style="background: var(--bg-tertiary);">
-              <th v-for="col in visibleColumnsForTable" :key="col" style="padding: 6px 8px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 600;">
+              <th v-for="col in visibleColumnsForTable" :key="col" :style="{ padding: '6px 8px', borderBottom: '2px solid var(--border-color)', fontWeight: 600, ...getReadOnlyCellStyle(col) }">
                 {{ getFieldLabel(col) }}
               </th>
               <th style="width: 190px; text-align: center; border-bottom: 2px solid var(--border-color);">Accions</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(row, rIdx) in visibleItems" :key="rIdx">
-              <td v-for="col in visibleColumnsForTable" :key="col" style="padding: 4px 8px; border-bottom: 1px solid var(--border-color); color: var(--text-primary);">
+            <tr v-for="(row, rIdx) in visibleItems" :key="rIdx" style="cursor: pointer;" title="Clica per editar aquest element" @click="openRowEditModal(rIdx)">
+              <td v-for="col in visibleColumnsForTable" :key="col" :style="{ padding: '4px 8px', borderBottom: '1px solid var(--border-color)', color: 'var(--text-primary)', ...getReadOnlyCellStyle(col) }">
                 {{ readOnlyCellDisplay(row, col) }}
               </td>
               <td style="padding: 4px 6px; border-bottom: 1px solid var(--border-color); text-align: center;">
@@ -1428,7 +1452,7 @@ const itemFormHelpers = {
                     class="btn-icon-only"
                     style="height: 26px; width: 26px; min-width: 26px; font-size: 0.8rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
                     title="Edita aquest element"
-                    @click="openRowEditModal(rIdx)"
+                    @click.stop="openRowEditModal(rIdx)"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                   </button>
@@ -1439,7 +1463,7 @@ const itemFormHelpers = {
                     style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--border-color); border-radius: 3px;"
                     :style="{ opacity: rIdx === 0 ? 0.35 : 1, cursor: rIdx === 0 ? 'not-allowed' : 'pointer' }"
                     title="Desplaça fila amunt"
-                    @click="moveLeafRowUp(rIdx)"
+                    @click.stop="moveLeafRowUp(rIdx)"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
                   </button>
@@ -1450,7 +1474,7 @@ const itemFormHelpers = {
                     style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--border-color); border-radius: 3px;"
                     :style="{ opacity: rIdx === visibleItems.length - 1 ? 0.35 : 1, cursor: rIdx === visibleItems.length - 1 ? 'not-allowed' : 'pointer' }"
                     title="Desplaça fila avall"
-                    @click="moveLeafRowDown(rIdx)"
+                    @click.stop="moveLeafRowDown(rIdx)"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
                   </button>
@@ -1459,7 +1483,7 @@ const itemFormHelpers = {
                     class="btn-icon-only"
                     style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
                     title="Duplica fila"
-                    @click="duplicateNestedItem(rIdx)"
+                    @click.stop="duplicateNestedItem(rIdx)"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                   </button>
@@ -1468,7 +1492,7 @@ const itemFormHelpers = {
                     class="btn-icon-only"
                     style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
                     title="Trasllada fila a un altre pare"
-                    @click="openMoveModal(rIdx)"
+                    @click.stop="openMoveModal(rIdx)"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 21 7 17 3"/><line x1="21" y1="7" x2="9" y2="7"/><polyline points="7 21 3 17 7 13"/><line x1="3" y1="17" x2="15" y2="17"/></svg>
                   </button>
@@ -1477,7 +1501,7 @@ const itemFormHelpers = {
                     class="btn-icon-only text-danger"
                     style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
                     title="Elimina aquest element"
-                    @click="deleteNestedItem(rIdx)"
+                    @click.stop="deleteNestedItem(rIdx)"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                   </button>

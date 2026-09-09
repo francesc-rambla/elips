@@ -82,8 +82,25 @@ const store = useWorkspaceStore();
 
         <!-- Input Controls -->
         <div style="display: flex; gap: 4px; align-items: center; width: 100%; flex-grow: 1;">
+          <!-- Calculated Field (Non-editable) -- the isCalculated flag wins
+               over whatever the field's own nominal type is (a calculated
+               field can be typed Number/Percentage/Text/... and should
+               still show this locked style, not its type's normal input),
+               matching the leaf table's own dispatch order. -->
+          <div
+            v-if="helpers.isCalculatedField(entry.key)"
+            :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
+            :data-path="helpers.getItemPath(idx, entry.key)"
+            style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 32px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.85rem; font-weight: 600; cursor: not-allowed;"
+            title="🔒 Camp calculat automàticament"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary); flex-shrink: 0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
+            <span style="flex-grow: 1;">{{ helpers.getElementType(entry.key) === 'Percentage' ? (helpers.formatPercentageDisplay(item[entry.key]) + ' %') : (item[entry.key] !== undefined ? item[entry.key] : 0) }}</span>
+            <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px;">Calculat</span>
+          </div>
+
           <!-- Select Type -->
-          <template v-if="helpers.getElementType(entry.key) === 'Select'">
+          <template v-else-if="helpers.getElementType(entry.key) === 'Select'">
             <!-- Multiple select -->
             <div
               v-if="helpers.getElementMetadata(entry.key)?.multiple"
@@ -124,19 +141,6 @@ const store = useWorkspaceStore();
               </option>
             </select>
           </template>
-
-          <!-- Computed Type (Non-editable) -->
-          <div
-            v-else-if="helpers.getElementType(entry.key) === 'Computed'"
-            :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
-            :data-path="helpers.getItemPath(idx, entry.key)"
-            style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 32px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.85rem; font-weight: 600; cursor: not-allowed;"
-            title="🔒 Camp calculat automàticament"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary); flex-shrink: 0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
-            <span style="flex-grow: 1;">{{ item[entry.key] !== undefined ? item[entry.key] : 0 }}</span>
-            <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px;">Calculat</span>
-          </div>
 
           <!-- Date Type -->
           <input
