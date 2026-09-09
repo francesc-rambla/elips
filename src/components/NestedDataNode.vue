@@ -23,10 +23,11 @@ import { useWorkspaceStore } from '../stores/workspace';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { isPrimitive, isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
 import { builtinFunctions, useFormulaAutocomplete } from '../composables/useFormulaAutocomplete';
-import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, groupFieldElements, saveGroupConfig as saveGroupConfigShared } from '../composables/useGroupMetadata';
+import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, groupFieldElements, saveGroupConfig as saveGroupConfigShared, getGroupViewMode, getVisibleColumns } from '../composables/useGroupMetadata';
 import VisualGridEditorModal from './VisualGridEditorModal.vue';
 import GroupConfigModal from './GroupConfigModal.vue';
 import TemplateEditor from './TemplateEditor.vue';
+import NestedItemForm from './NestedItemForm.vue';
 
 const props = defineProps({
   parentObj: {
@@ -48,6 +49,16 @@ const props = defineProps({
   parentPath: {
     type: String,
     default: ''
+  },
+  // Incremented by 1 on every recursive <NestedDataNode> call (see
+  // NestedItemForm.vue's own "Child Hierarchies" section) -- used only to
+  // give this instance's own row-edit modal (see openRowEditModal below) a
+  // z-index that always sits above its parent's modal, so a chain of
+  // table-mode groups (e.g. parts -> activitats -> costos, all configured
+  // as tables) can stack 3+ modals correctly regardless of open/close order.
+  nestingDepth: {
+    type: Number,
+    default: 0
   }
 });
 
@@ -199,6 +210,26 @@ const effectiveFields = computed(() => {
   }
   return result;
 });
+
+// The default mirrors today's implicit leaf-vs-intermediate behaviour
+// exactly when nothing has been configured: a leaf group (no nested
+// children) shows a directly-editable table, an intermediate group shows
+// inline form cards. GroupConfigModal's own "Vista" section lets either be
+// switched to the other.
+const effectiveViewMode = computed(() => getGroupViewMode(store, fullPath.value, isLeafLevel.value ? 'table' : 'form', [props.arrayKey]));
+
+// The subset of effectiveFields configured as visible for the read-only
+// table below (see showReadOnlyTable) -- unrestricted (every field) until
+// the user explicitly picks a subset via GroupConfigModal.
+const visibleColumnsForTable = computed(() => getVisibleColumns(store, fullPath.value, effectiveFields.value, [props.arrayKey]));
+
+// A leaf group in 'form' mode, or an intermediate group in 'table' mode,
+// both need the SAME read-only-table-with-an-Edita-button rendering: a leaf
+// row has nowhere else to go but a modal once its table isn't directly
+// editable, and an intermediate row structurally never had room for its own
+// nested children in a table row to begin with (that's the entire reason
+// intermediate groups defaulted to accordion cards).
+const showReadOnlyTable = computed(() => (isLeafLevel.value && effectiveViewMode.value === 'form') || (!isLeafLevel.value && effectiveViewMode.value === 'table'));
 
 let evalDebounceTimer = null;
 
@@ -595,6 +626,30 @@ const getSelectedPills = (cellValue, meta) => {
   });
 };
 
+// Plain-text rendering for one cell of the read-only table (showReadOnlyTable
+// above) -- a typed, best-effort display (Boolean as ✓/✗, Select/multi-Select
+// resolved to their configured label(s), Percentage formatted) rather than
+// the raw stored value, matching what each type already shows in the
+// editable forms elsewhere in this file.
+const readOnlyCellDisplay = (row, col) => {
+  const val = row ? row[col] : undefined;
+  const type = getElementType(col);
+  if (type === 'Boolean') {
+    if (val === true || val === 'true') return '✓';
+    if (val === false || val === 'false') return '✗';
+    return '';
+  }
+  if (type === 'Select') {
+    const meta = getElementMetadata(col);
+    const pills = getSelectedPills(val, meta);
+    return pills.map(p => p.label).join(', ');
+  }
+  if (type === 'Percentage') {
+    return val !== undefined && val !== null && val !== '' ? `${formatPercentageDisplay(val)} %` : '';
+  }
+  return val !== undefined && val !== null ? val : '';
+};
+
 const isCellModalOpen = ref(false);
 const activeCellInfo = ref(null);
 const cellTextValue = ref('');
@@ -617,6 +672,21 @@ const saveCellEditor = () => {
   store.addLog("Camp actualitzat correctament.", "success");
 };
 
+// Row-edit modal (see showReadOnlyTable above): opens NestedItemForm for a
+// single row of the read-only table, one instance per NestedDataNode --
+// naturally stackable (see the nestingDepth prop's own doc comment) since a
+// row's own nested children, if configured as tables too, recurse into
+// their OWN separate NestedDataNode instance with its OWN independent modal
+// state. Direct mutation / autosave, same as everywhere else in this file
+// -- no staged copy, closing the modal is just closing it.
+const isRowEditModalOpen = ref(false);
+const activeEditRowIndex = ref(null);
+const openRowEditModal = (idx) => {
+  activeEditRowIndex.value = idx;
+  isRowEditModalOpen.value = true;
+};
+const rowEditModalZIndex = computed(() => 1300 + props.nestingDepth * 10);
+
 const handleNestedKeydown = (e) => {
   if (isMultiSelectModalOpen.value) {
     if (e.key === 'Escape' || e.key === 'Enter') {
@@ -636,6 +706,15 @@ const handleNestedKeydown = (e) => {
     }
     return;
   }
+
+  // No Escape handling here (unlike the two modals above): every
+  // NestedDataNode instance registers this SAME handler on `window`, and a
+  // chain of stacked row-edit modals (see rowEditModalZIndex's own doc
+  // comment) would all see the same Escape keypress and all close at once
+  // instead of just the topmost one -- closing via the modal's own "Tanca"
+  // button (which only ever affects THIS instance) avoids that entirely,
+  // matching isMoveModalOpen/isConfigModalOpen below, which have the same
+  // stacking-safety reasoning and likewise have no Escape shortcut.
 };
 
 onMounted(() => {
@@ -1239,6 +1318,22 @@ const executeMoveItem = () => {
 const getItemPath = (idx, fieldKey) => {
   return fieldKey !== '' ? `${fullPath.value}.${idx}.${fieldKey}` : `${fullPath.value}.${idx}`;
 };
+
+// Bundled once for NestedItemForm.vue (see its own doc comment) -- these
+// functions stay defined here (this component's own leaf table needs
+// several of them too) and are simply passed down by reference.
+const itemFormHelpers = {
+  getFieldLabel,
+  getElementType,
+  getElementMetadata,
+  openMultiSelectModal,
+  getSelectedPills,
+  resolveSelectOptions,
+  getItemPath,
+  openCellEditor,
+  getFieldCardStyle,
+  getItemRowBlocks
+};
 </script>
 
 <template>
@@ -1255,7 +1350,7 @@ const getItemPath = (idx, fieldKey) => {
 
       <div style="display: flex; align-items: center; gap: 6px;">
         <button 
-          v-if="!isLeafLevel && items.length > 0"
+          v-if="!isLeafLevel && effectiveViewMode === 'form' && items.length > 0"
           type="button"
           class="btn btn-secondary" 
           style="width: auto; padding: 2px 7px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px;"
@@ -1266,7 +1361,7 @@ const getItemPath = (idx, fieldKey) => {
           <span v-if="store.config.showButtonTexts">Desplega tot</span>
         </button>
         <button 
-          v-if="!isLeafLevel && items.length > 0"
+          v-if="!isLeafLevel && effectiveViewMode === 'form' && items.length > 0"
           type="button"
           class="btn btn-secondary" 
           style="width: auto; padding: 2px 7px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px;"
@@ -1303,6 +1398,45 @@ const getItemPath = (idx, fieldKey) => {
     <div v-if="items.length === 0" style="padding: 0.75rem; font-size: 0.8rem; color: var(--text-muted); font-style: italic; background: rgba(0,0,0,0.02); border-radius: 4px; text-align: center;">
       Sense registres a <strong style="color: var(--text-primary);">{{ arrayKey }}</strong>. Feu clic a <strong>"➕ Afegeix {{ arrayKey }}"</strong> per afegir un element.
     </div>
+
+    <!-- READ-ONLY TABLE: a leaf group configured as "formulari", or an
+         intermediate group configured as "taula" -- neither can be edited
+         inline (a leaf-in-form-mode row's edit form lives in a modal; an
+         intermediate row structurally has no room in a table row for its
+         own nested children), so every cell here is plain text with a
+         single "Edita" button per row opening that same form in a modal. -->
+    <template v-else-if="showReadOnlyTable">
+      <div style="overflow-x: auto; max-width: 100%;">
+        <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+          <thead>
+            <tr style="background: var(--bg-tertiary);">
+              <th v-for="col in visibleColumnsForTable" :key="col" style="padding: 6px 8px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 600;">
+                {{ getFieldLabel(col) }}
+              </th>
+              <th style="width: 60px; text-align: center; border-bottom: 2px solid var(--border-color);">Accions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, rIdx) in visibleItems" :key="rIdx">
+              <td v-for="col in visibleColumnsForTable" :key="col" style="padding: 4px 8px; border-bottom: 1px solid var(--border-color); color: var(--text-primary);">
+                {{ readOnlyCellDisplay(row, col) }}
+              </td>
+              <td style="padding: 4px 6px; border-bottom: 1px solid var(--border-color); text-align: center;">
+                <button
+                  type="button"
+                  class="btn-icon-only"
+                  style="height: 26px; width: 26px; min-width: 26px; font-size: 0.8rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                  title="Edita aquest element"
+                  @click="openRowEditModal(rIdx)"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
 
     <!-- LEAF LEVEL: Render as Compact Tabular Table with Rich Controls -->
     <template v-else-if="isLeafLevel">
@@ -1626,173 +1760,46 @@ const getItemPath = (idx, fieldKey) => {
           <!-- Accordion Body: Form Grid Rows & Child Hierarchies -->
           <div v-show="!isItemCollapsed(idx)" style="padding-top: 0.45rem;">
 
-          <!-- FORM GRID ROW BLOCKS FOR NESTED ITEM PRIMITIVE FIELDS -->
-          <div style="display: flex; flex-direction: column; gap: 0.5rem; width: 100%; margin-bottom: 0.75rem;">
-            <div 
-              v-for="(rowBlock, rIdx) in getItemRowBlocks(item)" 
-              :key="'item-row-' + rIdx"
-              class="form-grid-row"
-              style="display: flex; flex-wrap: wrap; align-items: stretch; gap: 0.75rem; width: 100%;"
-            >
-              <div 
-                v-for="entry in rowBlock" 
-                :key="entry.key"
-                :style="getFieldCardStyle(entry.key)"
-              >
-                <!-- Label Header -->
-                <div 
-                  :style="store.config.labelPosition === 'top'
-                    ? 'display: flex; align-items: center; gap: 6px;'
-                    : 'width: 220px; min-width: 180px; display: flex; align-items: center; gap: 6px;'"
-                >
-                  <span 
-                    style="font-weight: 600; font-size: 0.8rem; color: var(--text-primary);"
-                    :style="{ cursor: getFieldLabel(entry.key) !== entry.key ? 'help' : 'default' }"
-                    :title="getFieldLabel(entry.key) !== entry.key ? 'Clau de camp: ' + entry.key : undefined"
-                  >
-                    {{ getFieldLabel(entry.key) }}
-                  </span>
-                </div>
-
-                <!-- Input Controls -->
-                <div style="display: flex; gap: 4px; align-items: center; width: 100%; flex-grow: 1;">
-                  <!-- Select Type -->
-                  <template v-if="getElementType(entry.key) === 'Select'">
-                    <!-- Multiple select -->
-                    <div 
-                      v-if="getElementMetadata(entry.key)?.multiple"
-                      :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
-                      :data-path="getItemPath(idx, entry.key)"
-                      style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 32px; padding: 4px 8px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); flex-grow: 1; cursor: pointer; max-width: 100%; max-height: 80px; overflow-y: auto;"
-                      @click="openMultiSelectModal(item, entry.key, getElementMetadata(entry.key))"
-                      title="Fes clic per modificar la selecció"
-                    >
-                      <span v-if="getSelectedPills(item[entry.key], getElementMetadata(entry.key)).length === 0" style="color: var(--text-muted); font-size: 0.8rem;">
-                        [Tria opcions]
-                      </span>
-                      <span 
-                        v-for="pill in getSelectedPills(item[entry.key], getElementMetadata(entry.key))" 
-                        :key="pill.value" 
-                        style="background-color: var(--color-primary-light, #e0f2fe); color: var(--color-primary, #0284c7); font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; font-weight: 500; display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
-                        :title="pill.label"
-                      >
-                        {{ pill.label }}
-                      </span>
-                    </div>
-                    <!-- Single select -->
-                    <select 
-                      v-else
-                      :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
-                      :data-path="getItemPath(idx, entry.key)"
-                      v-model="item[entry.key]"
-                      class="data-input"
-                      style="flex-grow: 1; height: 32px;"
-                    >
-                      <option value="">[Buit / Sense valor]</option>
-                      <option 
-                        v-for="opt in resolveSelectOptions(getElementMetadata(entry.key))" 
-                        :key="opt.value" 
-                        :value="opt.value"
-                      >
-                        {{ opt.label }}
-                      </option>
-                    </select>
-                  </template>
-                  
-                  <!-- Computed Type (Non-editable) -->
-                  <div 
-                    v-else-if="getElementType(entry.key) === 'Computed'" 
-                    :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
-                    :data-path="getItemPath(idx, entry.key)"
-                    style="display: flex; align-items: center; gap: 6px; flex-grow: 1; height: 32px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.85rem; font-weight: 600; cursor: not-allowed;" 
-                    title="🔒 Camp calculat automàticament"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary); flex-shrink: 0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
-                    <span style="flex-grow: 1;">{{ item[entry.key] !== undefined ? item[entry.key] : 0 }}</span>
-                    <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px;">Calculat</span>
-                  </div>
-
-                  <!-- Date Type -->
-                  <input 
-                    v-else-if="getElementType(entry.key) === 'Date'"
-                    :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
-                    :data-path="getItemPath(idx, entry.key)"
-                    type="date"
-                    v-model="item[entry.key]"
-                    class="data-input"
-                    style="flex-grow: 1; height: 32px;"
-                  >
-                  
-                  <!-- Number Type -->
-                  <input 
-                    v-else-if="getElementType(entry.key) === 'Number'"
-                    :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
-                    :data-path="getItemPath(idx, entry.key)"
-                    type="number"
-                    step="any"
-                    v-model="item[entry.key]"
-                    class="data-input"
-                    style="flex-grow: 1; height: 32px;"
-                  >
-                  
-                  <!-- Boolean Type -->
-                  <select 
-                    v-else-if="getElementType(entry.key) === 'Boolean'"
-                    :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
-                    :data-path="getItemPath(idx, entry.key)"
-                    v-model="item[entry.key]"
-                    class="data-input"
-                    style="flex-grow: 1; height: 32px;"
-                  >
-                    <option value="">[Buit / Sense valor]</option>
-                    <option :value="true">Cert (True)</option>
-                    <option :value="false">Fals (False)</option>
-                  </select>
-                  
-                  <!-- Text Type (default) -->
-                  <input 
-                    v-else
-                    :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
-                    :data-path="getItemPath(idx, entry.key)"
-                    type="text"
-                    v-model="item[entry.key]"
-                    class="data-input"
-                    style="flex-grow: 1; height: 32px;"
-                  >
-                  
-                  <button 
-                    v-if="getElementType(entry.key) === 'Text'"
-                    type="button"
-                    class="btn-icon-only"
-                    style="height: 32px; width: 32px; min-width: 32px; font-size: 0.9rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
-                    title="Edició complexa en Markdown + Jinja2"
-                    @click="openCellEditor(item, entry.key)"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Child Hierarchies -->
-          <!-- parentPath must be the SCHEMA-level path (fullPath, e.g. "pres.parts"), not
-               getItemPath(idx, '') (e.g. "pres.parts.0") — the row's own data object is
-               already passed correctly via :parentObj="item", but the *group* identifier
-               used for editor_metadata/schema lookups must stay shared across every row of
-               this table, not be forked per row index. -->
-          <template v-for="cKey in childKeys" :key="cKey">
-            <NestedDataNode
-              :parentObj="item"
-              :arrayKey="cKey"
-              :schema="childSchemas[cKey] || { fields: [], children: {} }"
-              :parentPath="fullPath"
-            />
-          </template>
+          <NestedItemForm
+            :item="item"
+            :idx="idx"
+            :full-path="fullPath"
+            :child-keys="childKeys"
+            :child-schemas="childSchemas"
+            :nesting-depth="nestingDepth"
+            :helpers="itemFormHelpers"
+          />
         </div>
       </div>
     </div>
   </template>
+
+  <!-- Row Edit Modal (see showReadOnlyTable/openRowEditModal above) -->
+  <div class="modal-overlay" v-if="isRowEditModalOpen" :style="{ display: 'flex', zIndex: rowEditModalZIndex }">
+    <div class="modal-content" style="max-width: 900px; width: 95vw; max-height: 90vh; display: flex; flex-direction: column;">
+      <div class="modal-header" style="flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding: 0.75rem 1rem;">
+        <h3 style="margin: 0; font-size: 1rem;">
+          Edita <strong style="color: var(--color-primary);">{{ getGroupLabel(arrayKey) }} #{{ activeEditRowIndex + 1 }}</strong>
+        </h3>
+        <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isRowEditModalOpen = false">&times;</button>
+      </div>
+      <div class="modal-body" style="flex: 1; min-height: 0; overflow-y: auto; padding: 0.75rem 1rem;">
+        <NestedItemForm
+          v-if="items[activeEditRowIndex]"
+          :item="items[activeEditRowIndex]"
+          :idx="activeEditRowIndex"
+          :full-path="fullPath"
+          :child-keys="childKeys"
+          :child-schemas="childSchemas"
+          :nesting-depth="nestingDepth"
+          :helpers="itemFormHelpers"
+        />
+      </div>
+      <div class="modal-footer" style="flex-shrink: 0; display: flex; justify-content: flex-end; border-top: 1px solid var(--border-color); padding-top: 0.5rem;">
+        <button type="button" class="btn btn-secondary" style="width: auto;" @click="isRowEditModalOpen = false">Tanca</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Group Config Modal -->
   <GroupConfigModal
@@ -1802,6 +1809,10 @@ const getItemPath = (idx, fieldKey) => {
     :groupLabel="groupLabelInput"
     :selectedLayout="selectedLayout"
     :itemTitleFormula="getItemTitleFormula(arrayKey)"
+    :isTabular="true"
+    :isLeafTabular="isLeafLevel"
+    :viewMode="effectiveViewMode"
+    :visibleColumns="visibleColumnsForTable"
     @save="handleSaveGroupConfig"
   />
 

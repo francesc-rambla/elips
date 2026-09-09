@@ -22,7 +22,7 @@ import { useWorkspaceStore } from '../stores/workspace';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { isPrimitive, isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
 import { builtinFunctions, useFormulaAutocomplete } from '../composables/useFormulaAutocomplete';
-import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, saveGroupConfig as saveGroupConfigShared } from '../composables/useGroupMetadata';
+import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, saveGroupConfig as saveGroupConfigShared, getGroupViewMode, getVisibleColumns } from '../composables/useGroupMetadata';
 import NestedDataNode from './NestedDataNode.vue';
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
@@ -843,6 +843,20 @@ const isConfigModalOpen = ref(false);
 const activeConfigGroup = ref('');
 const groupConfigList = ref([]);
 const groupLabelInput = ref('');
+// Vista (taula/formulari) config for the group currently open in
+// GroupConfigModal -- only meaningful for tabular sheets (kv sheets leave
+// these at their defaults, GroupConfigModal hides the whole section when
+// isTabular is false). Root sheets are always delegated to
+// NestedDataNode.vue now (see the template dispatch below), which has its
+// OWN "Configura" button/modal instance computing these reactively; this
+// header-row button opens a SEPARATE modal instance, so it must compute
+// the SAME effective values itself -- otherwise saving through this button
+// would silently wipe out whatever was configured via the other one (every
+// save rewrites the whole _group_label metadata row from scratch).
+const activeConfigIsTabular = ref(false);
+const activeConfigIsLeafTabular = ref(true);
+const activeConfigViewMode = ref('');
+const activeConfigVisibleColumns = ref([]);
 
 // Embolcall sobre groupLabel de useGroupMetadata.js
 const getGroupLabel = (groupName) => groupLabel(store, groupName);
@@ -996,7 +1010,12 @@ const openGroupConfig = (groupName, sheetData) => {
 
   const isKv = getSheetType(sheetData) === 'kv';
   const elements = isKv ? Object.keys(sheetData).filter(k => !isInternalMetadataKey(k)) : getTabularColumns(groupName, sheetData);
-  
+
+  activeConfigIsTabular.value = !isKv;
+  activeConfigIsLeafTabular.value = !isKv && !rootTabularHasNestedChildren(groupName, sheetData);
+  activeConfigViewMode.value = !isKv ? getGroupViewMode(store, groupName, activeConfigIsLeafTabular.value ? 'table' : 'form') : '';
+  activeConfigVisibleColumns.value = !isKv ? getVisibleColumns(store, groupName, elements) : [];
+
   groupConfigList.value = elements.map(el => {
     const meta = getElementMetadata(groupName, el) || { type: 'Text' };
     return {
@@ -1961,6 +1980,10 @@ onMounted(() => {
       :groupLabel="groupLabelInput"
       :selectedLayout="selectedLayout"
       :itemTitleFormula="getItemTitleFormula(activeConfigGroup)"
+      :isTabular="activeConfigIsTabular"
+      :isLeafTabular="activeConfigIsLeafTabular"
+      :viewMode="activeConfigViewMode"
+      :visibleColumns="activeConfigVisibleColumns"
       @save="handleSaveGroupConfig"
       @copyGroup="copyGroupConfig"
       @pasteGroup="pasteGroupConfig"

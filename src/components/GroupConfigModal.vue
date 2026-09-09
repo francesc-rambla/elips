@@ -29,7 +29,17 @@ const props = defineProps({
   configList: { type: Array, default: () => [] },
   groupLabel: { type: String, default: '' },
   selectedLayout: { type: String, default: 'vertical' },
-  itemTitleFormula: { type: String, default: '' }
+  itemTitleFormula: { type: String, default: '' },
+  // Vista (taula / formulari) -- only meaningful for tabular (array) groups;
+  // a kv group is always a plain form, so this whole section stays hidden
+  // for it (see isTabular in the template). isLeafTabular decides which of
+  // the two modes needs the column-visibility picker: a leaf group's
+  // read-only table appears in 'form' mode, an intermediate group's in
+  // 'table' mode -- see NestedDataNode.vue's own showReadOnlyTable.
+  isTabular: { type: Boolean, default: false },
+  isLeafTabular: { type: Boolean, default: true },
+  viewMode: { type: String, default: '' },
+  visibleColumns: { type: Array, default: () => [] }
 });
 
 const emit = defineEmits(['update:modelValue', 'save', 'copyGroup', 'pasteGroup']);
@@ -40,7 +50,27 @@ const localGroupLabel = ref('');
 const localSelectedLayout = ref('vertical');
 const localItemTitleFormula = ref('');
 const localConfigList = ref([]);
+const localViewMode = ref('table');
+const localVisibleColumns = ref([]);
 const isVisualGridModalOpen = ref(false);
+
+// The column-visibility picker below only makes sense while this group's
+// current combination actually shows a read-only table -- exactly
+// NestedDataNode.vue's own showReadOnlyTable condition (leaf-in-form-mode,
+// or intermediate-in-table-mode).
+const showColumnPicker = computed(() => props.isTabular && (
+  (props.isLeafTabular && localViewMode.value === 'form') ||
+  (!props.isLeafTabular && localViewMode.value === 'table')
+));
+
+const toggleColumnVisible = (element) => {
+  const idx = localVisibleColumns.value.indexOf(element);
+  if (idx === -1) {
+    localVisibleColumns.value.push(element);
+  } else {
+    localVisibleColumns.value.splice(idx, 1);
+  }
+};
 
 // Formula Modal State - declared below near helper functions
 
@@ -83,6 +113,8 @@ watch(() => props.modelValue, (newVal) => {
     localGroupLabel.value = props.groupLabel || '';
     localSelectedLayout.value = props.selectedLayout || 'vertical';
     localItemTitleFormula.value = props.itemTitleFormula || '';
+    localViewMode.value = (props.viewMode === 'table' || props.viewMode === 'form') ? props.viewMode : (props.isLeafTabular ? 'table' : 'form');
+    localVisibleColumns.value = [...(props.visibleColumns || [])];
     localConfigList.value = (props.configList || []).map(item => {
       let fn = item.calcFn;
       const isCalc = item.isCalculated === true || 
@@ -214,12 +246,25 @@ const handleSave = () => {
     return copy;
   });
 
-  emit('save', {
+  const savePayload = {
     groupLabel: localGroupLabel.value,
     selectedLayout: localSelectedLayout.value,
     itemTitleFormula: localItemTitleFormula.value,
     configList: cleanedList
-  });
+  };
+  // viewMode/visibleColumns only apply to tabular groups -- omitted
+  // entirely for a kv group rather than writing meaningless values.
+  if (props.isTabular) {
+    savePayload.viewMode = localViewMode.value;
+    // All fields selected == unrestricted: an empty array here means
+    // saveGroupConfig leaves visibleColumns unset (see its own doc
+    // comment), so a field added to the group later is never silently
+    // hidden just because it didn't exist when some OTHER field was
+    // restricted.
+    savePayload.visibleColumns = localVisibleColumns.value.length === cleanedList.length ? [] : [...localVisibleColumns.value];
+  }
+
+  emit('save', savePayload);
   closeModal();
 };
 
@@ -500,6 +545,41 @@ const openFormulaEditor = (item) => {
                 <option value="vertical">Vertical (Llista)</option>
                 <option value="horizontal">Horitzontal (Graella)</option>
               </select>
+            </div>
+
+            <!-- Vista (taula / formulari) -- only for tabular (array) groups -->
+            <div v-if="isTabular" style="display: flex; align-items: center; gap: 8px;">
+              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-primary); white-space: nowrap;">Vista:</label>
+              <select v-model="localViewMode" class="data-input" style="height: 28px; font-size: 0.78rem; width: 140px;">
+                <option value="table">Taula</option>
+                <option value="form">Formulari</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Column visibility picker -- only when the current Vista choice
+               implies a read-only table (see showColumnPicker's own doc
+               comment). -->
+          <div v-if="showColumnPicker" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--bg-primary); padding: 6px 10px; border-radius: var(--radius-xs); border: 1px solid var(--border-color);">
+            <div style="display: flex; align-items: center; gap: 6px; min-width: 200px;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="21"/></svg>
+              <label style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary); white-space: nowrap;" title="Columnes que es mostren a la taula de només lectura">
+                Columnes visibles:
+              </label>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex-grow: 1;">
+              <label
+                v-for="item in localConfigList"
+                :key="item.element"
+                style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem; cursor: pointer; user-select: none;"
+              >
+                <input
+                  type="checkbox"
+                  :checked="localVisibleColumns.includes(item.element)"
+                  @change="toggleColumnVisible(item.element)"
+                />
+                {{ item.label || item.element }}
+              </label>
             </div>
           </div>
 

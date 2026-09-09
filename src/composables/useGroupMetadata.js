@@ -96,6 +96,44 @@ export function isInternalMetadataKey(key) {
   return key.startsWith('_') || key === 'editor_metadata' || key === 'editormetadata';
 }
 
+/**
+ * The effective view mode ('table' | 'form') for a tabular group, read from
+ * its `_group_label` header row. `defaultMode` (always computed by the
+ * caller, typically `isLeaf ? 'table' : 'form'`) is returned unchanged when
+ * nothing has been configured yet, preserving today's implicit
+ * leaf-vs-intermediate behaviour exactly. `extraGroupNames` follows the same
+ * tolerance `groupLabel` above already has (NestedDataNode.vue's own short
+ * `arrayKey` alongside the full dotted path).
+ */
+export function getGroupViewMode(store, groupPath, defaultMode, extraGroupNames = []) {
+  if (!groupPath || !store.editorMetadata) return defaultMode;
+  const candidates = [groupPath, groupPath.split('.').pop(), ...extraGroupNames];
+  const meta = store.editorMetadata.find(m =>
+    m && candidates.includes(m.group) && (m.element === '_group_label' || m.element === '_group' || m.isGroupHeader)
+  );
+  return (meta && (meta.viewMode === 'table' || meta.viewMode === 'form')) ? meta.viewMode : defaultMode;
+}
+
+/**
+ * The subset of `allFields` configured as visible for a group's read-only
+ * table view (see `getGroupViewMode`'s doc for when that table is shown).
+ * Returns `allFields` unchanged when no restriction has ever been saved (or
+ * everything is selected) -- a field added to the group later is then never
+ * silently hidden just because it didn't exist at the time some OTHER field
+ * was restricted.
+ */
+export function getVisibleColumns(store, groupPath, allFields, extraGroupNames = []) {
+  if (!groupPath || !store.editorMetadata) return allFields;
+  const candidates = [groupPath, groupPath.split('.').pop(), ...extraGroupNames];
+  const meta = store.editorMetadata.find(m =>
+    m && candidates.includes(m.group) && (m.element === '_group_label' || m.element === '_group' || m.isGroupHeader)
+  );
+  if (meta && Array.isArray(meta.visibleColumns) && meta.visibleColumns.length > 0) {
+    return allFields.filter(f => meta.visibleColumns.includes(f));
+  }
+  return allFields;
+}
+
 /** True if the field's metadata marks it as calculated (Computed type, calcFn, or a row-level formula). */
 export function isFieldCalculated(store, groupPath, elementName) {
   const meta = findElementMetadata(store, groupPath, elementName);
@@ -251,6 +289,15 @@ export async function saveGroupConfig(store, { groupPath, legacyGroupNames = [],
   };
   if (data.groupLabel && data.groupLabel.trim()) {
     groupMeta.label = data.groupLabel.trim();
+  }
+  // viewMode/visibleColumns only apply to tabular (array) groups --
+  // GroupConfigModal omits them entirely from `data` for a kv group, so
+  // they're simply absent from groupMeta rather than written as undefined.
+  if (data.viewMode === 'table' || data.viewMode === 'form') {
+    groupMeta.viewMode = data.viewMode;
+  }
+  if (Array.isArray(data.visibleColumns) && data.visibleColumns.length > 0) {
+    groupMeta.visibleColumns = data.visibleColumns;
   }
   store.editorMetadata.push(groupMeta);
 
