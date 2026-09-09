@@ -41,6 +41,14 @@ jobs:
           # després hi copia el contingut ja validat de pre/ tal qual.
           find . -maxdepth 1 -mindepth 1 ! -name 'pre' ! -name '.git' -exec rm -rf {} +
           cp -a pre/. .
+          # El pas anterior esborra qualsevol .nojekyll que hi hagués a l'arrel
+          # i pre/ no en conté cap (ni la construcció de Vite ni destination_dir
+          # de peaceiris el situen a l'arrel real de la branca, que és l'únic
+          # lloc que GitHub Pages consulta). Sense ell, GitHub Pages processa
+          # el lloc amb Jekyll i falla en trobar sintaxi Jinja2 ({% for %},
+          # etc.) dins manual.md/index.html, deixant en producció l'última
+          # build que sí que va reeixir.
+          touch .nojekyll
 
       - name: Confirmar i pujar
         run: |
