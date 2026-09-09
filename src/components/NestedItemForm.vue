@@ -165,6 +165,22 @@ const store = useWorkspaceStore();
             style="flex-grow: 1; height: 32px;"
           >
 
+          <!-- Percentage Type -->
+          <div v-else-if="helpers.getElementType(entry.key) === 'Percentage'" style="display: flex; align-items: center; flex-grow: 1; position: relative;">
+            <input
+              :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
+              :data-path="helpers.getItemPath(idx, entry.key)"
+              type="text"
+              inputmode="decimal"
+              :value="helpers.formatPercentageDisplay(item[entry.key])"
+              @input="helpers.updatePercentageValue(item, entry.key, $event.target.value)"
+              class="data-input"
+              style="flex-grow: 1; height: 32px; padding-right: 24px;"
+              placeholder="0"
+            >
+            <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.82rem; color: var(--text-muted); pointer-events: none;">%</span>
+          </div>
+
           <!-- Currency Type -->
           <div v-else-if="helpers.getElementType(entry.key) === 'Currency'" style="display: flex; align-items: center; gap: 4px; flex-grow: 1;">
             <input

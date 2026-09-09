@@ -719,6 +719,11 @@ const openRowEditModal = (idx) => {
   isRowEditModalOpen.value = true;
 };
 const rowEditModalZIndex = computed(() => 1300 + props.nestingDepth * 10);
+// Also the base for the cell-editor/multi-select/move-to-parent modals
+// below (their own z-index is rowEditModalZIndex + 5): those can all be
+// opened from a field INSIDE this row-edit modal (via NestedItemForm), and
+// need to render above it -- a fixed z-index (they used to have 1100, none)
+// would sit BEHIND the row-edit modal (>= 1300) once nested this deep.
 
 const handleNestedKeydown = (e) => {
   if (isMultiSelectModalOpen.value) {
@@ -1387,6 +1392,7 @@ const itemFormHelpers = {
   getFieldCardStyle,
   getItemRowBlocks,
   formatPercentageDisplay,
+  updatePercentageValue,
   formatCurrencyDisplay
 };
 </script>
@@ -1896,7 +1902,7 @@ const itemFormHelpers = {
 
   <!-- Row Edit Modal (see showReadOnlyTable/openRowEditModal above) -->
   <div class="modal-overlay" v-if="isRowEditModalOpen" :style="{ display: 'flex', zIndex: rowEditModalZIndex }">
-    <div class="modal-content" style="max-width: 900px; width: 95vw; max-height: 90vh; display: flex; flex-direction: column;">
+    <div class="modal-content" style="width: 75vw; max-width: 75vw; max-height: 90vh; display: flex; flex-direction: column;">
       <div class="modal-header" style="flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding: 0.75rem 1rem;">
         <h3 style="margin: 0; font-size: 1rem;">
           Edita <strong style="color: var(--color-primary);">{{ getGroupLabel(arrayKey) }} #{{ activeEditRowIndex + 1 }}</strong>
@@ -1944,7 +1950,7 @@ const itemFormHelpers = {
     />
 
     <!-- Cell Text / Markdown + Jinja2 Visual Editor Modal -->
-    <div class="modal-overlay" v-if="isCellModalOpen" style="display: flex; z-index: 1100;">
+    <div class="modal-overlay" v-if="isCellModalOpen" :style="{ display: 'flex', zIndex: rowEditModalZIndex + 5 }">
       <div class="modal-content" style="max-width: 1200px; width: 98%; height: 90vh; display: flex; flex-direction: column;">
         <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
           <h3 style="border: none; padding-bottom: 0; margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 6px;">
@@ -1966,7 +1972,7 @@ const itemFormHelpers = {
     </div>
 
     <!-- Dynamic Multi-Select Options Modal -->
-    <div class="modal-overlay" v-if="isMultiSelectModalOpen" style="display: flex; z-index: 1100;">
+    <div class="modal-overlay" v-if="isMultiSelectModalOpen" :style="{ display: 'flex', zIndex: rowEditModalZIndex + 5 }">
       <div class="modal-content" style="max-width: 450px; width: 90%; max-height: 70vh; display: flex; flex-direction: column;">
         <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
           <h3 style="border: none; padding-bottom: 0; margin: 0; font-size: 1.05rem;">
@@ -2005,7 +2011,7 @@ const itemFormHelpers = {
     </div>
 
     <!-- Modal for Moving Item to Another Parent -->
-    <div class="modal-overlay" :style="{ display: isMoveModalOpen ? 'flex' : 'none' }">
+    <div class="modal-overlay" :style="{ display: isMoveModalOpen ? 'flex' : 'none', zIndex: rowEditModalZIndex + 5 }">
       <div class="modal-content" style="max-width: 450px;">
         <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; margin-bottom: 0.75rem;">
           <h4 style="margin: 0; border: none; font-size: 0.95rem; font-weight: 700;">↔️ Traslladar element {{ arrayKey }}</h4>
