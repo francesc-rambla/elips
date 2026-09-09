@@ -262,7 +262,7 @@ async function runE2ETests() {
         for (const h of headers) {
           let node = h;
           for (let i = 0; i < 8 && node; i++) {
-            const btn = node.querySelector && Array.from(node.querySelectorAll('button')).find(b => b.title === 'Afegeix una nova fila a la taula');
+            const btn = node.querySelector && Array.from(node.querySelectorAll('button')).find(b => b.title === 'Afegeix Mesa');
             if (btn) { btn.click(); return true; }
             node = node.parentElement;
           }
