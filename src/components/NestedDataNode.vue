@@ -1413,7 +1413,7 @@ const itemFormHelpers = {
               <th v-for="col in visibleColumnsForTable" :key="col" style="padding: 6px 8px; text-align: left; border-bottom: 2px solid var(--border-color); font-weight: 600;">
                 {{ getFieldLabel(col) }}
               </th>
-              <th style="width: 60px; text-align: center; border-bottom: 2px solid var(--border-color);">Accions</th>
+              <th style="width: 190px; text-align: center; border-bottom: 2px solid var(--border-color);">Accions</th>
             </tr>
           </thead>
           <tbody>
@@ -1422,15 +1422,66 @@ const itemFormHelpers = {
                 {{ readOnlyCellDisplay(row, col) }}
               </td>
               <td style="padding: 4px 6px; border-bottom: 1px solid var(--border-color); text-align: center;">
-                <button
-                  type="button"
-                  class="btn-icon-only"
-                  style="height: 26px; width: 26px; min-width: 26px; font-size: 0.8rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
-                  title="Edita aquest element"
-                  @click="openRowEditModal(rIdx)"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-                </button>
+                <div style="display: flex; align-items: center; justify-content: center; gap: 3px;">
+                  <button
+                    type="button"
+                    class="btn-icon-only"
+                    style="height: 26px; width: 26px; min-width: 26px; font-size: 0.8rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
+                    title="Edita aquest element"
+                    @click="openRowEditModal(rIdx)"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-icon-only"
+                    :disabled="rIdx === 0"
+                    style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--border-color); border-radius: 3px;"
+                    :style="{ opacity: rIdx === 0 ? 0.35 : 1, cursor: rIdx === 0 ? 'not-allowed' : 'pointer' }"
+                    title="Desplaça fila amunt"
+                    @click="moveLeafRowUp(rIdx)"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-icon-only"
+                    :disabled="rIdx === visibleItems.length - 1"
+                    style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--border-color); border-radius: 3px;"
+                    :style="{ opacity: rIdx === visibleItems.length - 1 ? 0.35 : 1, cursor: rIdx === visibleItems.length - 1 ? 'not-allowed' : 'pointer' }"
+                    title="Desplaça fila avall"
+                    @click="moveLeafRowDown(rIdx)"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-icon-only"
+                    style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+                    title="Duplica fila"
+                    @click="duplicateNestedItem(rIdx)"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-icon-only"
+                    style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+                    title="Trasllada fila a un altre pare"
+                    @click="openMoveModal(rIdx)"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 21 7 17 3"/><line x1="21" y1="7" x2="9" y2="7"/><polyline points="7 21 3 17 7 13"/><line x1="3" y1="17" x2="15" y2="17"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-icon-only text-danger"
+                    style="height: 24px; width: 24px; min-width: 24px; font-size: 0.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none;"
+                    title="Elimina aquest element"
+                    @click="deleteNestedItem(rIdx)"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
