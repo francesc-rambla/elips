@@ -547,11 +547,33 @@ const computeHighlightDecorations = (text, collapsedRanges = []) => {
 // the tokenizer above, so the raw "#"/"**"/"-" characters stay visible and
 // editable, just no longer plain monospace text. Visual-tab only (added to
 // createVisualCodeMirrorView's extensions, not Codi's) -- Codi keeps
-// today's plain syntax-highlighting look. Hiding the markers themselves
-// when the cursor is elsewhere is a later, optional refinement, not
-// required for this phase.
+// today's plain syntax-highlighting look.
+//
+// Follow-up: the leading "#{1,6} " marker of a heading line is additionally
+// replaced by a small "TN" chip (matching what the old canvas-based editor
+// showed), the same Decoration.replace + atomicRanges pattern as
+// VarChipWidget above -- the raw "#" characters stay exactly where they are
+// in the document, only their on-screen appearance changes. Changing a
+// line's heading level is still done via the toolbar's "Format de
+// paràgraf" dropdown (formatBlock), not by editing the chip itself.
 const MD_STYLE_TOKEN_RE = /(^#{1,6}\s.*$)|(\*\*[^\n*]+\*\*)|(\*[^\n*]+\*)/gm;
 const MD_LIST_MARKER_RE = /^\s*(?:[-*+]|\d+\.)\s+/gm;
+
+class HeadingMarkerWidget extends CmWidgetType {
+  constructor(level) {
+    super();
+    this.level = level;
+  }
+  toDOM() {
+    const span = document.createElement('span');
+    span.className = 'cm-heading-marker-chip';
+    span.textContent = `T${this.level}`;
+    span.title = `Títol ${this.level}`;
+    return span;
+  }
+  eq(other) { return other.level === this.level; }
+  ignoreEvent() { return true; }
+}
 
 const computeMarkdownStyleDecorations = (text, collapsedRanges = []) => {
   const decos = [];
@@ -562,7 +584,12 @@ const computeMarkdownStyleDecorations = (text, collapsedRanges = []) => {
     if (full.length === 0) { MD_STYLE_TOKEN_RE.lastIndex++; continue; }
     if (isInsideAnyRange(m.index, collapsedRanges)) continue;
     let cls = '';
-    if (header) cls = `cm-md-heading cm-md-h${header.match(/^#{1,6}/)[0].length}`;
+    if (header) {
+      const level = header.match(/^#{1,6}/)[0].length;
+      cls = `cm-md-heading cm-md-h${level}`;
+      const markerLen = header.match(/^#{1,6}\s/)[0].length;
+      decos.push(CmDecoration.replace({ widget: new HeadingMarkerWidget(level) }).range(m.index, m.index + markerLen));
+    }
     else if (bold) cls = 'cm-md-bold';
     else if (italic) cls = 'cm-md-italic';
     if (cls) decos.push(CmDecoration.mark({ class: cls }).range(m.index, m.index + full.length));
@@ -587,6 +614,9 @@ const markdownStylePlugin = CmViewPlugin.fromClass(class {
   }
 }, {
   decorations: (v) => v.decorations,
+  // Skipping over the "TN" chip as one unit on arrow-key motion / backspace
+  // -- same reasoning as varChipPlugin below.
+  provide: (plugin) => CmEditorView.atomicRanges.of((view) => view.plugin(plugin)?.decorations || CmDecoration.none),
 });
 
 // Phase C of the Visual-editor rewrite: {{ expr | filters }} rendered as an
@@ -4519,6 +4549,25 @@ body.dark-theme .code-editor-wrapper .cm-content {
 .cm-md-bold { font-weight: 700; }
 .cm-md-italic { font-style: italic; }
 .cm-md-list-marker { color: var(--color-primary); font-weight: 700; }
+
+.cm-heading-marker-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 0 5px;
+  height: 16px;
+  line-height: 16px;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  margin-right: 5px;
+  vertical-align: middle;
+  user-select: none;
+}
 
 /* Jinja block tag matching (open/elif/else/close), highlighted as a family
    whenever the caret touches one of them -- the same UX as bracket matching
