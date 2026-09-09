@@ -90,7 +90,11 @@ export const useWorkspaceStore = defineStore('workspace', {
     debugComputedFields: (() => {
       return localStorage.getItem('debugComputedFields') === 'true';
     })(),
-    
+    previewViewMode: (() => {
+      const v = localStorage.getItem('previewViewMode');
+      return ['markdown', 'html', 'both'].includes(v) ? v : 'both';
+    })(),
+
     // Active Tool Action Handlers (for super-toolbar integration)
     editorActions: {
       switchEditorTab: null,
@@ -160,6 +164,13 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.activeTab = tab;
         const pName = localStorage.getItem('currentProjectName') || 'Default';
         localStorage.setItem(`${pName}:activeTab`, tab);
+      }
+    },
+
+    setPreviewViewMode(mode) {
+      if (['markdown', 'html', 'both'].includes(mode)) {
+        this.previewViewMode = mode;
+        localStorage.setItem('previewViewMode', mode);
       }
     },
 

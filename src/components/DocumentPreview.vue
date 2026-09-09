@@ -206,9 +206,9 @@ const copyMd = () => {
 </script>
 
 <template>
-  <div class="preview-container">
+  <div class="preview-container" :style="{ gridTemplateColumns: store.previewViewMode === 'both' ? '1fr 1fr' : '1fr' }">
     <!-- Visual HTML Rendering -->
-    <div class="preview-pane">
+    <div v-if="store.previewViewMode !== 'markdown'" class="preview-pane">
       <div class="preview-header">
         <span>Document Formatat</span>
         <span style="font-size: 0.75rem; color: var(--color-success)">Previsualització HTML (Interactiva)</span>
@@ -224,7 +224,7 @@ const copyMd = () => {
     </div>
     
     <!-- Raw Markdown Text -->
-    <div class="preview-pane">
+    <div v-if="store.previewViewMode !== 'html'" class="preview-pane">
       <div class="preview-header">
         <span>Codi Markdown (.md)</span>
         <button 

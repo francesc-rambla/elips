@@ -214,6 +214,18 @@ header {
   box-shadow: 0 -2px 5px rgba(0, 0, 0, 0.03);
 }
 
+/* Segmented-control "pressed" state (Visual/Codi editor switcher, Data tab's
+   Complet/Compacte toggle, the new Previsualització Markdown/HTML/Ambdós
+   toggle...). !important is needed because every .btn-segment button
+   carries an inline background:transparent (see the many inline-styled
+   segmented-control instances across App.vue/TemplateEditor.vue) -- an
+   !important stylesheet rule is the only thing that wins over that. */
+.btn-segment.active {
+  background-color: var(--color-primary) !important;
+  color: white !important;
+  font-weight: 600;
+}
+
 /* MS Office Ribbon Tool Content Group Styling */
 .office-tools-bar {
   background-color: var(--bg-tertiary);
