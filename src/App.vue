@@ -20,7 +20,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useWorkspaceStore } from './stores/workspace';
 import { useWasmEngines } from './composables/useWasmEngines';
-import { saveBinaryFile, getBinaryFile, deleteBinaryFile } from './utils/db';
+import { saveBinaryFile, getBinaryFile, deleteBinaryFile, deleteDbItem } from './utils/db';
 
 import { useVersionHistory } from './composables/useVersionHistory';
 
@@ -41,6 +41,8 @@ const {
   historyData,
   isHistoryModalOpen,
   loadHistory,
+  resetHistoryState,
+  reconstructStateForEntry,
   createSnapshot,
   recordChangeDiff,
   triggerDebouncedRecord,
@@ -222,7 +224,7 @@ const openProjectsModal = () => {
 };
 
 // Crea un projecte nou en blanc: desa l'estat actual, neteja l'store i inicialitza la persistència del projecte nou
-const createNewProject = () => {
+const createNewProject = async () => {
   const name = prompt("Introdueix el nom del nou projecte:");
   if (!name) return;
   const cleanName = name.trim();
@@ -259,7 +261,8 @@ const createNewProject = () => {
   // Set as current project
   currentProjectName.value = cleanName;
   localStorage.setItem('currentProjectName', cleanName);
-  
+  resetHistoryState();
+
   // Initialize documents list for new project
   documentsList.value = ['Document Principal'];
   localStorage.setItem(`${cleanName}:documentsList`, JSON.stringify(['Document Principal']));
@@ -272,7 +275,7 @@ const createNewProject = () => {
   saveCurrentDocumentState(cleanName, 'Document Principal');
   
   // Initialize version history baseline for new project
-  loadHistory();
+  await loadHistory();
   if (historyData.value.length === 0) {
     createSnapshot('init', 'Punt de control inicial del projecte');
   }
@@ -298,7 +301,8 @@ const loadProject = async (name) => {
   
   currentProjectName.value = name;
   localStorage.setItem('currentProjectName', name);
-  
+  resetHistoryState();
+
   const list = localStorage.getItem(`${name}:documentsList`);
   documentsList.value = list ? JSON.parse(list) : ['Document Principal'];
   localStorage.setItem(`${name}:documentsList`, JSON.stringify(documentsList.value));
@@ -380,7 +384,7 @@ const loadProject = async (name) => {
   loadDocumentConfig(name, aDoc);
 
   // Load version history timeline for target project
-  loadHistory();
+  await loadHistory();
   if (historyData.value.length === 0) {
     createSnapshot('init', 'Punt de control inicial de la sessió');
   }
@@ -425,6 +429,7 @@ const deleteProject = (name) => {
   localStorage.removeItem(`${name}:sheetInfo`);
   localStorage.removeItem(`${name}:hierarchySchema`);
   localStorage.removeItem(`${name}:version_history_v1`);
+  deleteDbItem(`${name}:version_history_v1`);
   deleteBinaryFile(`${name}:excelFileBuffer`);
   
   // Remove from list
@@ -898,6 +903,7 @@ const importProjectZip = async (file) => {
     }
     currentProjectName.value = pName;
     localStorage.setItem('currentProjectName', pName);
+    resetHistoryState();
 
     const docsList = manifest.documentsList || ['Document Principal'];
     documentsList.value = docsList;
@@ -1698,6 +1704,10 @@ const generateDocuments = async () => {
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             <span v-if="store.config.showButtonTexts">Desar fitxers</span>
           </button>
+          <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; width: auto; height: 26px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" @click="isHistoryModalOpen = true" title="📜 Navegador d'Històric de versions, diferencials i punts de control">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span v-if="store.config.showButtonTexts">Històric</span>
+          </button>
         </div>
         
         <div class="header-actions">
@@ -2153,22 +2163,6 @@ const generateDocuments = async () => {
             </button>
           </div>
           <div class="ribbon-group-label">VERIFICACIÓ</div>
-        </div>
-
-        <!-- Group: Històric i Versions (Always accessible) -->
-        <div class="ribbon-group-card">
-          <div class="ribbon-group-body" style="display: flex; align-items: center; gap: 6px; height: 60px;">
-            <button 
-              class="btn btn-secondary" 
-              style="padding: 4px 10px; font-size: 0.72rem; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;"
-              @click="isHistoryModalOpen = true"
-              title="📜 Navegador d'Històric de versions, diferencials i punts de control"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              <span v-if="store.config.showButtonTexts" style="font-weight: 700;">Històric</span>
-            </button>
-          </div>
-          <div class="ribbon-group-label">HISTÒRIC</div>
         </div>
       </template>
 
@@ -3061,11 +3055,12 @@ const generateDocuments = async () => {
     </div>
 
     <!-- Version History Navigator Modal -->
-    <VersionHistoryModal 
+    <VersionHistoryModal
       :is-open="isHistoryModalOpen"
       :history-data="historyData"
+      :reconstruct-state="reconstructStateForEntry"
       @close="isHistoryModalOpen = false"
-      @restore="restoreVersion($event.entry, $event.mode)"
+      @restore="restoreVersion($event.state, $event.mode, $event.displayTime)"
       @create-snapshot="createSnapshot('manual', $event)"
     />
 

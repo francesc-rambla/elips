@@ -17,12 +17,18 @@
 -->
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 
 const props = defineProps({
   isOpen: { type: Boolean, default: false },
-  historyData: { type: Array, default: () => [] }
+  historyData: { type: Array, default: () => [] },
+  // Resolves ANY timeline entry (baseline directly, or a diff by replaying
+  // its dataPatch chain) to a full {templateText, excelJsonData,
+  // editorMetadata} -- see useVersionHistory.js's reconstructStateForEntry,
+  // passed down as-is so this component never needs its own copy of the
+  // reconstruction logic.
+  reconstructState: { type: Function, required: true }
 });
 
 const emit = defineEmits(['close', 'restore', 'createSnapshot']);
@@ -31,28 +37,32 @@ const store = useWorkspaceStore();
 const selectedEntryId = ref(null);
 const activeFilter = ref('all'); // 'all', 'hourly', 'manual'
 const customNoteInput = ref('');
+const showFullDataJson = ref(false);
 
-// Flatten snapshots and their diffs into a unified chronological timeline
+// Flatten snapshots and their diffs into a unified chronological timeline.
+// Lightweight by design: a diff entry only carries its own diff ops
+// (textDiff/dataPatch/metaDiff) plus templateText/editorMetadata (still
+// stored in full per entry -- see useVersionHistory.js's own scoping note)
+// for direct display; excelJsonData is only ever reconstructed on demand
+// (see reconstructedFullState below), never carried per list item.
 const timelineEntries = computed(() => {
   const list = [];
   (props.historyData || []).forEach(snap => {
     // Add baseline snapshot
     list.push({
       id: snap.id,
-      parentId: snap.id,
+      snapId: snap.id,
+      diffId: null,
       timestamp: snap.timestamp,
       displayTime: snap.displayTime,
       type: snap.type || 'hourly',
       isSnapshot: true,
-      note: snap.note || 'Còpia d horària automàtica',
-      snapshotState: {
-        templateText: snap.templateText,
-        excelJsonData: snap.excelJsonData,
-        editorMetadata: snap.editorMetadata
-      },
-      hasText: !!snap.templateText,
-      hasData: !!(snap.excelJsonData && Object.keys(snap.excelJsonData).length > 0),
-      hasSchema: !!(snap.editorMetadata && snap.editorMetadata.length > 0)
+      note: snap.note || 'Còpia horària automàtica',
+      templateText: snap.templateText || '',
+      editorMetadata: snap.editorMetadata || [],
+      textDiff: null,
+      dataPatch: null,
+      metaDiff: null
     });
 
     // Add diffs belonging to this snapshot
@@ -60,19 +70,21 @@ const timelineEntries = computed(() => {
       snap.diffs.forEach(diff => {
         list.push({
           id: diff.id,
-          parentId: snap.id,
+          snapId: snap.id,
+          diffId: diff.id,
           timestamp: diff.timestamp,
           displayTime: diff.displayTime,
           type: 'diff',
           isSnapshot: false,
           note: diff.note || 'Diferencial de canvis',
+          // Backward compatibility: history saved before diff-based storage
+          // still has a full snapshotState per diff instead of templateText/
+          // editorMetadata fields of its own.
+          templateText: diff.templateText ?? diff.snapshotState?.templateText ?? '',
+          editorMetadata: diff.editorMetadata ?? diff.snapshotState?.editorMetadata ?? [],
           textDiff: diff.textDiff,
-          dataDiff: diff.dataDiff,
-          metaDiff: diff.metaDiff,
-          snapshotState: diff.snapshotState,
-          hasText: !!(diff.snapshotState && diff.snapshotState.templateText),
-          hasData: !!(diff.snapshotState && diff.snapshotState.excelJsonData),
-          hasSchema: !!(diff.snapshotState && diff.snapshotState.editorMetadata)
+          dataPatch: diff.dataPatch,
+          metaDiff: diff.metaDiff
         });
       });
     }
@@ -99,6 +111,30 @@ const selectedEntry = computed(() => {
   return timelineEntries.value.find(e => e.id === selectedEntryId.value) || filteredEntries.value[0] || null;
 });
 
+watch(selectedEntryId, () => { showFullDataJson.value = false; });
+
+// The one place excelJsonData ever gets reconstructed -- used both for the
+// optional "veure JSON complet" toggle below and as the payload for
+// restoring (which needs the real, full data regardless of whether the
+// user ever looked at it).
+const reconstructedFullState = computed(() => {
+  if (!selectedEntry.value) return null;
+  return props.reconstructState(selectedEntry.value.snapId, selectedEntry.value.diffId);
+});
+
+// Compact, human-readable rendering of one JSON Patch operation's value for
+// the "only what changed" diff view -- primitives as-is, objects/arrays as
+// a truncated JSON string (e.g. a whole new row added to a sheet).
+const formatPatchValue = (val) => {
+  if (val === undefined) return '';
+  if (val === null) return 'null';
+  if (typeof val === 'object') {
+    const str = JSON.stringify(val);
+    return str.length > 140 ? str.slice(0, 140) + '…' : str;
+  }
+  return String(val);
+};
+
 const handleCreateManualSnapshot = () => {
   const note = customNoteInput.value.trim() || 'Punt de control manual';
   emit('createSnapshot', note);
@@ -113,17 +149,17 @@ const triggerRestore = (entry, mode) => {
     data: 'les Dades del Model',
     schema: 'l Esquema de Metadades'
   };
-  
+
   if (confirm(`Estàs segur que vols restaurar ${modeLabels[mode]} de la versió del ${entry.displayTime}?`)) {
-    emit('restore', { entry, mode });
+    emit('restore', { state: reconstructedFullState.value, mode, displayTime: entry.displayTime });
     emit('close');
   }
 };
 </script>
 
 <template>
-  <div v-if="isOpen" class="modal-backdrop" @click.self="emit('close')">
-    <div class="modal-card version-history-modal">
+  <div class="modal-overlay" :style="{ display: isOpen ? 'flex' : 'none' }" @click.self="emit('close')">
+    <div class="modal-content version-history-modal">
       
       <!-- Header -->
       <div class="modal-header">
@@ -290,26 +326,54 @@ const triggerRestore = (entry, mode) => {
               </div>
 
               <!-- Full Text Preview -->
-              <textarea 
-                v-else 
-                readonly 
-                :value="selectedEntry.snapshotState?.templateText || 'Sense contingut de plantilla'"
-                class="data-input" 
-                rows="6" 
+              <textarea
+                v-else
+                readonly
+                :value="selectedEntry.templateText || 'Sense contingut de plantilla'"
+                class="data-input"
+                rows="6"
                 style="font-family: var(--font-mono); font-size: 0.75rem; width: 100%; resize: vertical;"
               ></textarea>
             </div>
 
-            <!-- Model Data Preview -->
+            <!-- Model Data: diff-only view for a diff entry (what this
+                 change actually did to the data model), with an optional
+                 toggle to reconstruct and view the full JSON on demand. A
+                 baseline entry has no diff to show, so it always shows the
+                 full JSON directly. -->
             <div style="border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; background: var(--bg-primary);">
-              <div style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary); margin-bottom: 6px;">
-                📊 Model de Dades Excel
+              <div style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
+                <span>📊 Model de Dades Excel</span>
+                <button
+                  v-if="!selectedEntry.isSnapshot"
+                  type="button"
+                  class="btn btn-secondary"
+                  style="padding: 1px 7px; font-size: 0.68rem; height: 20px; width: auto;"
+                  @click="showFullDataJson = !showFullDataJson"
+                >
+                  {{ showFullDataJson ? 'Veure només els canvis' : 'Veure JSON complet' }}
+                </button>
               </div>
-              <textarea 
-                readonly 
-                :value="JSON.stringify(selectedEntry.snapshotState?.excelJsonData || {}, null, 2)"
-                class="data-input" 
-                rows="5" 
+
+              <!-- Diff-ops view (JSON Patch: op + path + value) -->
+              <div v-if="!selectedEntry.isSnapshot && !showFullDataJson" style="font-family: var(--font-mono); font-size: 0.72rem; max-height: 180px; overflow-y: auto; background: var(--bg-card); padding: 6px; border-radius: 4px; border: 1px solid var(--border-color);">
+                <div v-if="!selectedEntry.dataPatch || selectedEntry.dataPatch.length === 0" style="color: var(--text-muted); font-style: italic;">
+                  Sense canvis al model de dades en aquest punt.
+                </div>
+                <div v-for="(op, idx) in selectedEntry.dataPatch" :key="idx" :style="{ color: op.op === 'add' ? '#16a34a' : op.op === 'remove' ? '#dc2626' : '#d97706' }">
+                  <span style="font-weight: 700; text-transform: uppercase;">{{ op.op }}</span>
+                  {{ op.path }}
+                  <span v-if="op.op !== 'remove'">→ {{ formatPatchValue(op.value) }}</span>
+                </div>
+              </div>
+
+              <!-- Full JSON (always for a baseline; on demand for a diff) -->
+              <textarea
+                v-else
+                readonly
+                :value="JSON.stringify(reconstructedFullState?.excelJsonData || {}, null, 2)"
+                class="data-input"
+                rows="5"
                 style="font-family: var(--font-mono); font-size: 0.72rem; width: 100%; resize: vertical;"
               ></textarea>
             </div>
@@ -317,13 +381,13 @@ const triggerRestore = (entry, mode) => {
             <!-- Metadata Schema Preview -->
             <div style="border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; background: var(--bg-primary);">
               <div style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary); margin-bottom: 6px;">
-                ⚙️ Esquema de Metadades ({{ (selectedEntry.snapshotState?.editorMetadata || []).length }} camps)
+                ⚙️ Esquema de Metadades ({{ (selectedEntry.editorMetadata || []).length }} camps)
               </div>
-              <textarea 
-                readonly 
-                :value="JSON.stringify(selectedEntry.snapshotState?.editorMetadata || [], null, 2)"
-                class="data-input" 
-                rows="4" 
+              <textarea
+                readonly
+                :value="JSON.stringify(selectedEntry.editorMetadata || [], null, 2)"
+                class="data-input"
+                rows="4"
                 style="font-family: var(--font-mono); font-size: 0.72rem; width: 100%; resize: vertical;"
               ></textarea>
             </div>
