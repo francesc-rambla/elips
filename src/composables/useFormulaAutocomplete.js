@@ -39,6 +39,12 @@ export const builtinFunctions = [
   { name: 'REMPLAÇA(text; vell; nou)', insert: 'REMPLAÇA(text; vell; nou)', label: 'Reemplaça text', category: 'Funció' },
   { name: 'UPPER(text)', insert: 'UPPER(text)', label: 'Majúscules', category: 'Funció' },
   { name: 'LOWER(text)', insert: 'LOWER(text)', label: 'Minúscules', category: 'Funció' },
+  { name: 'SUM(grup.taula.columna)', insert: 'SUM(grup.taula.columna)', label: 'SUMA (agregació d\'una columna)', category: 'Funció' },
+  { name: 'AVERAGE(grup.taula.columna)', insert: 'AVERAGE(grup.taula.columna)', label: 'MITJANA (agregació d\'una columna)', category: 'Funció' },
+  { name: 'COUNT(grup.taula)', insert: 'COUNT(grup.taula)', label: 'RECOMPTE de files', category: 'Funció' },
+  { name: 'MIN(grup.taula.columna)', insert: 'MIN(grup.taula.columna)', label: 'MÍNIM (agregació d\'una columna)', category: 'Funció' },
+  { name: 'MAX(grup.taula.columna)', insert: 'MAX(grup.taula.columna)', label: 'MÀXIM (agregació d\'una columna)', category: 'Funció' },
+  { name: 'SUMIF(grup.taula.critCol; "valor"; grup.taula.sumCol)', insert: 'SUMIF(grup.taula.critCol; "valor"; grup.taula.sumCol)', label: 'SUMA CONDICIONAL (SUMIF)', category: 'Funció' },
 ];
 
 /**

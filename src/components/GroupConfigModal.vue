@@ -291,6 +291,8 @@ const addNewFieldToConfig = () => {
       calcVector: '',
       calcTargetCol: '',
       calcFormula: '',
+      calcCriteriaCol: '',
+      calcCriteriaValue: '',
       gridRow: '',
       gridOrder: '',
       gridFill: false,
@@ -772,6 +774,7 @@ const openFormulaEditor = (item) => {
                           <option value="COUNT">RECOMPTE</option>
                           <option value="MIN">MÍNIM</option>
                           <option value="MAX">MÀXIM</option>
+                          <option value="SUMIF">SUMA CONDICIONAL (SUMIF)</option>
                           <option value="OR">BOOLEÀ OR / ALGUN (Alguna cert)</option>
                           <option value="AND">BOOLEÀ AND / TOTS (Tots certs)</option>
                           <option value="NONE">-- Sense --</option>
@@ -812,6 +815,22 @@ const openFormulaEditor = (item) => {
                           <option value="">-- Tria Columna a operar --</option>
                           <option v-for="col in getChildTableColumns(item.calcVector)" :key="col" :value="col">{{ col }}</option>
                         </select>
+
+                        <template v-if="item.calcFn === 'SUMIF' && item.calcVector">
+                          <select v-model="item.calcCriteriaCol" class="data-input" style="width: 100%; font-size: 0.75rem; height: 26px; margin-top: 2px;">
+                            <option value="">-- Tria Columna Criteri --</option>
+                            <option v-for="col in getChildTableColumns(item.calcVector)" :key="col" :value="col">{{ col }}</option>
+                          </select>
+                          <input
+                            type="text"
+                            v-model="item.calcCriteriaValue"
+                            list="group-config-global-formula-paths"
+                            class="data-input"
+                            placeholder='"valor literal" o grup.camp'
+                            style="width: 100%; font-size: 0.75rem; height: 26px; font-family: var(--font-mono); margin-top: 2px;"
+                          />
+                          <span style="font-size: 0.62rem; color: var(--text-muted); line-height: 1.3;">Amb cometes = valor literal (p. ex. "Obra"). Sense cometes = referència a un altre camp (p. ex. pres.tipus.nom).</span>
+                        </template>
                       </template>
                     </div>
                   </template>
@@ -863,6 +882,9 @@ const openFormulaEditor = (item) => {
               </tr>
             </tbody>
           </table>
+          <datalist id="group-config-global-formula-paths">
+            <option v-for="path in globalFormulaPaths" :key="path" :value="path" />
+          </datalist>
         </div>
 
         <!-- Modal Footer -->

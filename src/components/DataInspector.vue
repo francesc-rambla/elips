@@ -1046,6 +1046,8 @@ const openGroupConfig = (groupName, sheetData) => {
       calcVector: meta.calcVector || '',
       calcTargetCol: meta.calcTargetCol || '',
       calcFormula: meta.calcFormula || '',
+      calcCriteriaCol: meta.calcCriteriaCol || '',
+      calcCriteriaValue: meta.calcCriteriaValue || '',
       gridRow: meta.gridRow || '',
       gridOrder: meta.gridOrder || '',
       gridFill: !!meta.gridFill
@@ -1089,6 +1091,8 @@ const addNewFieldToConfig = () => {
       calcVector: '',
       calcTargetCol: '',
       calcFormula: '',
+      calcCriteriaCol: '',
+      calcCriteriaValue: '',
       gridRow: '',
       gridOrder: '',
       gridFill: false

@@ -514,6 +514,86 @@ class TestExcelPythonEngine(unittest.TestCase):
             self.assertIsInstance(result["error"]["message"], str)
             self.assertGreater(len(result["error"]["message"]), 0)
 
+    def test_20_evaluate_custom_formula_or_and_with_resolvable_path(self):
+        """Regressió: OR(path)/AND(path) han de funcionar quan `path` és també un camp
+        resoluble -- abans, el bucle de substitució de tokens de evaluate_custom_formula
+        trobava el path DINS les cometes que _cef_transform_or_and ja havia generat
+        (__or("path")) i el substituïa allà mateix, corrompent la crida i fent que
+        sempre retornés False. Cobert per l'emmascarament de literals entre cometes."""
+        ecf = self.engine.evaluate_custom_formula
+        data = {"pres": {"parts": [
+            {"id": "A", "actiu": True},
+            {"id": "B", "actiu": False},
+            {"id": "C", "actiu": True},
+        ]}}
+        self.assertEqual(ecf("OR(pres.parts.actiu)", data), True)
+        self.assertEqual(ecf("AND(pres.parts.actiu)", data), False)
+
+    def test_21_evaluate_custom_formula_min_max_elementwise(self):
+        """Regressió: MIN(a; b)/MAX(a; b) estaven documentades a l'autocompletat però mai
+        havien tingut la transformació necessària -- sempre retornaven 0."""
+        ecf = self.engine.evaluate_custom_formula
+        self.assertEqual(ecf("MIN(5; 2)", {}), 2)
+        self.assertEqual(ecf("MAX(5; 2)", {}), 5)
+        self.assertEqual(ecf("MIN(unitats; 10)", {"unitats": 3}), 3)
+
+    def test_22_evaluate_custom_formula_aggregation_functions(self):
+        """SUM/AVERAGE/COUNT/MIN/MAX(grup.taula[.columna]) dins d'una fórmula han de
+        donar el mateix resultat que el tipus de camp calculat d'agregació equivalent."""
+        ecf = self.engine.evaluate_custom_formula
+        data = {"pres": {"parts": [
+            {"id": "A", "categoria": "Obra", "import": 100},
+            {"id": "B", "categoria": "Servei", "import": 200},
+            {"id": "C", "categoria": "Obra", "import": 50},
+        ], "tipus_ref": "Obra"}}
+
+        self.assertEqual(ecf("SUM(pres.parts.import)", data), 350)
+        self.assertAlmostEqual(ecf("AVERAGE(pres.parts.import)", data), 350 / 3, places=4)
+        self.assertEqual(ecf("COUNT(pres.parts)", data), 3)
+        self.assertEqual(ecf("MIN(pres.parts.import)", data), 50)
+        self.assertEqual(ecf("MAX(pres.parts.import)", data), 200)
+
+        # Ús combinat amb la resta del mini-llenguatge (ARRODONEIX sobre un SUM).
+        self.assertEqual(ecf("ARRODONEIX(SUM(pres.parts.import) * 0.21; 2)", data), 73.5)
+
+    def test_23_evaluate_custom_formula_sumif(self):
+        """SUMIF(critPath; criteri; sumPath): el criteri és literal si va entre cometes,
+        o la referència a un altre camp si no en porta (conveni indicat per l'usuari)."""
+        ecf = self.engine.evaluate_custom_formula
+        data = {"pres": {"parts": [
+            {"id": "A", "categoria": "Obra", "import": 100},
+            {"id": "B", "categoria": "Servei", "import": 200},
+            {"id": "C", "categoria": "Obra", "import": 50},
+        ], "tipus_ref": "Obra"}}
+
+        # Criteri literal (entre cometes).
+        self.assertEqual(ecf('SUMIF(pres.parts.categoria; "Obra"; pres.parts.import)', data), 150)
+        self.assertEqual(ecf('SUMIF(pres.parts.categoria; "Servei"; pres.parts.import)', data), 200)
+        self.assertEqual(ecf('SUMIF(pres.parts.categoria; "Inexistent"; pres.parts.import)', data), 0)
+
+        # Criteri com a referència a un altre camp (sense cometes).
+        self.assertEqual(ecf('SUMIF(pres.parts.categoria; pres.tipus_ref; pres.parts.import)', data), 150)
+
+    def test_24_evaluate_computed_fields_sumif_aggregation(self):
+        """SUMIF com a tipus de camp calculat (calcFn), a través del motor complet
+        evaluate_computed_fields -- mateix comportament que la funció de fórmula."""
+        data = {"pres": {
+            "parts": [
+                {"id": "A", "categoria": "Obra", "import": 100},
+                {"id": "B", "categoria": "Servei", "import": 200},
+                {"id": "C", "categoria": "Obra", "import": 50},
+            ],
+            "total_obra": None,
+        }}
+        metadata = [{
+            "group": "pres", "element": "total_obra", "type": "Computed", "calcFn": "SUMIF",
+            "calcVector": "parts", "calcTargetCol": "import",
+            "calcCriteriaCol": "categoria", "calcCriteriaValue": '"Obra"',
+        }]
+        result = json.loads(self.engine.evaluate_computed_fields(json.dumps(data), json.dumps(metadata)))
+        self.assertTrue(result["success"])
+        self.assertEqual(result["data"]["pres"]["total_obra"], 150)
+
 
 if __name__ == "__main__":
     unittest.main()

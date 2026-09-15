@@ -329,6 +329,8 @@ export async function saveGroupConfig(store, { groupPath, legacyGroupNames = [],
       meta.calcVector = item.calcVector || '';
       meta.calcTargetCol = item.calcTargetCol || '';
       meta.calcFormula = item.calcFormula || '';
+      meta.calcCriteriaCol = item.calcCriteriaCol || '';
+      meta.calcCriteriaValue = item.calcCriteriaValue || '';
     } else {
       meta.isCalculated = false;
       if (item.type !== 'Select') {
@@ -338,6 +340,8 @@ export async function saveGroupConfig(store, { groupPath, legacyGroupNames = [],
       meta.calcVector = '';
       meta.calcTargetCol = '';
       meta.calcFormula = '';
+      meta.calcCriteriaCol = '';
+      meta.calcCriteriaValue = '';
     }
     if (item.type === 'Table') {
       meta.vectorPath = item.vectorPath;
