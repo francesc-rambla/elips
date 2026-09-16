@@ -342,10 +342,15 @@ const getTopLevelChildSchemas = (sheetName, sheetData) => {
     });
   }
   
-  // 2. Non-primitive array keys present on sheetData itself (e.g. sheetData.parts)
+  // 2. Array keys present on sheetData itself (e.g. sheetData.parts) -- must be
+  // Array.isArray, not just "not primitive": a hydrated dynamic-Select FK value
+  // (see hydrateModelWithForeignKeys in useWasmEngines.js) is also a non-primitive
+  // object, and mistaking it for a nested table here used to mount a NestedDataNode
+  // for it, whose own `items` computed then overwrote the FK value with `[]` the
+  // moment it found something other than a real array sitting at that key.
   if (sheetData && typeof sheetData === 'object' && !Array.isArray(sheetData)) {
     Object.keys(sheetData).forEach(k => {
-      if (k !== '_hierarchy_schema' && !isPrimitive(sheetData[k]) && !(k in res)) {
+      if (k !== '_hierarchy_schema' && Array.isArray(sheetData[k]) && !(k in res)) {
         res[k] = universalFindSchema(`${sheetName}.${k}`, dict);
       }
     });

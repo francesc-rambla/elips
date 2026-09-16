@@ -27,8 +27,26 @@
  * copies; this file only centralizes them.
  */
 
-/** True for any value that isn't a plain object or array (i.e. renders as a single form field, not a nested group). */
+/**
+ * True for any value that isn't a plain object or array (i.e. renders as a
+ * single form field, not a nested group) -- ALSO true for a hydrated
+ * dynamic-Select foreign-key value (see hydrateModelWithForeignKeys in
+ * useWasmEngines.js): that function turns a field's plain scalar (an id) into
+ * a rich object carrying the related row's columns, tagged with `_default_val`,
+ * so `part.descripcio` works wherever the field is referenced. Semantically
+ * that field is still a single scalar form field, never a nested group to
+ * recurse into -- without this check, every isPrimitive-gated "is this a
+ * plain field or a child group/table" decision across the app (which fields
+ * of a KV group to render, which fields of a table row, etc.) would
+ * misclassify it as a child group the instant it successfully hydrates, and
+ * whatever consumes that misclassification (e.g. NestedDataNode mounted for
+ * a "child" that isn't actually an array) would then stomp the hydrated
+ * value.
+ */
 export function isPrimitive(val) {
+  if (val && typeof val === 'object' && !Array.isArray(val) && val._default_val !== undefined) {
+    return true;
+  }
   return !Array.isArray(val) && (typeof val !== 'object' || val === null);
 }
 
