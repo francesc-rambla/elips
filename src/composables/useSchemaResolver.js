@@ -43,6 +43,20 @@
  * a "child" that isn't actually an array) would then stomp the hydrated
  * value.
  */
+/**
+ * Unwraps a hydrated dynamic-Select foreign-key value (see isPrimitive above)
+ * back to its plain scalar (the id `<option :value>` was built from), so a
+ * native `<select>` bound to this field can find/keep its selection --
+ * `<select v-model>` matches the bound value against each `<option>`'s plain
+ * value with a structural equality check that never coerces an object to a
+ * string, so binding the hydrated OBJECT directly always looks unselected
+ * once hydration replaces the raw id with it. Any other value (not yet
+ * hydrated, or not an FK field at all) passes through unchanged.
+ */
+export function unwrapFkValue(val) {
+  return (val && typeof val === 'object' && !Array.isArray(val) && val._default_val !== undefined) ? val._default_val : val;
+}
+
 export function isPrimitive(val) {
   if (val && typeof val === 'object' && !Array.isArray(val) && val._default_val !== undefined) {
     return true;

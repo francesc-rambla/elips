@@ -21,7 +21,7 @@ import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 
 import { useWasmEngines } from '../composables/useWasmEngines';
-import { isPrimitive, isNonEmptySchema, universalFindSchema, resolveVectorList } from '../composables/useSchemaResolver';
+import { isPrimitive, isNonEmptySchema, universalFindSchema, resolveVectorList, unwrapFkValue } from '../composables/useSchemaResolver';
 import { builtinFunctions, useFormulaAutocomplete } from '../composables/useFormulaAutocomplete';
 import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, groupFieldElements, saveGroupConfig as saveGroupConfigShared, getGroupViewMode, getVisibleColumns } from '../composables/useGroupMetadata';
 import VisualGridEditorModal from './VisualGridEditorModal.vue';
@@ -1410,7 +1410,8 @@ const itemFormHelpers = {
   getItemRowBlocks,
   formatPercentageDisplay,
   updatePercentageValue,
-  formatCurrencyDisplay
+  formatCurrencyDisplay,
+  unwrapFkValue
 };
 </script>
 
@@ -1620,16 +1621,17 @@ const itemFormHelpers = {
                         {{ pill.label }}
                       </span>
                     </div>
-                    <select 
+                    <select
                       v-else
                       :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
                       :data-path="getItemPath(rIdx, h)"
-                      v-model="row[h]"
+                      :value="unwrapFkValue(row[h])"
+                      @change="row[h] = $event.target.value"
                       class="data-input"
                       style="flex-grow: 1; height: 28px; font-size: 0.78rem;"
                     >
                       <option value="">[Buit / Sense valor]</option>
-                      <option 
+                      <option
                         v-for="opt in resolveSelectOptions(getElementMetadata(h), row)"
                         :key="opt.value" 
                         :value="opt.value"

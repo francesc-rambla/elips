@@ -127,7 +127,8 @@ const store = useWorkspaceStore();
               v-else
               :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
               :data-path="helpers.getItemPath(idx, entry.key)"
-              v-model="item[entry.key]"
+              :value="helpers.unwrapFkValue(item[entry.key])"
+              @change="item[entry.key] = $event.target.value"
               class="data-input"
               style="flex-grow: 1; height: 32px;"
             >

@@ -20,7 +20,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import { useWasmEngines } from '../composables/useWasmEngines';
-import { isPrimitive, isNonEmptySchema, universalFindSchema, resolveVectorList } from '../composables/useSchemaResolver';
+import { isPrimitive, isNonEmptySchema, universalFindSchema, resolveVectorList, unwrapFkValue } from '../composables/useSchemaResolver';
 import { builtinFunctions, useFormulaAutocomplete } from '../composables/useFormulaAutocomplete';
 import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, saveGroupConfig as saveGroupConfigShared, getGroupViewMode, getVisibleColumns } from '../composables/useGroupMetadata';
 import NestedDataNode from './NestedDataNode.vue';
@@ -1832,16 +1832,17 @@ onMounted(() => {
                         </span>
                       </div>
                       <!-- Single select -->
-                      <select 
+                      <select
                         v-else
                         :id="'data-field-' + name + '-' + item.key"
                         :data-path="name + '.' + item.key"
-                        v-model="store.excelJsonData[name][item.key]"
+                        :value="unwrapFkValue(store.excelJsonData[name][item.key])"
+                        @change="store.excelJsonData[name][item.key] = $event.target.value"
                         class="data-input"
                         style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
                       >
                         <option value="">[Buit / Sense valor]</option>
-                        <option 
+                        <option
                           v-for="opt in resolveSelectOptions(getElementMetadata(name, item.key), store.excelJsonData[name])"
                           :key="opt.value" 
                           :value="opt.value"
