@@ -317,6 +317,8 @@ export async function saveGroupConfig(store, { groupPath, legacyGroupNames = [],
         meta.vectorPath = item.vectorPath;
         meta.displayField = item.displayField;
         meta.valueField = item.valueField;
+        meta.filterCol = item.filterCol || '';
+        meta.filterField = item.filterField || '';
       } else {
         meta.options = (item.optionsRaw || '').split(',').map(x => x.trim()).filter(x => x);
       }

@@ -21,7 +21,7 @@ import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 
 import { useWasmEngines } from '../composables/useWasmEngines';
-import { isPrimitive, isNonEmptySchema, universalFindSchema } from '../composables/useSchemaResolver';
+import { isPrimitive, isNonEmptySchema, universalFindSchema, resolveVectorList } from '../composables/useSchemaResolver';
 import { builtinFunctions, useFormulaAutocomplete } from '../composables/useFormulaAutocomplete';
 import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, groupFieldElements, saveGroupConfig as saveGroupConfigShared, getGroupViewMode, getVisibleColumns } from '../composables/useGroupMetadata';
 import VisualGridEditorModal from './VisualGridEditorModal.vue';
@@ -545,11 +545,20 @@ const formatCurrencyDisplay = (val, symbol) => {
   return `${num.toFixed(2)} ${symbol || '€'}`;
 };
 
-const resolveSelectOptions = (meta) => {
+// `contextRow` (opcional) és el registre que conté el camp que s'està editant -- només
+// cal per a un Select dinàmic amb filterCol/filterField (mostra només les files de
+// vectorPath on filterCol coincideix amb el valor actual de contextRow[filterField]).
+const resolveSelectOptions = (meta, contextRow = null) => {
   if (!meta || meta.type !== 'Select') return [];
   if (meta.sourceType === 'dynamic' && meta.vectorPath) {
-    const list = store.excelJsonData?.[meta.vectorPath];
+    let list = resolveVectorList(store.excelJsonData, meta.vectorPath);
     if (Array.isArray(list)) {
+      if (meta.filterCol && meta.filterField && contextRow && typeof contextRow === 'object') {
+        const filterVal = contextRow[meta.filterField];
+        if (filterVal !== undefined && filterVal !== null && filterVal !== '') {
+          list = list.filter(row => row && typeof row === 'object' && String(row[meta.filterCol]) === String(filterVal));
+        }
+      }
       return list.filter(item => {
         if (item && typeof item === 'object') {
           return !Object.values(item).every(val => 
@@ -842,6 +851,8 @@ const openGroupConfig = () => {
       vectorPath: meta.vectorPath || '',
       displayField: meta.displayField || '',
       valueField: meta.valueField || '',
+      filterCol: meta.filterCol || '',
+      filterField: meta.filterField || '',
       multiple: !!meta.multiple,
       width: meta.width || '',
       calcFn: meta.calcFn || 'NONE',
@@ -885,6 +896,8 @@ const addNewFieldToConfig = () => {
       vectorPath: '',
       displayField: '',
       valueField: '',
+      filterCol: '',
+      filterField: '',
       multiple: false,
       width: '',
       calcFn: 'NONE',
@@ -1617,7 +1630,7 @@ const itemFormHelpers = {
                     >
                       <option value="">[Buit / Sense valor]</option>
                       <option 
-                        v-for="opt in resolveSelectOptions(getElementMetadata(h))" 
+                        v-for="opt in resolveSelectOptions(getElementMetadata(h), row)"
                         :key="opt.value" 
                         :value="opt.value"
                       >
@@ -1988,7 +2001,7 @@ const itemFormHelpers = {
         <div class="modal-body" style="flex-grow: 1; overflow-y: auto; padding: 1rem 0;">
           <div style="display: flex; flex-direction: column; gap: 8px; padding: 0 0.5rem;">
             <label 
-              v-for="opt in resolveSelectOptions(activeMultiSelectCell?.meta)" 
+              v-for="opt in resolveSelectOptions(activeMultiSelectCell?.meta, activeMultiSelectCell?.item)"
               :key="opt.value" 
               style="display: flex; align-items: center; gap: 10px; font-size: 0.88rem; cursor: pointer; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-secondary); user-select: none;"
             >
@@ -2002,7 +2015,7 @@ const itemFormHelpers = {
               <span style="color: var(--text-primary); font-weight: 500;">{{ opt.label }}</span>
             </label>
             
-            <div v-if="resolveSelectOptions(activeMultiSelectCell?.meta).length === 0" style="color: var(--text-muted); text-align: center; padding: 2rem 0; font-size: 0.85rem;">
+            <div v-if="resolveSelectOptions(activeMultiSelectCell?.meta, activeMultiSelectCell?.item).length === 0" style="color: var(--text-muted); text-align: center; padding: 2rem 0; font-size: 0.85rem;">
               No hi ha opcions actives. Comprova que la font d'opcions estigui configurada.
             </div>
           </div>

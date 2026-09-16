@@ -285,6 +285,8 @@ const addNewFieldToConfig = () => {
       vectorPath: '',
       displayField: '',
       valueField: '',
+      filterCol: '',
+      filterField: '',
       multiple: false,
       width: '',
       calcFn: 'NONE',
@@ -734,6 +736,17 @@ const openFormulaEditor = (item) => {
                           <select v-model="item.valueField" class="data-input" style="flex: 1; font-size: 0.72rem; height: 24px;">
                             <option value="">-- Col. Valor --</option>
                             <option v-for="col in getChildTableColumns(item.vectorPath)" :key="col" :value="col">{{ col }}</option>
+                          </select>
+                        </div>
+
+                        <div v-if="item.vectorPath" style="display: flex; gap: 4px; align-items: center;">
+                          <select v-model="item.filterCol" class="data-input" style="flex: 1; font-size: 0.72rem; height: 24px;" title="Mostra només les files on aquesta columna coincideixi amb el camp triat a la dreta">
+                            <option value="">-- Sense filtre --</option>
+                            <option v-for="col in getChildTableColumns(item.vectorPath)" :key="col" :value="col">{{ col }}</option>
+                          </select>
+                          <select v-if="item.filterCol" v-model="item.filterField" class="data-input" style="flex: 1; font-size: 0.72rem; height: 24px;" title="Camp d'aquest grup el valor del qual s'ha de comparar amb la columna de filtre">
+                            <option value="">-- Tria camp d'aquest grup --</option>
+                            <option v-for="f in localConfigList.filter(x => x.element !== item.element && x.type !== 'Table')" :key="f.element" :value="f.element">{{ f.element }}</option>
                           </select>
                         </div>
                       </div>

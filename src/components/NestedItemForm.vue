@@ -133,7 +133,7 @@ const store = useWorkspaceStore();
             >
               <option value="">[Buit / Sense valor]</option>
               <option
-                v-for="opt in helpers.resolveSelectOptions(helpers.getElementMetadata(entry.key))"
+                v-for="opt in helpers.resolveSelectOptions(helpers.getElementMetadata(entry.key), item)"
                 :key="opt.value"
                 :value="opt.value"
               >

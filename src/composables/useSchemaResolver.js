@@ -122,3 +122,45 @@ export function universalFindSchema(targetPath, dict) {
 
   return { fields: [], children: {} };
 }
+
+/**
+ * Resolves a dynamic Select field's `vectorPath` (the name of the array to
+ * list rows from) against `store.excelJsonData`, trying progressively
+ * looser strategies -- `vectorPath` is normally just the bare array key
+ * (e.g. `partides`) even when that array is nested inside a key-value group
+ * (e.g. `pressupost.partides`), because that's what the config UI's own
+ * table picker (`GroupConfigModal.vue`'s `getAvailableTables`) offers.
+ *
+ *   1. a direct top-level array key
+ *   2. an `OUT_`-prefixed top-level array key
+ *   3. a dotted path, walked segment by segment
+ *   4. a full recursive search for a nested array under that key, anywhere
+ *      in the tree (depth-limited) -- this is what step 1's mismatch with
+ *      the config UI's own (recursive) table discovery used to miss
+ *
+ * Returns the row array, or `null` if nothing matches.
+ */
+export function resolveVectorList(rootData, vectorName, depth = 0) {
+  if (!vectorName || !rootData || typeof rootData !== 'object' || depth > 10) return null;
+  if (Array.isArray(rootData[vectorName])) return rootData[vectorName];
+  if (Array.isArray(rootData['OUT_' + vectorName])) return rootData['OUT_' + vectorName];
+
+  if (vectorName.includes('.')) {
+    const parts = vectorName.replace(/^doc\.|^dades\./, '').split('.');
+    let curr = rootData;
+    for (const p of parts) {
+      curr = (curr && typeof curr === 'object') ? curr[p] : null;
+    }
+    if (Array.isArray(curr)) return curr;
+  }
+
+  const children = Array.isArray(rootData) ? rootData : Object.values(rootData);
+  for (const val of children) {
+    if (val && typeof val === 'object') {
+      if (!Array.isArray(val) && Array.isArray(val[vectorName])) return val[vectorName];
+      const found = resolveVectorList(val, vectorName, depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
