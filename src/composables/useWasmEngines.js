@@ -20,6 +20,7 @@ import { ref } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import * as pandocModule from '../vendor/pandoc/pandoc.js';
 import { saveBinaryFile, getBinaryFile } from '../utils/db';
+import { resolveVectorList } from './useSchemaResolver';
 import enginePyCode from '../python/engine.py?raw';
 
 // Save WebAssembly engine instances outside vue reactiveness scope for speed
@@ -528,21 +529,7 @@ orphan_count
 
     if (Object.keys(dynamicMetaMap).length === 0) return rootData;
 
-    const resolveTargetTable = (targetPath) => {
-      if (!targetPath) return null;
-      if (Array.isArray(rootData[targetPath])) return rootData[targetPath];
-      if (Array.isArray(rootData['OUT_' + targetPath])) return rootData['OUT_' + targetPath];
-      const parts = targetPath.replace(/^doc\.|^dades\./, '').split('.');
-      let curr = rootData;
-      for (const p of parts) {
-        if (curr && typeof curr === 'object') {
-          curr = curr[p];
-        } else {
-          return null;
-        }
-      }
-      return Array.isArray(curr) ? curr : null;
-    };
+    const resolveTargetTable = (targetPath) => resolveVectorList(rootData, targetPath);
 
     const processGroup = (groupName, groupData) => {
       if (!groupData || typeof groupData !== 'object') return;

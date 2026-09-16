@@ -594,6 +594,70 @@ class TestExcelPythonEngine(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(result["data"]["pres"]["total_obra"], 150)
 
+    def test_25_custom_formula_fk_dot_access_table_nested_in_kv_group(self):
+        """Regressió: escriure `partida.descripcio` en una fórmula CUSTOM ha de navegar fins a la
+        fila relacionada encara que la taula d'origen (partides) estigui aniuada dins d'un grup
+        clau-valor (pressupost), no només quan és una taula de primer nivell -- el fallback de clau
+        forana escalar dins _cef_get_nested_value abans només mirava claus de primer nivell."""
+        ecf = self.engine.evaluate_custom_formula
+        data = {"pressupost": {
+            "partida": "P1",
+            "partides": [
+                {"id": "P1", "lot": "L1", "descripcio": "Partida 1"},
+                {"id": "P2", "lot": "L2", "descripcio": "Partida 2"},
+            ],
+        }}
+        row = data["pressupost"]
+        self.assertEqual(ecf("partida.descripcio", row, data), "Partida 1")
+        self.assertEqual(ecf("partida.lot", row, data), "L1")
+
+    def test_26_document_generation_hydrates_fk_table_nested_in_kv_group(self):
+        """Regressió equivalent al test anterior però pel pipeline REAL de generació de documents
+        (render_md_two_pass_with_report / _hydrate_foreign_keys), que és una implementació Python
+        separada de evaluate_custom_formula i tenia el mateix bug (cerca de vectorPath no
+        recursiva)."""
+        live_data = {
+            "pressupost": {
+                "anualitat": 2026,
+                "partida": "P1",
+                "partides": [
+                    {"id": "P1", "lot": "L1", "descripcio": "Partida 1"},
+                    {"id": "P2", "lot": "L2", "descripcio": "Partida 2"},
+                ],
+            },
+            "editor_metadata": [
+                {"group": "pressupost", "element": "partida", "type": "Select", "sourceType": "dynamic",
+                 "vectorPath": "partides", "displayField": "descripcio", "valueField": "id"},
+            ],
+        }
+        live_json_str = json.dumps(live_data, ensure_ascii=False)
+
+        fk_template_path = os.path.join(self.tmp_dir, "fk_template.md.j2")
+        with open(fk_template_path, "w", encoding="utf-8") as f:
+            f.write("Partida triada: {{ pressupost.partida.descripcio }} (lot {{ pressupost.partida.lot }})\n")
+
+        live_json_path = os.path.join(self.tmp_dir, "in_fk.json")
+        with open(live_json_path, "w", encoding="utf-8") as f:
+            f.write(live_json_str)
+
+        real_exists = os.path.exists
+        real_open = open
+
+        def fake_exists(path):
+            return True if path == '/work/in.json' else real_exists(path)
+
+        def fake_open(path, *args, **kwargs):
+            return real_open(live_json_path, *args, **kwargs) if path == '/work/in.json' else real_open(path, *args, **kwargs)
+
+        with mock.patch.object(self.engine.os.path, 'exists', side_effect=fake_exists), \
+             mock.patch.object(self.engine, 'open', side_effect=fake_open, create=True):
+            result = json.loads(self.engine.render_md_two_pass_with_report(self.fixture_path, fk_template_path))
+
+        self.assertTrue(result["success"], result.get("traceback"))
+        md = result["markdown"]
+        self.assertIn("Partida triada: Partida 1 (lot L1)", md)
+        self.assertNotIn("Clau no definida", md, "El marcador de recuperació indica que la FK no s'ha resolt")
+
 
 if __name__ == "__main__":
     unittest.main()

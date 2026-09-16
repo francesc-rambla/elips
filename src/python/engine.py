@@ -2819,21 +2819,28 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
             if not fk_map:
                 return doc_dict
 
-            def _resolve_table(vec_path):
-                if not vec_path:
+            def _resolve_table(root, vec_path, depth=0):
+                if not vec_path or not isinstance(root, (dict, list)) or depth > 10:
                     return None
-                if vec_path in doc_dict and isinstance(doc_dict[vec_path], list):
-                    return doc_dict[vec_path]
-                if f"OUT_{vec_path}" in doc_dict and isinstance(doc_dict[f"OUT_{vec_path}"], list):
-                    return doc_dict[f"OUT_{vec_path}"]
-                parts = vec_path.replace('doc.', '').replace('dades.', '').split('.')
-                curr = doc_dict
-                for p in parts:
-                    if isinstance(curr, dict) and p in curr:
-                        curr = curr[p]
-                    else:
-                        return None
-                return curr if isinstance(curr, list) else None
+                if isinstance(root, dict):
+                    if isinstance(root.get(vec_path), list):
+                        return root[vec_path]
+                    if isinstance(root.get(f"OUT_{vec_path}"), list):
+                        return root[f"OUT_{vec_path}"]
+                    if '.' in vec_path:
+                        parts = vec_path.replace('doc.', '').replace('dades.', '').split('.')
+                        curr = root
+                        for p in parts:
+                            curr = curr.get(p) if isinstance(curr, dict) else None
+                        if isinstance(curr, list):
+                            return curr
+                children = root if isinstance(root, list) else root.values()
+                for val in children:
+                    if isinstance(val, (dict, list)):
+                        found = _resolve_table(val, vec_path, depth + 1)
+                        if found is not None:
+                            return found
+                return None
 
             def _process_item(group_name, item):
                 if isinstance(item, list):
@@ -2851,7 +2858,7 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
                                     meta = fk_m
                                     break
                         if meta and v is not None and v != '' and not isinstance(v, (dict, list)):
-                            tbl = _resolve_table(meta.get('vectorPath'))
+                            tbl = _resolve_table(doc_dict, meta.get('vectorPath'))
                             if tbl and isinstance(tbl, list):
                                 v_field = str(meta.get('valueField', ''))
                                 d_field = str(meta.get('displayField', ''))
@@ -3186,6 +3193,24 @@ def _cef_parse_num_or_string(raw_val):
     return 0
 
 
+def _cef_iter_tables(obj, depth=0):
+    """Yields every list-of-dicts ("table") found in `obj`, at any depth
+    (limited to 10, same as the other tree walkers in this file) -- used by
+    _cef_get_nested_value's scalar-FK fallback below so it can find a target
+    table nested inside a key-value group (e.g. `pressupost.partides`), not
+    just one sitting at the top level of `global_data`."""
+    if depth > 10 or not isinstance(obj, (dict, list)):
+        return
+    if isinstance(obj, list):
+        if obj and isinstance(obj[0], dict):
+            yield obj
+        for item in obj:
+            yield from _cef_iter_tables(item, depth + 1)
+    else:
+        for val in obj.values():
+            yield from _cef_iter_tables(val, depth + 1)
+
+
 def _cef_get_nested_value(obj, parts, global_data):
     current = obj
     for part in parts:
@@ -3214,13 +3239,12 @@ def _cef_get_nested_value(obj, parts, global_data):
             # up in the global tables for a row that carries this `part` field.
             found_val = None
             if global_data:
-                for table in global_data.values():
-                    if isinstance(table, list):
-                        match_row = next((r for r in table if isinstance(r, dict)
-                                           and any(str(v) == str(current) for v in r.values())), None)
-                        if match_row is not None and part in match_row:
-                            found_val = match_row[part]
-                            break
+                for table in _cef_iter_tables(global_data):
+                    match_row = next((r for r in table if isinstance(r, dict)
+                                       and any(str(v) == str(current) for v in r.values())), None)
+                    if match_row is not None and part in match_row:
+                        found_val = match_row[part]
+                        break
             if found_val is not None:
                 current = found_val
             else:
