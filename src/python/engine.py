@@ -3717,7 +3717,22 @@ def evaluate_computed_fields(data_json, metadata_json, debug_mode=False):
             return
 
         for k, v in container.items():
-            if k not in ('_sheet_info', '_hierarchy_schema', 'editor_metadata') and isinstance(v, (dict, list)):
+            if k in ('_sheet_info', '_hierarchy_schema', 'editor_metadata'):
+                continue
+            # A hydrated dynamic-Select FK value (see hydrateModelWithForeignKeys
+            # in useWasmEngines.js) is a dict carrying the related row's own
+            # columns, tagged with `_default_val` -- semantically still this
+            # field's own scalar value, never a nested group to recurse into.
+            # Recursing into it here (as any other non-list dict child) would
+            # reuse the PARENT's group_hint unchanged (only list children get
+            # their own), so a calculated field whose element name happens to
+            # also exist as a column on the related row (e.g. both `prova` and
+            # the FK-related `cataleg.items` row have a `preu` column) would
+            # get evaluated a second time against the hydrated object itself
+            # and overwrite that column with the wrong (usually 0) result.
+            if isinstance(v, dict) and '_default_val' in v:
+                continue
+            if isinstance(v, (dict, list)):
                 run_custom_pass(v, k if isinstance(v, list) else group_hint, visited)
 
         for meta in custom_metas:
@@ -3769,7 +3784,13 @@ def evaluate_computed_fields(data_json, metadata_json, debug_mode=False):
             return
 
         for k, v in container.items():
-            if k not in ('_sheet_info', '_hierarchy_schema', 'editor_metadata') and isinstance(v, (dict, list)):
+            if k in ('_sheet_info', '_hierarchy_schema', 'editor_metadata'):
+                continue
+            # Same reasoning as the equivalent guard in run_custom_pass above:
+            # a hydrated FK value is a leaf scalar, not a nested group.
+            if isinstance(v, dict) and '_default_val' in v:
+                continue
+            if isinstance(v, (dict, list)):
                 run_agg_pass(v, k if isinstance(v, list) else group_hint, visited)
 
         for meta in agg_metas:

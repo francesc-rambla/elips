@@ -658,6 +658,40 @@ class TestExcelPythonEngine(unittest.TestCase):
         self.assertIn("Partida triada: Partida 1 (lot L1)", md)
         self.assertNotIn("Clau no definida", md, "El marcador de recuperació indica que la FK no s'ha resolt")
 
+    def test_27_evaluate_computed_fields_hydrated_fk_column_name_collision(self):
+        """Regressió: un cop `item` (Select dinàmic) ja s'ha hidratat a un objecte amb les columnes
+        de la fila relacionada, run_custom_pass/run_agg_pass recorren aquest objecte com si fos un
+        subgrup més -- però com que no és una llista, hereten el group_hint del pare sense canviar-lo,
+        de manera que si la fila relacionada té una columna amb el MATEIX nom que un camp calculat
+        del grup pare (aquí, "preu" existeix tant a `prova` com a `cataleg.items`), la fórmula
+        `item.preu` s'avaluava una segona vegada contra l'objecte hidratat mateix (on `item` no
+        existeix) i sobreescrivia el resultat correcte amb 0."""
+        data = {
+            "cataleg": {"items": [
+                {"id": "I1", "preu": 25, "descripcio": "Item 1"},
+                {"id": "I2", "preu": 40, "descripcio": "Item 2"},
+            ]},
+            # `item` ja ve hidratat (com el deixaria hydrateModelWithForeignKeys en viu abans de
+            # cridar Python) per aïllar el bug de run_custom_pass en si, sense dependre'n.
+            "prova": {
+                "item": {"id": "I1", "preu": 25, "descripcio": "Item 1", "_default_val": "I1", "value": "I1", "val": "I1"},
+                "preu": 0,
+                "unitats": 2,
+            },
+        }
+        metadata = [
+            {"group": "prova", "element": "item", "type": "Select", "sourceType": "dynamic",
+             "vectorPath": "items", "displayField": "descripcio", "valueField": "id"},
+            {"group": "prova", "element": "preu", "type": "Computed", "isCalculated": True,
+             "sourceType": "computed", "calcFn": "CUSTOM", "calcFormula": "item.preu"},
+        ]
+        result = json.loads(self.engine.evaluate_computed_fields(json.dumps(data), json.dumps(metadata)))
+        self.assertTrue(result["success"])
+        self.assertEqual(result["data"]["prova"]["preu"], 25)
+        # La fila de referència no s'ha d'haver tocat en el procés.
+        self.assertEqual(result["data"]["cataleg"]["items"][0]["preu"], 25)
+        self.assertEqual(result["data"]["prova"]["item"]["preu"], 25)
+
 
 if __name__ == "__main__":
     unittest.main()
