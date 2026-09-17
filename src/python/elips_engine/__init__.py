@@ -43,7 +43,7 @@ from .excel_io import (
     create_default_workbook_from_json,
 )
 from .mirror_pattern import analyze_mirror_pattern, apply_mirror_column
-from .calc_fields import evaluate_custom_formula, evaluate_computed_fields
+from .calc_fields import evaluate_custom_formula, validate_custom_formula_syntax, evaluate_computed_fields
 from .template_render import (
     render_md_two_pass_with_report,
     validate_template_syntax,
@@ -59,6 +59,7 @@ __all__ = [
     'analyze_mirror_pattern',
     'apply_mirror_column',
     'evaluate_custom_formula',
+    'validate_custom_formula_syntax',
     'evaluate_computed_fields',
     'render_md_two_pass_with_report',
     'validate_template_syntax',

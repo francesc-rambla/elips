@@ -30,7 +30,7 @@ import { resolveVectorList } from './useSchemaResolver';
 // loading below writes each one into Pyodide's virtual filesystem and lets
 // Python's own `import` machinery resolve the package, instead of string-
 // concatenating them into one shared namespace.
-const enginePackageFiles = import.meta.glob('../python/elips_engine/*.py', { query: '?raw', import: 'default', eager: true });
+const enginePackageFiles = import.meta.glob('../python/elips_engine/**/*.py', { query: '?raw', import: 'default', eager: true });
 
 // Save WebAssembly engine instances outside vue reactiveness scope for speed
 var _pyodide = null;
@@ -97,8 +97,22 @@ except Exception:
         // Already exists (e.g. a previous initEngines() call) — fine.
       }
       for (const [path, content] of Object.entries(enginePackageFiles)) {
-        const filename = path.split('/').pop();
-        _pyodide.FS.writeFile(`${enginePkgDir}/${filename}`, content);
+        // path looks like '../python/elips_engine/formula/lexer.py' -- keep
+        // everything from 'elips_engine/' onward so subpackages (e.g. the
+        // `formula` mini-language subpackage) land in their own real
+        // subdirectory instead of being flattened into the package root.
+        const relPath = path.slice(path.indexOf('/elips_engine/') + '/elips_engine/'.length);
+        const parts = relPath.split('/');
+        let dir = enginePkgDir;
+        for (const segment of parts.slice(0, -1)) {
+          dir = `${dir}/${segment}`;
+          try {
+            _pyodide.FS.mkdir(dir);
+          } catch (e) {
+            // Already exists — fine.
+          }
+        }
+        _pyodide.FS.writeFile(`${dir}/${parts[parts.length - 1]}`, content);
       }
       await _pyodide.runPythonAsync(`
 import sys

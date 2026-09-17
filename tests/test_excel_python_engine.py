@@ -694,6 +694,48 @@ class TestExcelPythonEngine(unittest.TestCase):
         self.assertEqual(result["data"]["cataleg"]["items"][0]["preu"], 25)
         self.assertEqual(result["data"]["prova"]["item"]["preu"], 25)
 
+    def test_28_formula_comparisons_and_ternary(self):
+        """El parser AST ha de suportar comparacions (amb els àlies `=`/`<>`),
+        l'operador `^` com a potència, i el ternari a l'estil Python
+        `a if cond else b` (a més del SI/IF ja existent)."""
+        ecf = self.engine.evaluate_custom_formula
+        self.assertEqual(ecf("unitats = 3", {"unitats": 3}), True)
+        self.assertEqual(ecf("unitats <> 3", {"unitats": 3}), False)
+        self.assertEqual(ecf("2 ^ 3", {}), 8)
+        self.assertEqual(ecf('"Sí" if unitats > 2 else "No"', {"unitats": 3}), "Sí")
+        self.assertEqual(ecf('"Sí" if unitats > 2 else "No"', {"unitats": 1}), "No")
+
+    def test_29_formula_bare_and_or_not(self):
+        """`and`/`or`/`not` (minúscules, exactes) funcionen com a operadors
+        booleans normals -- distints de les funcions OR(...)/AND(...) amb
+        majúscules, que consumeixen un camí com a vector."""
+        ecf = self.engine.evaluate_custom_formula
+        self.assertEqual(ecf("actiu and unitats > 0", {"actiu": True, "unitats": 3}), True)
+        self.assertEqual(ecf("actiu and unitats > 0", {"actiu": True, "unitats": 0}), False)
+        self.assertEqual(ecf("not actiu", {"actiu": False}), True)
+        self.assertEqual(ecf("actiu or fals_camp", {"actiu": False, "fals_camp": True}), True)
+
+    def test_30_formula_string_concat_and_index(self):
+        """Concatenació de text amb `+` i accés amb índex `taula[0].camp`."""
+        ecf = self.engine.evaluate_custom_formula
+        # (una cadena amb aparença numèrica com "1" es convertiria a número en
+        # resoldre's -- mateix comportament, ja preexistent, que el motor antic.)
+        self.assertEqual(ecf('"Lot " + lot', {"lot": "A"}), "Lot A")
+        data = {"pres": {"parts": [{"id": "A"}, {"id": "B"}]}}
+        self.assertEqual(ecf("pres.parts[0].id", data), "A")
+        self.assertEqual(ecf("pres.parts[1].id", data), "B")
+
+    def test_31_validate_custom_formula_syntax(self):
+        """validate_custom_formula_syntax analitza sense avaluar, igual que
+        validate_template_syntax per a plantilles Jinja2."""
+        vcf = self.engine.validate_custom_formula_syntax
+        ok = json.loads(vcf("SI(unitats > 0; preu * unitats; 0)"))
+        self.assertTrue(ok["valid"])
+        self.assertIsNone(ok["error"])
+        bad = json.loads(vcf("SI(unitats > 0; preu * unitats"))
+        self.assertFalse(bad["valid"])
+        self.assertIsNotNone(bad["error"])
+
 
 if __name__ == "__main__":
     unittest.main()
