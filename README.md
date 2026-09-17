@@ -43,7 +43,7 @@ El manual inclou la documentació completa organitzada per perfils d'ús:
 
 6. **Editor visual de graella (Drag & Drop) i editor de fórmules amb autocompletat**:
    - Dissenyador visual per organitzar camps en columnes i files arrossegant i amollant.
-   - Editor de fórmules amb menú emergent d'autocompletat per a camps de fila, rutes globals i funcions matemàtiques/lògiques (`SI`, `ARRODONEIX`, `CONCAT`, `MONEDA`, etc.).
+   - Editor de fórmules amb menú emergent d'autocompletat per a camps de fila, rutes globals i funcions matemàtiques/lògiques del mini-llenguatge de camps calculats (`SI`, `ARRODONEIX`, `OR`/`AND`, `SUM`/`AVERAGE`/`COUNT`/`MIN`/`MAX`, `SUMIF`, etc. — vegeu la referència completa a `manual.md` secció 4.5).
 
 ---
 
@@ -85,18 +85,28 @@ Per representar estructures aniuades (relacions pare-fill 1 a N o N a M), **elip
 - **Transpilació de documents**:
   - **Pandoc WASM**: Conversió de Markdown transpilat cap a documents Microsoft Word `.docx` utilitzant documents de referència corporatius.
 
-### 📁 El motor Python (`src/python/engine.py`)
+### 📁 El motor Python (`src/python/elips_engine/`)
 
-Tota la lògica de negoci que corre dins de Pyodide (parsing d'Excel a JSON, reconstrucció de la jerarquia de fulls, renderitzat Jinja2 de dues passades, filtres personalitzats, exportació de tornada a `.xlsx`) viu com a **fitxer Python independent i editable normalment** a `src/python/engine.py`, en lloc d'estar incrustada com a text dins d'un fitxer JavaScript.
+Tota la lògica de negoci que corre dins de Pyodide (parsing d'Excel a JSON, reconstrucció de la jerarquia de fulls, renderitzat Jinja2 de dues passades, filtres personalitzats, hidratació de claus foranes, el mini-llenguatge de camps calculats, exportació de tornada a `.xlsx`) viu com un **paquet Python normal i importable** a `src/python/elips_engine/`, no com a text incrustat dins d'un fitxer JavaScript:
 
-- `src/composables/useWasmEngines.js` l'importa amb la sintaxi `?raw` pròpia de Vite:
-  ```js
-  import enginePyCode from '../python/engine.py?raw';
-  // ...
-  await _pyodide.runPythonAsync(enginePyCode);
-  ```
-- Aquest import es resol **en temps de compilació**: `vite build` incrusta el contingut del `.py` com una constant de text dins del `dist/index.html` d'un sol fitxer, de manera que el paquet final continua sent 100% autònom i sense dependències externes.
-- Com que ara és un `.py` real, es pot editar amb ressaltat de sintaxi normal, comprovar-ne la validesa amb `python3 -m py_compile src/python/engine.py`, i els tests unitaris (`tests/test_excel_python_engine.py`) l'importen directament com a mòdul en lloc d'extreure'l per substring d'un fitxer JS.
+```
+src/python/elips_engine/
+├── __init__.py            # API pública del paquet (les funcions cridades des de JS)
+├── text_utils.py          # utilitats de text sense dependències (sanejament d'ids, JSON...)
+├── excel_io.py             # Excel ↔ JSON (lectura, escriptura, jerarquia de fulls)
+├── mirror_pattern.py       # detecció i aplicació del patró de columna mirall
+├── template_recovery.py    # recuperació d'errors de plantilla (TrackedValue/Placeholder)
+├── template_filters.py     # filtres Jinja2 (moneda, nombres, dates en lletres...)
+├── fk_hydration.py         # hidratació de claus foranes (Select dinàmics)
+├── calc_fields.py          # avaluació de camps calculats (SUM/AVG/CUSTOM, agregació en arbre)
+├── formula/                # mini-llenguatge de fórmules CUSTOM: lexer/parser/AST/avaluador
+└── template_render.py      # renderitzat Jinja2 de dues passades, validació de plantilles
+```
+
+- El paquet és **exactament el mateix codi font** que en un futur podria córrer en un servidor (una hipotètica versió client-servidor de l'aplicació): cap fitxer conté cap adaptació específica de Pyodide, i tot funciona igual amb `import elips_engine` des d'un `python3` normal.
+- `src/composables/useWasmEngines.js` escriu cada fitxer `.py` del paquet (localitzats amb `import.meta.glob('../python/elips_engine/**/*.py', ...)`, preservant l'estructura de subdirectoris com `formula/`) al sistema de fitxers virtual de Pyodide i l'importa amb un `from elips_engine import *` real, no com a text concatenat en un únic bloc.
+- Aquest import es resol **en temps de compilació**: `vite build` incrusta el contingut de cada `.py` com a constants de text dins del `dist/index.html` d'un sol fitxer, de manera que el paquet final continua sent 100% autònom i sense dependències externes.
+- Com que és un paquet Python real, es pot editar amb ressaltat de sintaxi normal, comprovar-ne la validesa amb `python3 -m py_compile src/python/elips_engine/**/*.py`, i els tests unitaris (`tests/test_excel_python_engine.py`) l'importen directament (`import elips_engine`) en lloc d'extreure'l per substring d'un fitxer JS.
 
 ---
 
@@ -135,7 +145,7 @@ npm run build
 | Script | Motor | Què comprova |
 | :--- | :--- | :--- |
 | `npm run generate:fixtures` | `openpyxl` (Python) + `jszip` (Node) | Genera a `tests/fixtures/` un `.xlsx` i un paquet de projecte `.zip` **sintètics**, autocontinguts al repositori. |
-| `npm run test:python` | `unittest` | Importa `src/python/engine.py` directament i valida el parsing Excel↔JSON, la jerarquia aniuada, la preservació de fórmules complexes i el renderitzat Jinja2, sobre la fixture generada. |
+| `npm run test:python` | `unittest` | Importa el paquet `elips_engine` directament i valida el parsing Excel↔JSON, la jerarquia aniuada, el mini-llenguatge de camps calculats, la preservació de fórmules complexes i el renderitzat Jinja2, sobre la fixture generada. |
 | `npm run test:js` | Vitest | Tests unitaris del store Pinia i de l'historial de versions. |
 | `npm run test:e2e` | Puppeteer | Genera les fixtures, compila l'app, aixeca un servidor local a `http://localhost:8000` i hi executa 4 escenaris de navegador real (càrrega d'Excel, estructures aniuades/acordió, recuperació de projecte ZIP, canvi entre projectes). |
 

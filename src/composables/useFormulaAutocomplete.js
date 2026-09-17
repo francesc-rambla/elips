@@ -20,25 +20,29 @@ import { ref, computed, nextTick } from 'vue';
 import { isPrimitive } from './useSchemaResolver';
 
 /**
- * The built-in functions offered by the CUSTOM formula mini-language (used
- * both for calculated fields and for `itemTitleFormula`). Static, shared
- * verbatim by every formula editor in the app (GroupConfigModal, NestedDataNode,
- * DataInspector) — kept here as the single source of truth for the autocomplete
- * menu's function list.
+ * The built-in functions actually implemented by the CUSTOM formula
+ * mini-language's AST evaluator (src/python/elips_engine/formula/), used by
+ * the calcFormula editor ("FÓRMULA" option in a Computed field's "Funció"
+ * menu). Static, shared verbatim by every formula editor in the app
+ * (GroupConfigModal, NestedDataNode, DataInspector) — kept here as the
+ * single source of truth for the autocomplete menu's function list. See
+ * manual.md section 4.5.B for the full reference with examples.
+ *
+ * NOT the same list as itemTitleFormula's own (smaller, separate) helper
+ * functions (CONCAT/MONEDA/ARRODONEIX/UPPER/LOWER, implemented directly in
+ * NestedDataNode.vue's evaluateItemTitleFormula) — those don't exist in this
+ * engine and must not be added here.
  */
 export const builtinFunctions = [
   { name: 'SI(condició; cert; fals)', insert: 'SI(condició; cert; fals)', label: 'SI / IF (Condicional)', category: 'Funció' },
   { name: 'ARRODONEIX(valor; decimals)', insert: 'ARRODONEIX(valor; 2)', label: 'ARRODONEIX / ROUND', category: 'Funció' },
   { name: 'ABS(valor)', insert: 'ABS(valor)', label: 'Valor absolut', category: 'Funció' },
+  { name: 'CERT(valor)', insert: 'CERT(valor)', label: 'És un valor veritable?', category: 'Funció' },
+  { name: 'FALS(valor)', insert: 'FALS(valor)', label: 'És un valor fals?', category: 'Funció' },
   { name: 'MIN(val1; val2)', insert: 'MIN(val1; val2)', label: 'Mínim de valors', category: 'Funció' },
   { name: 'MAX(val1; val2)', insert: 'MAX(val1; val2)', label: 'Màxim de valors', category: 'Funció' },
-  { name: 'PERCENT(valor)', insert: 'PERCENT(valor)', label: 'Escala percentatge (* 100)', category: 'Funció' },
-  { name: 'ISNULL(valor)', insert: 'ISNULL(valor)', label: 'Comprova si és nul', category: 'Funció' },
-  { name: 'CONCAT(text1; text2)', insert: 'CONCAT(text1; text2)', label: 'Concatena text', category: 'Funció' },
-  { name: 'TEXT(valor)', insert: 'TEXT(valor)', label: 'Converteix a text', category: 'Funció' },
-  { name: 'REMPLAÇA(text; vell; nou)', insert: 'REMPLAÇA(text; vell; nou)', label: 'Reemplaça text', category: 'Funció' },
-  { name: 'UPPER(text)', insert: 'UPPER(text)', label: 'Majúscules', category: 'Funció' },
-  { name: 'LOWER(text)', insert: 'LOWER(text)', label: 'Minúscules', category: 'Funció' },
+  { name: 'OR(grup.taula.columna)', insert: 'OR(grup.taula.columna)', label: 'OR / ALGUN cert a la columna', category: 'Funció' },
+  { name: 'AND(grup.taula.columna)', insert: 'AND(grup.taula.columna)', label: 'AND / TOTS certs a la columna', category: 'Funció' },
   { name: 'SUM(grup.taula.columna)', insert: 'SUM(grup.taula.columna)', label: 'SUMA (agregació d\'una columna)', category: 'Funció' },
   { name: 'AVERAGE(grup.taula.columna)', insert: 'AVERAGE(grup.taula.columna)', label: 'MITJANA (agregació d\'una columna)', category: 'Funció' },
   { name: 'COUNT(grup.taula)', insert: 'COUNT(grup.taula)', label: 'RECOMPTE de files', category: 'Funció' },
