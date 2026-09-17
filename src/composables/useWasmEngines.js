@@ -369,6 +369,18 @@ orphan_count
     return JSON.parse(resultStr);
   };
 
+  // Parses one CUSTOM-formula string with the real formula-language parser
+  // (no evaluation, no row data needed) -- the authoritative syntax check for
+  // calcFormula fields, mirroring validateTemplateSyntax above for the
+  // Jinja2 template language.
+  const validateCustomFormulaSyntax = async (formulaText) => {
+    if (!_pyodide) throw new Error("Pyodide no s'ha inicialitzat.");
+    const fn = _pyodide.globals.get('validate_custom_formula_syntax');
+    const resultStr = fn(formulaText || '');
+    fn.destroy();
+    return JSON.parse(resultStr);
+  };
+
   const compileDocx = async (markdownText, refDocBuffer, extraFilesMap) => {
     if (!_pandoc) throw new Error("Pandoc no s'ha inicialitzat.");
     
@@ -778,6 +790,7 @@ orphan_count
     renderMarkdown,
     previewExpression,
     validateTemplateSyntax,
+    validateCustomFormulaSyntax,
     compileDocx,
     saveExcelData,
     saveExcelHierarchy,

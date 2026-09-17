@@ -21,6 +21,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import { isPrimitive } from '../composables/useSchemaResolver';
 import { builtinFunctions, useFormulaAutocomplete } from '../composables/useFormulaAutocomplete';
+import { useWasmEngines } from '../composables/useWasmEngines';
 import VisualGridEditorModal from './VisualGridEditorModal.vue';
 
 const props = defineProps({
@@ -45,6 +46,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'save', 'copyGroup', 'pasteGroup']);
 
 const store = useWorkspaceStore();
+const { validateCustomFormulaSyntax } = useWasmEngines();
 
 const localGroupLabel = ref('');
 const localSelectedLayout = ref('vertical');
@@ -73,6 +75,41 @@ const toggleColumnVisible = (element) => {
 };
 
 // Formula Modal State - declared below near helper functions
+
+// Syntax errors for calcFormula fields, keyed by `item.element` -- kept as a
+// separate map (not a property on the item itself) so it never leaks into
+// the saved config via handleSave's `{ ...item }` shallow copy. Checked on
+// blur, both on the inline input and on the "Amplia" modal's textarea (they
+// edit the same field, just via a temporary buffer while the modal is open).
+const formulaSyntaxErrors = ref({});
+
+const checkFormulaSyntax = async (formulaText, elementKey) => {
+  if (!elementKey) return;
+  const formula = (formulaText || '').trim();
+  if (!formula) {
+    if (formulaSyntaxErrors.value[elementKey] !== undefined) {
+      const next = { ...formulaSyntaxErrors.value };
+      delete next[elementKey];
+      formulaSyntaxErrors.value = next;
+    }
+    return;
+  }
+  try {
+    const result = await validateCustomFormulaSyntax(formula);
+    const next = { ...formulaSyntaxErrors.value };
+    if (!result.valid) {
+      const msg = result.error?.message || 'Error de sintaxi desconegut';
+      next[elementKey] = msg;
+      store.addLog(`❌ Error de sintaxi a la fórmula del camp "${elementKey}": ${msg}`, 'error');
+    } else {
+      delete next[elementKey];
+    }
+    formulaSyntaxErrors.value = next;
+  } catch (e) {
+    // Engine not ready yet or an internal validator failure -- don't block
+    // the UI or misreport this as a formula syntax error.
+  }
+};
 
 const handleKeydown = (e) => {
   if (!props.modelValue) return;
@@ -110,6 +147,7 @@ onUnmounted(() => {
 
 watch(() => props.modelValue, (newVal) => {
   if (newVal) {
+    formulaSyntaxErrors.value = {};
     localGroupLabel.value = props.groupLabel || '';
     localSelectedLayout.value = props.selectedLayout || 'vertical';
     localItemTitleFormula.value = props.itemTitleFormula || '';
@@ -796,17 +834,19 @@ const openFormulaEditor = (item) => {
 
                       <template v-if="item.calcFn === 'FORMULA'">
                         <div style="display: flex; gap: 4px; align-items: center; margin-top: 2px;">
-                          <input 
-                            type="text" 
-                            v-model="item.calcFormula" 
-                            class="data-input" 
+                          <input
+                            type="text"
+                            v-model="item.calcFormula"
+                            class="data-input"
                             placeholder="ex: preu * unitats"
                             style="flex: 1; min-width: 260px; font-size: 0.75rem; height: 26px; font-family: var(--font-mono);"
+                            :style="formulaSyntaxErrors[item.element] ? { borderColor: 'var(--color-danger)' } : {}"
                             title="Fórmula personalitzada d'operació"
+                            @blur="checkFormulaSyntax(item.calcFormula, item.element)"
                           />
-                          <button 
-                            type="button" 
-                            class="btn btn-secondary" 
+                          <button
+                            type="button"
+                            class="btn btn-secondary"
                             style="width: auto; padding: 2px 6px; font-size: 0.7rem; height: 26px; font-weight: 600; white-space: nowrap; display: inline-flex; align-items: center; gap: 3px;"
                             @click="openFormulaEditor(item)"
                             title="Obre l'editor ampliat de fórmules amb autocompletat"
@@ -814,6 +854,9 @@ const openFormulaEditor = (item) => {
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                             <span>Amplia</span>
                           </button>
+                        </div>
+                        <div v-if="formulaSyntaxErrors[item.element]" style="font-size: 0.68rem; color: var(--color-danger); margin-top: 2px;">
+                          ⚠️ {{ formulaSyntaxErrors[item.element] }}
                         </div>
                       </template>
 
@@ -1024,15 +1067,17 @@ const openFormulaEditor = (item) => {
 
             <!-- Formula Textarea with Autocomplete listener -->
             <div style="position: relative; flex-grow: 1;">
-              <textarea 
+              <textarea
                 ref="formulaTextareaRef"
-                v-model="formulaTextBuffer" 
+                v-model="formulaTextBuffer"
                 @keyup="onFormulaInputKey"
                 @keydown="onFormulaInputKey"
                 @click="onFormulaInputKey"
-                class="data-input" 
-                rows="8" 
+                @blur="checkFormulaSyntax(formulaTextBuffer, editingFormulaItem?.element)"
+                class="data-input"
+                rows="8"
                 style="width: 100%; font-family: var(--font-mono); font-size: 0.88rem; padding: 10px; line-height: 1.5; resize: vertical;"
+                :style="editingFormulaItem && formulaSyntaxErrors[editingFormulaItem.element] ? { borderColor: 'var(--color-danger)' } : {}"
                 placeholder="Escriu la fórmula. Comença a escriure el nom d'un camp o funció per veure l'autocompletat..."
               ></textarea>
 
@@ -1058,6 +1103,10 @@ const openFormulaEditor = (item) => {
                   <span style="font-size: 0.68rem; color: var(--text-muted); font-weight: 600;">{{ cand.category }}</span>
                 </div>
               </div>
+            </div>
+
+            <div v-if="editingFormulaItem && formulaSyntaxErrors[editingFormulaItem.element]" style="font-size: 0.75rem; color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 10%, transparent); border: 1px solid var(--color-danger); border-radius: var(--radius-xs); padding: 6px 8px;">
+              ⚠️ Error de sintaxi: {{ formulaSyntaxErrors[editingFormulaItem.element] }}
             </div>
 
             <div style="font-size: 0.72rem; color: var(--text-muted); line-height: 1.4;">
