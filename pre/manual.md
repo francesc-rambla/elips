@@ -285,6 +285,8 @@ Al desplegable **Funció** d'un camp **Computed** podeu triar directament una ag
 
 Quan cap agregació estàndard s'ajusta al que voleu, trieu **FÓRMULA** al menú "Funció" i escriviu una expressió amb el mini-llenguatge propi d'elips. Aquesta és una sintaxi **independent** de Jinja2 (la de les plantilles, apartat 4.1): s'avalua sobre les dades, mai dins del document final, i els noms de funció es donen en català.
 
+En sortir del quadre de la fórmula (tant a la casella ràpida com a l'editor ampliat "Amplia"), elips en comprova automàticament la sintaxi amb el mateix analitzador que l'avalua realment: si hi ha un error (parèntesi sense tancar, un `;` de més, una funció desconeguda...) apareix immediatament sota el quadre en vermell i queda registrat al registre d'activitat, sense necessitat de generar cap document per descobrir-ho.
+
 **Referències a camps**
 - Un nom sol (`preu`, `unitats`) es refereix sempre a una propietat de la **mateixa fila** on s'avalua la fórmula.
 - Un camí amb punts (`pres.tipus_ref`, `pres.parts.import`) navega des de l'arrel de les dades: primer busca el camí dins la fila actual, després a tot l'arbre de dades.
