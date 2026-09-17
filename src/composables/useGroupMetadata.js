@@ -395,7 +395,7 @@ export async function saveGroupConfig(store, { groupPath, legacyGroupNames = [],
     });
   }
 
-  // Reasons analyze_mirror_pattern (engine.py) returns when the sheet clearly
+  // Reasons analyze_mirror_pattern (elips_engine/mirror_pattern.py) returns when the sheet clearly
   // WAS attempting a formula-based mirror but not cleanly enough to replicate
   // automatically — as opposed to 'sheet_not_found'/'no_data_rows'/
   // 'no_formulas_found'/'no_excel_file', which just mean "not a mirror sheet

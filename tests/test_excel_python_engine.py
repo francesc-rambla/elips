@@ -14,8 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests the Python data engine (src/python/engine.py) that elips runs inside
-Pyodide, driving it through a synthetic fixture workbook generated on the fly
+"""Tests the Python data engine (the elips_engine package under src/python/)
+that elips runs inside Pyodide, driving it through a synthetic fixture
+workbook generated on the fly
 by tests/fixtures/generate_workbook.py rather than an external, untracked
 .xlsx file. The fixture exercises the app's documented feature set: header-less
 and headered KV sheets, a 4-level nested tabular hierarchy (matched both by
@@ -31,7 +32,6 @@ import json
 import shutil
 import tempfile
 import unittest
-import importlib.util
 from unittest import mock
 
 from openpyxl import load_workbook, Workbook
@@ -43,14 +43,16 @@ import generate_workbook  # noqa: E402
 
 
 def _load_engine_module():
-    """Imports src/python/engine.py as a standalone module, exactly as it
-    ships (this is the same file Vite bundles via a `?raw` import for
-    Pyodide, so testing it directly here tests real production code)."""
-    engine_path = os.path.join(REPO_ROOT, "src", "python", "engine.py")
-    spec = importlib.util.spec_from_file_location("elips_engine", engine_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    """Imports the real elips_engine package from src/python/ (a normal,
+    plain Python package -- see its __init__.py docstring) exactly as it
+    ships: this is the same set of files Vite bundles via `?raw` imports and
+    writes into Pyodide's virtual filesystem, so testing it directly here
+    tests real production code, not a copy."""
+    python_dir = os.path.join(REPO_ROOT, "src", "python")
+    if python_dir not in sys.path:
+        sys.path.insert(0, python_dir)
+    import elips_engine
+    return elips_engine
 
 
 class TestExcelPythonEngine(unittest.TestCase):
@@ -217,7 +219,7 @@ class TestExcelPythonEngine(unittest.TestCase):
             return real_open(live_json_path, *args, **kwargs) if path == '/work/in.json' else real_open(path, *args, **kwargs)
 
         with mock.patch.object(self.engine.os.path, 'exists', side_effect=fake_exists), \
-             mock.patch.object(self.engine, 'open', side_effect=fake_open, create=True):
+             mock.patch('builtins.open', side_effect=fake_open):
             result = json.loads(self.engine.render_md_two_pass_with_report(self.fixture_path, loop_template_path))
 
         self.assertTrue(result["success"], result.get("traceback"))
@@ -650,7 +652,7 @@ class TestExcelPythonEngine(unittest.TestCase):
             return real_open(live_json_path, *args, **kwargs) if path == '/work/in.json' else real_open(path, *args, **kwargs)
 
         with mock.patch.object(self.engine.os.path, 'exists', side_effect=fake_exists), \
-             mock.patch.object(self.engine, 'open', side_effect=fake_open, create=True):
+             mock.patch('builtins.open', side_effect=fake_open):
             result = json.loads(self.engine.render_md_two_pass_with_report(self.fixture_path, fk_template_path))
 
         self.assertTrue(result["success"], result.get("traceback"))

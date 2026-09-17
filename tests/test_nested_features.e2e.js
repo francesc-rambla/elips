@@ -346,7 +346,7 @@ async function testNestedFeatures() {
 
   // 6. Regression: calculated fields (row-level CUSTOM formula + a SUM
   // aggregation) must evaluate correctly through the real Pyodide bridge
-  // (evaluate_computed_fields in src/python/engine.py), not just in an
+  // (evaluate_computed_fields in src/python/elips_engine/calc_fields.py), not just in an
   // isolated Python unit test. This exact scenario — a field literally named
   // "import" (Catalan for "amount", very common in this domain) — is what
   // caught a real bug during development: an overly broad security

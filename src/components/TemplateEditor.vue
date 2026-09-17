@@ -161,7 +161,7 @@ const modalExpr = ref('');
 // ({{ x | trim | upper | default('N/A') }}), so the modal builds a list of
 // steps instead of a single dropdown. Catalog covers elips' own Catalan
 // formatting filters (coin/number/percent/words/prefix/sort/where/cert/fals,
-// all registered in engine.py) plus the standard Jinja2 filters most useful
+// all registered in src/python/elips_engine/template_filters.py) plus the standard Jinja2 filters most useful
 // in prose documents; anything not listed here can still be typed by hand
 // via the 'custom' step, which round-trips through the parser below like
 // any other step.
@@ -250,7 +250,7 @@ const moveFilterChainStep = (id, dir) => {
 // A param's JS value -> the Jinja2/Python literal text it's written as.
 // Keyword args (key=literal) are used for every multi-param filter, rather
 // than positional ones: the keyword name IS the underlying Python
-// function's real parameter name (kept in sync with engine.py/Jinja2's own
+// function's real parameter name (kept in sync with template_filters.py/Jinja2's own
 // filter signatures), so params can be added/reordered in the catalog
 // without the meaning of an existing template silently shifting to a
 // different position — and it lets a boolean/select param stay unambiguous
@@ -2370,7 +2370,7 @@ const {
 
 // Live preview of the variable modal's expression + filter chain, evaluated
 // for real against sample data via the already-running Pyodide/Jinja2
-// engine (see render_expression_preview in engine.py) rather than
+// engine (see render_expression_preview in template_render.py) rather than
 // reimplementing every filter's semantics in JS. Best-effort by nature: if
 // the expression references a loop iterator (e.g. `part.import`), that
 // iterator is bound to the FIRST row of whichever array the active

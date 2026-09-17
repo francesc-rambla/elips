@@ -21,7 +21,16 @@ import { useWorkspaceStore } from '../stores/workspace';
 import * as pandocModule from '../vendor/pandoc/pandoc.js';
 import { saveBinaryFile, getBinaryFile } from '../utils/db';
 import { resolveVectorList } from './useSchemaResolver';
-import enginePyCode from '../python/engine.py?raw';
+
+// The Python engine now ships as a real, plain Python package
+// (src/python/elips_engine/ — see its __init__.py docstring: it also works
+// standalone, e.g. on a future server, with zero elips-specific glue) rather
+// than a single file executed as one text blob. Vite bundles every module's
+// source as a raw string (still fine for the single-file build); the actual
+// loading below writes each one into Pyodide's virtual filesystem and lets
+// Python's own `import` machinery resolve the package, instead of string-
+// concatenating them into one shared namespace.
+const enginePackageFiles = import.meta.glob('../python/elips_engine/*.py', { query: '?raw', import: 'default', eager: true });
 
 // Save WebAssembly engine instances outside vue reactiveness scope for speed
 var _pyodide = null;
@@ -76,9 +85,27 @@ except Exception:
       }
       store.addLog("Llibreries jinja2 i openpyxl carregades correctament en entorn Python.", 'success');
 
-      // Injecting PyEngine logic
+      // Injecting PyEngine logic: write elips_engine's real package files into
+      // Pyodide's virtual filesystem, then import it as a normal Python
+      // package (not string-concatenation into one shared namespace) — the
+      // same source tree a future server could import unchanged.
       store.addLog("S'està injectant la lògica de processament en Python...", 'info');
-      await _pyodide.runPythonAsync(enginePyCode);
+      const enginePkgDir = '/elips_engine';
+      try {
+        _pyodide.FS.mkdir(enginePkgDir);
+      } catch (e) {
+        // Already exists (e.g. a previous initEngines() call) — fine.
+      }
+      for (const [path, content] of Object.entries(enginePackageFiles)) {
+        const filename = path.split('/').pop();
+        _pyodide.FS.writeFile(`${enginePkgDir}/${filename}`, content);
+      }
+      await _pyodide.runPythonAsync(`
+import sys
+if '/' not in sys.path:
+    sys.path.insert(0, '/')
+from elips_engine import *
+      `);
       store.addLog("Motor de dades Python vinculat correctament a Pyodide.", 'success');
 
       // 2. Pandoc WASM Initialization
@@ -587,7 +614,7 @@ orphan_count
   /**
    * Evaluates every calculated field in `dataObj` (row-level CUSTOM formulas,
    * then SUM/COUNT/AVERAGE/MIN/MAX/OR/AND aggregations) by delegating the
-   * actual computation to Python's evaluate_computed_fields (src/python/engine.py),
+   * actual computation to Python's evaluate_computed_fields (src/python/elips_engine/calc_fields.py),
    * which runs inside Pyodide's WASM sandbox instead of via a JS `new Function(...)`
    * in the page's own execution context. Mutates dataObj in place (so Vue's
    * reactivity keeps targeting the same objects/arrays) and returns it.
