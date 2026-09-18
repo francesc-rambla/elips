@@ -464,22 +464,51 @@ const removeItemIfExist = (key) => {
   }
 };
 
-// Persisteix a localStorage l'estat compartit del projecte actiu (dades Excel, metadades i esquema de jerarquia)
+// Reporta de manera visible (indicador 🔴 del Ribbon + registre d'activitat) qualsevol
+// fallada en escriure a localStorage -- més que res QuotaExceededError, que abans
+// (vegeu l'historial de git) es propagava com a excepció no capturada des de QUALSEVOL
+// dels ~20 punts de crida a saveCurrentProject/saveCurrentDocumentState repartits per
+// aquest fitxer (el $subscribe d'autodesat, "Desa" manual, els watchers de sincronització
+// instantània de templateText/excelJsonData/editorMetadata, beforeunload...). El resultat
+// era un desat que fallava en silenci sense cap avís -- i, com que l'excepció avortava la
+// resta de la funció, ni tan sols les claus PRÈVIES a la que superava la quota (o el pas
+// següent del watcher, com el registre diferencial de l'historial de versions) arribaven
+// a executar-se -- típicament en enganxar una configuració gran a un projecte quan
+// l'espai de localStorage de l'origen (compartit per tots els projectes desats) ja
+// estava pràcticament esgotat.
+const reportSaveError = (err, pName) => {
+  saveStatus.value = 'error';
+  const isQuotaError = err && (err.name === 'QuotaExceededError' || err.code === 22 || err.code === 1014);
+  const message = isQuotaError
+    ? "❌ No s'ha pogut desar: l'espai d'emmagatzematge local del navegador està ple. Esborreu algun projecte que ja no necessiteu des de 'Gestiona Projectes' i torneu-ho a provar -- fins que no ho feu, els canvis d'aquesta sessió NO estan desats."
+    : `❌ No s'ha pogut desar el projecte${pName ? ` '${pName}'` : ''}: ${err?.message || err}`;
+  store.addLog(message, 'error');
+};
+
+// Persisteix a localStorage l'estat compartit del projecte actiu (dades Excel, metadades i esquema de jerarquia).
+// Mai llança: qualsevol fallada (típicament QuotaExceededError) es reporta via reportSaveError
+// i es retorna `false`, perquè cap dels seus ~20 punts de crida hagi de recordar-se'n de capturar-la.
 const saveCurrentProject = () => {
   const name = currentProjectName.value || localStorage.getItem('currentProjectName') || 'Default';
-  if (!name) return;
-  localStorage.setItem('currentProjectName', name);
-  
-  if (store.excelJsonData) {
-    localStorage.setItem(`${name}:excelJsonData`, JSON.stringify(store.excelJsonData));
-  } else {
-    localStorage.removeItem(`${name}:excelJsonData`);
+  if (!name) return true;
+  try {
+    localStorage.setItem('currentProjectName', name);
+
+    if (store.excelJsonData) {
+      localStorage.setItem(`${name}:excelJsonData`, JSON.stringify(store.excelJsonData));
+    } else {
+      localStorage.removeItem(`${name}:excelJsonData`);
+    }
+    localStorage.setItem(`${name}:excelFileName`, store.excelFileName || '');
+    localStorage.setItem(`${name}:excelFileSize`, String(store.excelFileSize || '0'));
+    localStorage.setItem(`${name}:editorMetadata`, JSON.stringify(store.editorMetadata || []));
+    localStorage.setItem(`${name}:sheetInfo`, JSON.stringify(store.sheetInfo || []));
+    localStorage.setItem(`${name}:hierarchySchema`, JSON.stringify(store.hierarchySchema || {}));
+    return true;
+  } catch (err) {
+    reportSaveError(err, name);
+    return false;
   }
-  localStorage.setItem(`${name}:excelFileName`, store.excelFileName || '');
-  localStorage.setItem(`${name}:excelFileSize`, String(store.excelFileSize || '0'));
-  localStorage.setItem(`${name}:editorMetadata`, JSON.stringify(store.editorMetadata || []));
-  localStorage.setItem(`${name}:sheetInfo`, JSON.stringify(store.sheetInfo || []));
-  localStorage.setItem(`${name}:hierarchySchema`, JSON.stringify(store.hierarchySchema || {}));
 };
 
 // Carrega a l'store la configuració d'un document concret (plantilla, document de referència i noms de sortida)
@@ -538,20 +567,26 @@ const switchActiveDocument = (newDocName) => {
   store.addLog(`S'ha canviat al document '${newDocName}'.`, 'info');
 };
 
-// Persisteix l'estat del document actiu (plantilla, noms de sortida i binari de referència a IndexedDB)
+// Persisteix l'estat del document actiu (plantilla, noms de sortida i binari de referència a IndexedDB).
+// Mai llança, pel mateix motiu que saveCurrentProject (vegeu el seu comentari).
 const saveCurrentDocumentState = (pName, dName) => {
-  if (!pName || !dName) return;
-  
-  setItemIfChanged(`${pName}:doc:${dName}:templateText`, store.templateText || '');
-  setItemIfChanged(`${pName}:doc:${dName}:templateFileName`, store.templateFileName || '');
-  setItemIfChanged(`${pName}:doc:${dName}:templateFileSize`, store.templateFileSize || '0');
-  
-  setItemIfChanged(`${pName}:doc:${dName}:refDocFileName`, store.refDocFileName || '');
-  setItemIfChanged(`${pName}:doc:${dName}:refDocFileSize`, store.refDocFileSize || '0');
-  
-  setItemIfChanged(`${pName}:doc:${dName}:outNameDocx`, store.outNameDocx || '');
-  setItemIfChanged(`${pName}:doc:${dName}:outNameMd`, store.outNameMd || '');
-  
+  if (!pName || !dName) return true;
+
+  try {
+    setItemIfChanged(`${pName}:doc:${dName}:templateText`, store.templateText || '');
+    setItemIfChanged(`${pName}:doc:${dName}:templateFileName`, store.templateFileName || '');
+    setItemIfChanged(`${pName}:doc:${dName}:templateFileSize`, store.templateFileSize || '0');
+
+    setItemIfChanged(`${pName}:doc:${dName}:refDocFileName`, store.refDocFileName || '');
+    setItemIfChanged(`${pName}:doc:${dName}:refDocFileSize`, store.refDocFileSize || '0');
+
+    setItemIfChanged(`${pName}:doc:${dName}:outNameDocx`, store.outNameDocx || '');
+    setItemIfChanged(`${pName}:doc:${dName}:outNameMd`, store.outNameMd || '');
+  } catch (err) {
+    reportSaveError(err, pName);
+    return false;
+  }
+
   if (store.refDocFile) {
     store.refDocFile.arrayBuffer().then((buf) => {
       saveBinaryFile(`${pName}:doc:${dName}:refDocBuffer`, buf);
@@ -560,6 +595,7 @@ const saveCurrentDocumentState = (pName, dName) => {
     deleteBinaryFile(`${pName}:doc:${dName}:refDocBuffer`);
     removeItemIfExist(`${pName}:doc:${dName}:refDocFileBase64`);
   }
+  return true;
 };
 
 // Crea un document nou en blanc dins del projecte actiu i el converteix en el document actiu
@@ -640,33 +676,45 @@ const deleteDocument = (dName) => {
   store.addLog(`Document '${dName}' eliminat d'aquest projecte.`, 'info');
 };
 
-const saveStatus = ref('saved'); // 'saved', 'modified', 'saving'
+const saveStatus = ref('saved'); // 'saved', 'modified', 'saving', 'error'
 let autoSaveTimer = null;
 
-// Executa el desat efectiu (projecte + document actiu) i actualitza l'indicador visual d'estat de desat
+// Executa el desat efectiu (projecte + document actiu) i actualitza l'indicador visual d'estat de desat.
+// Retorna `true`/`false` en lloc de deixar que una excepció es propagui: saveCurrentProject/
+// saveCurrentDocumentState escriuen a localStorage sense cap límit de mida propi, i
+// localStorage.setItem llança QuotaExceededError si l'origen ja ha esgotat el seu espai
+// (p. ex. després d'acumular diversos projectes amb models grans) -- abans, aquesta excepció
+// no es capturava enlloc: avortava saveCurrentProject a mig fer (cap de les claus posteriors
+// a la que fallava s'arribava a escriure), deixava l'indicador de desat encallat per sempre a
+// "Desant..." i el desat, tant l'automàtic com el manual, fallava en silenci sense cap avís,
+// fent creure a l'usuari que els canvis (p. ex. una configuració acabada d'enganxar) estaven
+// desats quan en realitat mai havien arribat a escriure's.
 const executeSave = () => {
   const pName = currentProjectName.value;
   const dName = activeDocName.value;
-  if (!pName || !dName) return;
+  if (!pName || !dName) return true;
 
   saveStatus.value = 'saving';
 
-  // Save shared project state
-  saveCurrentProject();
-
-  // Save active document state
-  saveCurrentDocumentState(pName, dName);
+  // Save shared project state, then active document state -- neither throws
+  // (see their own doc comments); a failure reports itself via
+  // reportSaveError and just returns false.
+  const projectOk = saveCurrentProject();
+  const docOk = saveCurrentDocumentState(pName, dName);
+  if (!projectOk || !docOk) return false;
 
   setTimeout(() => {
-    saveStatus.value = 'saved';
+    if (saveStatus.value !== 'error') saveStatus.value = 'saved';
   }, 250);
+  return true;
 };
 
 // Força un desat immediat (Ctrl+S o botó), cancel·lant el temporitzador d'autodesat pendent
 const manualSave = () => {
   if (autoSaveTimer) clearTimeout(autoSaveTimer);
-  executeSave();
-  store.addLog(`✓ Canvis del document '${activeDocName.value}' desats correctament a la sessió local.`, 'success');
+  if (executeSave()) {
+    store.addLog(`✓ Canvis del document '${activeDocName.value}' desats correctament a la sessió local.`, 'success');
+  }
 };
 
 // Autodesat / Persistència en LocalStorage via Pinia Subscription amb temporitzador configurable (per defecte 5 segons)
@@ -739,7 +787,14 @@ watch(() => store.excelJsonData, (newVal) => {
 watch(() => store.hierarchySchema, (newSchema) => {
   if (newSchema && typeof newSchema === 'object' && Object.keys(newSchema).length > 0) {
     const pName = localStorage.getItem('currentProjectName') || 'Default';
-    localStorage.setItem(`${pName}:hierarchySchema`, JSON.stringify(newSchema));
+    try {
+      localStorage.setItem(`${pName}:hierarchySchema`, JSON.stringify(newSchema));
+    } catch (err) {
+      // This watcher persists eagerly and independently of saveCurrentProject
+      // (executeSave), so it needs the same reportSaveError guard against a
+      // full localStorage quota instead of throwing uncaught and going unnoticed.
+      reportSaveError(err, pName);
+    }
   }
 }, { immediate: true, deep: true });
 
@@ -1837,13 +1892,20 @@ const generateDocuments = async () => {
         >
           🟠
         </span>
-        <span 
-          v-else-if="saveStatus === 'saving'" 
-          style="display: inline-flex; align-items: center; font-size: 0.7rem; font-weight: 600; color: var(--color-primary); background: var(--color-primary-light); padding: 1px 6px; border-radius: 8px; border: 1px solid var(--color-primary);" 
-          class="loading-pulse" 
+        <span
+          v-else-if="saveStatus === 'saving'"
+          style="display: inline-flex; align-items: center; font-size: 0.7rem; font-weight: 600; color: var(--color-primary); background: var(--color-primary-light); padding: 1px 6px; border-radius: 8px; border: 1px solid var(--color-primary);"
+          class="loading-pulse"
           title="Desant..."
         >
           🔵
+        </span>
+        <span
+          v-else-if="saveStatus === 'error'"
+          style="display: inline-flex; align-items: center; font-size: 0.7rem; font-weight: 700; color: white; background: var(--color-danger); padding: 1px 6px; border-radius: 8px; border: 1px solid var(--color-danger); cursor: help;"
+          title="Error en desar -- els últims canvis NO s'han pogut desar. Vegeu el registre d'activitat per als detalls."
+        >
+          🔴
         </span>
       </div>
     </div>
@@ -2317,12 +2379,19 @@ const generateDocuments = async () => {
         >
           Modificat
         </span>
-        <span 
-          v-else-if="saveStatus === 'saving'" 
-          style="display: inline-flex; align-items: center; font-size: 0.68rem; font-weight: 600; color: var(--color-primary); background: var(--color-primary-light); padding: 1px 5px; border-radius: 8px; border: 1px solid var(--color-primary);" 
+        <span
+          v-else-if="saveStatus === 'saving'"
+          style="display: inline-flex; align-items: center; font-size: 0.68rem; font-weight: 600; color: var(--color-primary); background: var(--color-primary-light); padding: 1px 5px; border-radius: 8px; border: 1px solid var(--color-primary);"
           class="loading-pulse"
         >
           Desant...
+        </span>
+        <span
+          v-else-if="saveStatus === 'error'"
+          style="display: inline-flex; align-items: center; font-size: 0.68rem; font-weight: 700; color: white; background: var(--color-danger); padding: 1px 5px; border-radius: 8px; border: 1px solid var(--color-danger); cursor: help;"
+          title="Els últims canvis NO s'han pogut desar. Vegeu el registre d'activitat."
+        >
+          Error en desar
         </span>
       </div>
 
