@@ -437,5 +437,8 @@ No hi ha cap diferència funcional entre redactar la plantilla principal del doc
 ### ❓ Com puc compartir un projecte complet amb un altre company?
 **R:** Feu clic a **📦 Descarrega Projecte (ZIP)**. El fitxer descarregat conté totes les plantilles, dades, metadades i documents Word. El vostre company només haurà de pujar el fitxer ZIP a **elips** per continuar treballant exactament des del mateix punt.
 
+### ❓ Què vol dir la icona vermella 🔴 "Error en desar" al costat del botó Desa?
+**R:** elips desa el projecte i el document actiu a l'espai d'emmagatzematge local del navegador (`localStorage`), que té una mida limitada compartida entre **tots** els vostres projectes desats (normalment uns 5-10 MB per navegador). Si aquest espai s'esgota — típicament perquè s'han acumulat diversos projectes amb models grans — el desat (tant l'automàtic com el manual amb el botó **Desa**) no es pot completar, i la icona 🔴 substitueix l'habitual 🟢/🟠/🔵 fins que torneu a desar amb èxit. Els canvis d'aquesta sessió **no estan desats** mentre la icona sigui vermella. Consulteu el registre d'activitat per al detall de l'error, i esborreu algun projecte que ja no necessiteu des de **⚙️ Gestiona Projectes** per alliberar espai; torneu-ho a provar amb el botó **Desa** un cop fet.
+
 ---
 *Documentació actualitzada per a elips v2.0 - Entorn web WASM/Pyodide de generació de contractes públics.*
