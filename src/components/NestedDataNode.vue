@@ -28,6 +28,7 @@ import VisualGridEditorModal from './VisualGridEditorModal.vue';
 import GroupConfigModal from './GroupConfigModal.vue';
 import TemplateEditor from './TemplateEditor.vue';
 import NestedItemForm from './NestedItemForm.vue';
+import MarkdownField from './MarkdownField.vue';
 
 const props = defineProps({
   parentObj: {
@@ -1628,7 +1629,7 @@ const itemFormHelpers = {
                       :value="unwrapFkValue(row[h])"
                       @change="row[h] = $event.target.value"
                       class="data-input"
-                      style="flex-grow: 1; height: 28px; font-size: 0.78rem;"
+                      style="flex-grow: 1; height: 28px;"
                     >
                       <option value="">[Buit / Sense valor]</option>
                       <option
@@ -1649,7 +1650,7 @@ const itemFormHelpers = {
                     type="date"
                     v-model="row[h]"
                     class="data-input"
-                    style="flex-grow: 1; height: 28px; font-size: 0.78rem;"
+                    style="flex-grow: 1; height: 28px;"
                   >
 
                   <!-- Number Type -->
@@ -1661,7 +1662,7 @@ const itemFormHelpers = {
                     step="any"
                     v-model="row[h]"
                     class="data-input"
-                    style="flex-grow: 1; height: 28px; font-size: 0.78rem;"
+                    style="flex-grow: 1; height: 28px; text-align: right;"
                   >
 
                   <!-- Percentage Type -->
@@ -1674,7 +1675,7 @@ const itemFormHelpers = {
                       :value="formatPercentageDisplay(row[h])"
                       @input="updatePercentageValue(row, h, $event.target.value)"
                       class="data-input"
-                      style="flex-grow: 1; height: 28px; font-size: 0.78rem; padding-right: 24px;"
+                      style="flex-grow: 1; height: 28px; text-align: right; padding-right: 24px;"
                       placeholder="0"
                     >
                     <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.78rem; color: var(--text-muted); pointer-events: none;">%</span>
@@ -1689,7 +1690,7 @@ const itemFormHelpers = {
                       step="any"
                       v-model="row[h]"
                       class="data-input"
-                      style="flex-grow: 1; height: 28px; font-size: 0.78rem;"
+                      style="flex-grow: 1; height: 28px; text-align: right;"
                     >
                     <span style="font-weight: 600; font-size: 0.78rem; color: var(--text-muted); flex-shrink: 0;">{{ getElementMetadata(h)?.currencySymbol || '€' }}</span>
                   </div>
@@ -1701,22 +1702,21 @@ const itemFormHelpers = {
                     :data-path="getItemPath(rIdx, h)"
                     v-model="row[h]"
                     class="data-input"
-                    style="flex-grow: 1; height: 28px; font-size: 0.78rem;"
+                    style="flex-grow: 1; height: 28px;"
                   >
                     <option value="">[Buit / Sense valor]</option>
                     <option :value="true">Cert (True)</option>
                     <option :value="false">Fals (False)</option>
                   </select>
 
-                  <!-- Text Type (default) -->
-                  <input 
+                  <!-- Text Type (default): rendered Markdown, swaps to raw source while editing -->
+                  <MarkdownField
                     v-else
                     :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
                     :data-path="getItemPath(rIdx, h)"
-                    type="text"
                     v-model="row[h]"
                     class="data-input"
-                    style="flex-grow: 1; height: 28px; font-size: 0.78rem; padding: 2px 6px;"
+                    style="flex-grow: 1; min-height: 28px;"
                   />
 
                   <button 

@@ -131,8 +131,16 @@ async function runE2ETests() {
     });
     await new Promise(r => setTimeout(r, 1000));
 
-    // Set values into the new keys
+    // Set values into the new keys. Text-type fields render as MarkdownField
+    // (a rendered-Markdown preview by default), which only mounts a real
+    // <textarea data-path="..."> once clicked into edit mode -- so click the
+    // field first, then fill the textarea that appears, same as a real user.
     console.log("  • Assignant valors als camps creats...");
+    await page.evaluate(() => {
+      const organField = document.querySelector('[data-path*="nom_organ"]');
+      if (organField) organField.click();
+    });
+    await new Promise(r => setTimeout(r, 200));
     await page.evaluate(() => {
       const organInput = document.querySelector('textarea[data-path*="nom_organ"], input[data-path*="nom_organ"]');
       if (organInput) {
@@ -140,6 +148,15 @@ async function runE2ETests() {
         organInput.dispatchEvent(new Event('input', { bubbles: true }));
         organInput.dispatchEvent(new Event('blur', { bubbles: true }));
       }
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    await page.evaluate(() => {
+      const pressupostField = document.querySelector('[data-path*="pressupost_base"]');
+      if (pressupostField) pressupostField.click();
+    });
+    await new Promise(r => setTimeout(r, 200));
+    await page.evaluate(() => {
       const pressupostInput = document.querySelector('textarea[data-path*="pressupost_base"], input[data-path*="pressupost_base"]');
       if (pressupostInput) {
         pressupostInput.value = '150000';

@@ -24,6 +24,7 @@ import { isPrimitive, isNonEmptySchema, universalFindSchema, resolveVectorList, 
 import { builtinFunctions, useFormulaAutocomplete } from '../composables/useFormulaAutocomplete';
 import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, saveGroupConfig as saveGroupConfigShared, getGroupViewMode, getVisibleColumns } from '../composables/useGroupMetadata';
 import NestedDataNode from './NestedDataNode.vue';
+import MarkdownField from './MarkdownField.vue';
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
 
@@ -1839,7 +1840,7 @@ onMounted(() => {
                         :value="unwrapFkValue(store.excelJsonData[name][item.key])"
                         @change="store.excelJsonData[name][item.key] = $event.target.value"
                         class="data-input"
-                        style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                        style="flex-grow: 1; height: 28px;"
                       >
                         <option value="">[Buit / Sense valor]</option>
                         <option
@@ -1860,7 +1861,7 @@ onMounted(() => {
                       type="date"
                       v-model="store.excelJsonData[name][item.key]"
                       class="data-input"
-                      style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                      style="flex-grow: 1; height: 28px;"
                     >
 
                     <!-- Boolean Type -->
@@ -1871,7 +1872,7 @@ onMounted(() => {
                       v-model="store.excelJsonData[name][item.key]"
                       @change="onCellBlur"
                       class="data-input"
-                      style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                      style="flex-grow: 1; height: 28px;"
                     >
                       <option value="">[Buit / Sense valor]</option>
                       <option :value="true">Cert (True)</option>
@@ -1890,9 +1891,9 @@ onMounted(() => {
                       @blur="onCellBlur"
                       @change="onCellBlur"
                       class="data-input"
-                      style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                      style="flex-grow: 1; height: 28px; text-align: right;"
                     >
-                    
+
                     <!-- Percentage Type -->
                     <div v-else-if="getElementType(name, item.key) === 'Percentage'" style="display: flex; align-items: center; flex-grow: 1; position: relative;">
                       <input 
@@ -1905,7 +1906,7 @@ onMounted(() => {
                         @blur="onCellBlur"
                         @change="onCellBlur"
                         class="data-input"
-                        style="flex-grow: 1; height: 28px; font-size: 0.8rem; padding-right: 24px;"
+                        style="flex-grow: 1; height: 28px; text-align: right; padding-right: 24px;"
                         placeholder="0"
                       >
                       <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.8rem; color: var(--text-muted); pointer-events: none;">%</span>
@@ -1923,7 +1924,7 @@ onMounted(() => {
                         @blur="onCellBlur"
                         @change="onCellBlur"
                         class="data-input"
-                        style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
+                        style="flex-grow: 1; height: 28px; text-align: right;"
                       >
                       <span style="font-weight: 600; font-size: 0.8rem; color: var(--text-muted); flex-shrink: 0;">{{ getElementMetadata(name, item.key)?.currencySymbol || '€' }}</span>
                     </div>
@@ -1949,30 +1950,18 @@ onMounted(() => {
                       </button>
                     </div>
                     
-                    <!-- Text Type (default) -->
-                    <textarea 
-                      v-else-if="viewMode === 'compact' || (typeof item.val === 'string' && item.val.length > 40)"
-                      :id="'data-field-' + name + '-' + item.key"
-                      :data-path="name + '.' + item.key"
-                      v-model="store.excelJsonData[name][item.key]"
-                      @input="onCellInput"
-                      @blur="onCellBlur"
-                      class="data-input"
-                      rows="1"
-                      style="flex-grow: 1; resize: vertical; font-size: 0.8rem; min-height: 28px;"
-                    ></textarea>
-                    <input 
+                    <!-- Text Type (default): rendered Markdown, swaps to raw source while editing -->
+                    <MarkdownField
                       v-else
                       :id="'data-field-' + name + '-' + item.key"
                       :data-path="name + '.' + item.key"
-                      type="text"
                       v-model="store.excelJsonData[name][item.key]"
-                      @input="onCellInput"
+                      @update:model-value="onCellInput"
                       @blur="onCellBlur"
                       class="data-input"
-                      style="flex-grow: 1; height: 28px; font-size: 0.8rem;"
-                    >
-                    <button 
+                      style="flex-grow: 1; min-height: 28px;"
+                    />
+                    <button
                       v-if="getElementType(name, item.key) === 'Text'"
                       class="btn-icon-only"
                       style="height: 28px; width: 28px; min-width: 28px; font-size: 0.85rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
@@ -2339,7 +2328,7 @@ onMounted(() => {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-xs);
   font-family: inherit;
-  font-size: 0.85rem;
+  font-size: 1rem;
   background-color: var(--bg-primary);
   color: var(--text-primary);
   box-sizing: border-box;

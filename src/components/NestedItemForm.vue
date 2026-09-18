@@ -19,6 +19,7 @@
 <script setup>
 import { useWorkspaceStore } from '../stores/workspace';
 import NestedDataNode from './NestedDataNode.vue';
+import MarkdownField from './MarkdownField.vue';
 
 // Extracted from NestedDataNode.vue's own "INTERMEDIATE LEVEL" accordion
 // body (the field-grid for one row's primitive fields, plus its recursive
@@ -163,7 +164,7 @@ const store = useWorkspaceStore();
             step="any"
             v-model="item[entry.key]"
             class="data-input"
-            style="flex-grow: 1; height: 32px;"
+            style="flex-grow: 1; height: 32px; text-align: right;"
           >
 
           <!-- Percentage Type -->
@@ -176,7 +177,7 @@ const store = useWorkspaceStore();
               :value="helpers.formatPercentageDisplay(item[entry.key])"
               @input="helpers.updatePercentageValue(item, entry.key, $event.target.value)"
               class="data-input"
-              style="flex-grow: 1; height: 32px; padding-right: 24px;"
+              style="flex-grow: 1; height: 32px; text-align: right; padding-right: 24px;"
               placeholder="0"
             >
             <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.82rem; color: var(--text-muted); pointer-events: none;">%</span>
@@ -191,7 +192,7 @@ const store = useWorkspaceStore();
               step="any"
               v-model="item[entry.key]"
               class="data-input"
-              style="flex-grow: 1; height: 32px;"
+              style="flex-grow: 1; height: 32px; text-align: right;"
             >
             <span style="font-weight: 600; font-size: 0.82rem; color: var(--text-muted); flex-shrink: 0;">{{ helpers.getElementMetadata(entry.key)?.currencySymbol || '€' }}</span>
           </div>
@@ -210,16 +211,15 @@ const store = useWorkspaceStore();
             <option :value="false">Fals (False)</option>
           </select>
 
-          <!-- Text Type (default) -->
-          <input
+          <!-- Text Type (default): rendered Markdown, swaps to raw source while editing -->
+          <MarkdownField
             v-else
             :id="'data-field-' + fullPath + '-' + idx + '-' + entry.key"
             :data-path="helpers.getItemPath(idx, entry.key)"
-            type="text"
             v-model="item[entry.key]"
             class="data-input"
-            style="flex-grow: 1; height: 32px;"
-          >
+            style="flex-grow: 1; min-height: 32px;"
+          />
 
           <button
             v-if="helpers.getElementType(entry.key) === 'Text'"
