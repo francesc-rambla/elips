@@ -1005,12 +1005,14 @@ const importProjectZip = async (file) => {
 
     // Extract raw JSON data & metadata if present in zip
     let hasJsonData = false;
+    let trustedJsonData = null;
     const jsonFile = zip.file("dades_excel.json");
     if (jsonFile) {
       const jText = await jsonFile.async("string");
       try {
         const jData = JSON.parse(jText);
         store.excelJsonData = jData;
+        trustedJsonData = jData;
         localStorage.setItem(`${pName}:excelJsonData`, jText);
         hasJsonData = true;
       } catch (_) {}
@@ -1046,10 +1048,29 @@ const importProjectZip = async (file) => {
           await initEngines();
         }
         writeVirtualExcel(xBuffer);
-        const parsedData = await parseExcel(xBuffer);
-        if (!hasJsonData || (parsedData && Object.keys(parsedData).length > 0)) {
-          store.excelJsonData = parsedData;
-          localStorage.setItem(`${pName}:excelJsonData`, JSON.stringify(parsedData));
+        // parseExcel() is still called unconditionally for its side effects
+        // (sets store.hierarchySchema, primes Pyodide's virtual filesystem
+        // for later actions like "Restaura de l'Excel") -- but it ALSO
+        // unconditionally overwrites store.excelJsonData itself as part of
+        // its own body, before we ever get a chance to look at its return
+        // value. When dades_excel.json was already loaded above, that
+        // overwrite must be undone right after: dades_excel.json is a
+        // direct serialization of the app's own live state, always
+        // complete, while the bundled .xlsx is only as complete as
+        // openpyxl's cached formula values -- which for a Computed-type
+        // field (never overwritten with its literal value -- see
+        // update_excel_from_json's complex-formula preservation, the same
+        // mechanism test_05 in test_excel_python_engine.py covers) stay
+        // blank until a real spreadsheet app has opened and recalculated
+        // the file. Silently replacing correct budget totals with
+        // blanks/zeros from those uncached formula cells was the actual
+        // direct cause of the "pressupost deixa de calcular-se
+        // correctament" bug reported after importing a ZIP.
+        await parseExcel(xBuffer);
+        if (hasJsonData) {
+          store.excelJsonData = trustedJsonData;
+        } else {
+          localStorage.setItem(`${pName}:excelJsonData`, JSON.stringify(store.excelJsonData));
         }
       } catch (parseErr) {
         console.warn("Avís en processar Excel del paquet ZIP:", parseErr);
