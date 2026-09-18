@@ -105,6 +105,30 @@ class TestExcelPythonEngine(unittest.TestCase):
         codi_meta = next(m for m in data["editor_metadata"] if m["group"] == "General" and m["element"] == "codi")
         self.assertEqual(codi_meta["options"], [])
 
+    def test_02c_group_view_config_survives_an_excel_round_trip(self):
+        """Regressió: la configuració de vista taula/formulari d'un grup (viewMode/visibleColumns,
+        desada al registre de capçalera '_group_label' per saveGroupConfig) no estava a la llista
+        de columnes que update_excel_from_json escriu al full editor_metadata -- es perdia
+        silenciosament en qualsevol reimportació des de l'Excel (inclosa la que fa la importació
+        d'un ZIP amb un .xlsx empaquetat)."""
+        data = self.engine.excel_to_json(self.fixture_path)["data"]
+        data["editor_metadata"].append({
+            "group": "pres.parts",
+            "element": "_group_label",
+            "isGroupHeader": True,
+            "viewMode": "table",
+            "visibleColumns": ["id_partida", "nom_partida"],
+        })
+
+        out_path = os.path.join(self.tmp_dir, "view_config_roundtrip.xlsx")
+        self.engine.update_excel_from_json(self.fixture_path, json.dumps(data), out_path)
+
+        reparsed = self.engine.excel_to_json(out_path)["data"]
+        header = next(m for m in reparsed["editor_metadata"]
+                      if m.get("group") == "pres.parts" and m.get("element") == "_group_label")
+        self.assertEqual(header["viewMode"], "table")
+        self.assertEqual(header["visibleColumns"], ["id_partida", "nom_partida"])
+
     def test_03_four_level_nested_hierarchy_incl_explicit_foreign_key(self):
         """pres -> pres.parts -> pres.parts.activitats -> pres.parts.activitats.rec (aquest darrer enllaçat
         per clau forana explícita declarada a _hierarchy_metadata, no per coincidència de nom de columna)."""

@@ -1018,13 +1018,17 @@ const importProjectZip = async (file) => {
       } catch (_) {}
     }
 
+    let hasMetaData = false;
+    let trustedMetaData = null;
     const metaFile = zip.file("editor_metadata.json");
     if (metaFile) {
       const mText = await metaFile.async("string");
       try {
         const mData = JSON.parse(mText);
         store.editorMetadata = mData;
+        trustedMetaData = mData;
         localStorage.setItem(`${pName}:editorMetadata`, mText);
+        hasMetaData = true;
       } catch (_) {}
     }
 
@@ -1071,6 +1075,21 @@ const importProjectZip = async (file) => {
           store.excelJsonData = trustedJsonData;
         } else {
           localStorage.setItem(`${pName}:excelJsonData`, JSON.stringify(store.excelJsonData));
+        }
+        // Same problem, same fix, for editor_metadata.json: parseExcel()
+        // ALSO unconditionally overwrites store.editorMetadata as a side
+        // effect (useWasmEngines.js). Its Excel-derived version used to
+        // silently drop a group's own viewMode/visibleColumns configuration
+        // (the "vista taula/formulari" set up per group) -- excel_io.py now
+        // writes/reads those two columns too, but a ZIP built by an older
+        // version of the app before that fix still has a bundled .xlsx
+        // missing them, so restoring from the trusted JSON here is the
+        // belt-and-braces fix for BOTH cases (old ZIPs, and the general
+        // "don't let an Excel re-parse clobber data we already trust" issue).
+        if (hasMetaData) {
+          store.editorMetadata = trustedMetaData;
+        } else {
+          localStorage.setItem(`${pName}:editorMetadata`, JSON.stringify(store.editorMetadata || []));
         }
       } catch (parseErr) {
         console.warn("Avís en processar Excel del paquet ZIP:", parseErr);

@@ -848,17 +848,21 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                 if row_dict.get('group') or row_dict.get('element'):
                     if 'multiple' in row_dict:
                         row_dict['multiple'] = bool(row_dict['multiple']) if row_dict['multiple'] not in ('', None, 0, '0', False) else False
-                    # A static Select field's options are written as a single
-                    # ", "-joined cell (see update_excel_from_json's editor_metadata
-                    # writer) but live/saved metadata always models them as an
-                    # array (see saveGroupConfig in useGroupMetadata.js) -- split
-                    # it back, the same way `headers` gets split for _sheet_info
-                    # rows below. Without this, a project reloaded from Excel (or
-                    # copied via "Enganxa Config" from one that was) ends up with
-                    # a comma-joined STRING here, which every dropdown-rendering
-                    # call site treats as "no options" (Array.isArray check).
-                    if isinstance(row_dict.get('options'), str):
-                        row_dict['options'] = [o.strip() for o in row_dict['options'].split(',') if o.strip()]
+                    # A static Select's options and a group header's visible-columns
+                    # list are both written as a single ", "-joined cell (see
+                    # update_excel_from_json's editor_metadata writer) but
+                    # live/saved metadata always models them as an array (see
+                    # saveGroupConfig in useGroupMetadata.js) -- split them back,
+                    # the same way `headers` gets split for _sheet_info rows below.
+                    # Without this, a project reloaded from Excel (or copied via
+                    # "Enganxa Config" from one that was) ends up with a
+                    # comma-joined STRING here, which every call site that expects
+                    # an array (Array.isArray checks, both for rendering a Select's
+                    # options and for deciding which table columns are visible)
+                    # silently treats as empty.
+                    for list_field in ('options', 'visibleColumns'):
+                        if isinstance(row_dict.get(list_field), str):
+                            row_dict[list_field] = [x.strip() for x in row_dict[list_field].split(',') if x.strip()]
                     meta_list.append(row_dict)
         except Exception:
             pass
@@ -1111,7 +1115,7 @@ def update_excel_from_json(excel_path, json_str, out_excel_path):
         ws = wb.create_sheet(title='editor_metadata')
 
     ws.delete_rows(1, max(ws.max_row, 1))
-    headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula', 'gridRow', 'gridOrder', 'gridFill', 'label', 'groupLayout', 'itemTitleFormula']
+    headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula', 'gridRow', 'gridOrder', 'gridFill', 'label', 'groupLayout', 'itemTitleFormula', 'viewMode', 'visibleColumns']
     for c_idx, h in enumerate(headers):
         ws.cell(1, c_idx + 1).value = h
 
@@ -1240,7 +1244,7 @@ def create_default_workbook_from_json(json_str, out_path):
     editor_meta = data.get('editor_metadata') or data.get('editorMetadata') or []
     if editor_meta:
         ws = wb.create_sheet(title='editor_metadata')
-        headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula', 'gridRow', 'gridOrder', 'gridFill', 'label', 'groupLayout', 'itemTitleFormula']
+        headers = ['group', 'element', 'type', 'options', 'sourceType', 'multiple', 'vectorPath', 'displayField', 'valueField', 'width', 'calcFn', 'calcVector', 'calcTargetCol', 'calcFormula', 'gridRow', 'gridOrder', 'gridFill', 'label', 'groupLayout', 'itemTitleFormula', 'viewMode', 'visibleColumns']
         ws.append(headers)
         for row_obj in editor_meta:
             if isinstance(row_obj, dict):
