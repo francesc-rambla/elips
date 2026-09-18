@@ -96,6 +96,20 @@ export const computeDataPatch = (oldObj, newObj) => {
   return patch.length > 0 ? patch : null;
 };
 
+// Same RFC 6902 patch as computeDataPatch, for editorMetadata (an array of
+// field-config objects) -- used for RECONSTRUCTION (getLatestState/
+// reconstructStateForEntry below), so a diff entry no longer needs to carry
+// a full copy of editorMetadata alongside it. computeJsonDiff above stays in
+// use for VersionHistoryModal's display purposes (it's cheap and already
+// wired into that UI); this is purely an additional, smaller patch for
+// replaying history without duplicating the whole array on every entry.
+export const computeMetaPatch = (oldMeta, newMeta) => {
+  const a = Array.isArray(oldMeta) ? oldMeta : [];
+  const b = Array.isArray(newMeta) ? newMeta : [];
+  const patch = jsonPatchCompare(a, b);
+  return patch.length > 0 ? patch : null;
+};
+
 // Replays diffs[0..uptoDiffIndex] (inclusive) on top of snap's own baseline
 // excelJsonData to reconstruct the full data model as of that point. Each
 // diff's own dataPatch is relative to the state immediately before it (the
@@ -113,6 +127,27 @@ export const reconstructExcelJsonDataAt = (snap, uptoDiffIndex) => {
         current = jsonPatchApply(current || {}, patch, false, false).newDocument;
       } catch (err) {
         console.warn(`Error aplicant el pedaç de dades del diff #${i}:`, err);
+      }
+    }
+  }
+  return current;
+};
+
+// Same replay as reconstructExcelJsonDataAt, for editorMetadata via
+// diffs[i].metaPatch. A diff saved before this change carries a full
+// `editorMetadata` copy instead of a metaPatch -- callers check for that
+// field first (see getLatestState/reconstructStateForEntry) and only fall
+// back to this reconstruction for diffs saved after it.
+export const reconstructEditorMetadataAt = (snap, uptoDiffIndex) => {
+  let current = Array.isArray(snap?.editorMetadata) ? JSON.parse(JSON.stringify(snap.editorMetadata)) : [];
+  const diffs = snap?.diffs || [];
+  for (let i = 0; i <= uptoDiffIndex && i < diffs.length; i++) {
+    const patch = diffs[i]?.metaPatch;
+    if (patch && patch.length > 0) {
+      try {
+        current = jsonPatchApply(current || [], patch, false, false).newDocument;
+      } catch (err) {
+        console.warn(`Error aplicant el pedaç de metadades del diff #${i}:`, err);
       }
     }
   }
@@ -161,7 +196,8 @@ export function useVersionHistory() {
       const key = getStorageKey();
       let loadedData = null;
 
-      // 1. Try loading full history from IndexedDB
+      // 1. Try loading full history from IndexedDB (the only place it's
+      // written to now -- see saveHistoryToStorage's own comment).
       try {
         const idbData = await getDbItem(key);
         if (idbData && Array.isArray(idbData) && idbData.length > 0) {
@@ -169,14 +205,26 @@ export function useVersionHistory() {
         }
       } catch (_) {}
 
-      // 2. Fallback to localStorage if not found in IndexedDB
-      if (!loadedData) {
-        const raw = localStorage.getItem(key);
-        if (raw) {
+      // 2. One-time migration: older versions of elips also mirrored the
+      // full history into localStorage as an IndexedDB-unavailable fallback.
+      // That mirror could grow to many times the size of a project's actual
+      // current data (up to 25 full baseline snapshots, plus up to 500 diff
+      // entries each carrying a full templateText/editorMetadata copy) --
+      // it was the real cause of localStorage quota exhaustion reported by
+      // users, not the project's own current data. Read it once if
+      // IndexedDB came up empty, then always remove it (whether it was
+      // needed or not) so any pre-existing bloat is reclaimed on the very
+      // next project load instead of sitting there as dead weight forever.
+      // localStorage.removeItem() never fails on quota, so this frees space
+      // even for a project that's currently stuck unable to save anything.
+      const legacyRaw = localStorage.getItem(key);
+      if (legacyRaw) {
+        if (!loadedData) {
           try {
-            loadedData = JSON.parse(raw);
+            loadedData = JSON.parse(legacyRaw);
           } catch (_) {}
         }
+        localStorage.removeItem(key);
       }
 
       if (myEpoch !== loadEpoch) return; // a newer loadHistory()/resetHistoryState() has since started -- abandon
@@ -247,22 +295,22 @@ export function useVersionHistory() {
             // patches are already relative to exactly that point.
             const dropCount = snap.diffs.length - 20;
             const lastDropped = snap.diffs[dropCount - 1];
-            snap.excelJsonData = reconstructExcelJsonDataAt(snap, dropCount - 1);
+            // Reconstruct both from the ORIGINAL (still un-mutated) snap.diffs/
+            // snap.editorMetadata before touching either -- both replays walk
+            // the full diff chain from the current baseline.
+            const rebasedData = reconstructExcelJsonDataAt(snap, dropCount - 1);
+            const rebasedMeta = lastDropped.snapshotState?.editorMetadata
+              ?? (lastDropped.editorMetadata !== undefined ? lastDropped.editorMetadata : reconstructEditorMetadataAt(snap, dropCount - 1));
+            snap.excelJsonData = rebasedData;
             snap.templateText = lastDropped.snapshotState?.templateText ?? lastDropped.templateText ?? snap.templateText;
-            snap.editorMetadata = lastDropped.snapshotState?.editorMetadata ?? lastDropped.editorMetadata ?? snap.editorMetadata;
+            snap.editorMetadata = rebasedMeta ?? snap.editorMetadata;
             snap.diffs = snap.diffs.slice(dropCount);
           }
         });
 
-        // 1. Save full data to IndexedDB
+        // Save full data to IndexedDB -- the sole store for history now (see
+        // loadHistory's own comment on why the localStorage mirror was removed).
         await saveDbItem(key, JSON.parse(JSON.stringify(historyData.value)));
-
-        // 2. Save mirror to localStorage (with try/catch for quota protection)
-        try {
-          localStorage.setItem(key, JSON.stringify(historyData.value));
-        } catch (lsErr) {
-          console.warn("localStorage quota exceeded for history, saved to IndexedDB successfully.", lsErr);
-        }
       } catch (err) {
         console.warn("Error desant històric de versions:", err);
       }
@@ -284,7 +332,6 @@ export function useVersionHistory() {
     if (lastSnap.diffs && lastSnap.diffs.length > 0) {
       const lastDiff = lastSnap.diffs[lastSnap.diffs.length - 1];
       tpl = lastDiff.templateText ?? tpl;
-      meta = lastDiff.editorMetadata ?? meta;
       // Backward compatibility: history saved before this change stored a
       // full snapshotState.excelJsonData per diff instead of a dataPatch --
       // use it directly rather than trying to reconstruct from a patch that
@@ -295,6 +342,11 @@ export function useVersionHistory() {
         meta = lastDiff.snapshotState.editorMetadata ?? meta;
       } else {
         data = reconstructExcelJsonDataAt(lastSnap, lastSnap.diffs.length - 1);
+        // Backward compatibility: a diff saved before metaPatch existed
+        // carries a full editorMetadata copy instead -- use it directly.
+        meta = lastDiff.editorMetadata !== undefined
+          ? lastDiff.editorMetadata
+          : reconstructEditorMetadataAt(lastSnap, lastSnap.diffs.length - 1);
       }
     }
 
@@ -334,7 +386,9 @@ export function useVersionHistory() {
     return {
       templateText: diff.templateText ?? (snap.templateText || ''),
       excelJsonData: reconstructExcelJsonDataAt(snap, diffIndex),
-      editorMetadata: diff.editorMetadata ?? (snap.editorMetadata || [])
+      // Backward compatibility: a diff saved before metaPatch existed
+      // carries a full editorMetadata copy instead -- use it directly.
+      editorMetadata: diff.editorMetadata !== undefined ? diff.editorMetadata : reconstructEditorMetadataAt(snap, diffIndex)
     };
   };
 
@@ -437,6 +491,7 @@ export function useVersionHistory() {
     const textDiff = computeTextDiff(latestState?.templateText, currentTpl);
     const dataPatch = computeDataPatch(latestState?.excelJsonData, currentData);
     const metaDiff = computeJsonDiff(latestState?.editorMetadata, currentMeta);
+    const metaPatch = computeMetaPatch(latestState?.editorMetadata, currentMeta);
 
     // Only record if something actually changed
     if (!textDiff && !dataPatch && !metaDiff) return;
@@ -448,11 +503,15 @@ export function useVersionHistory() {
       editorMetadata: currentMeta ? JSON.parse(JSON.stringify(currentMeta)) : []
     };
 
-    // Only excelJsonData (the data model) is stored as a diff -- templateText
-    // and editorMetadata stay full per entry (out of scope for this: they're
-    // typically much smaller, and the reported storage problem was
-    // specifically about the data model being duplicated in full on every
-    // change).
+    // Only excelJsonData and editorMetadata are stored as patches (dataPatch/
+    // metaPatch) for reconstruction -- templateText stays full per entry
+    // (out of scope for this: a Jinja2 template is typically much smaller
+    // than the data model or a metadata array with hundreds of fields, and a
+    // hand-rolled line-diff-apply for text carries real correctness risk for
+    // little payoff here). metaDiff is kept alongside metaPatch purely for
+    // VersionHistoryModal's display -- it's cheap (top-level only) and
+    // already wired into that UI; metaPatch is the one actually used to
+    // reconstruct editorMetadata (see reconstructEditorMetadataAt).
     const diffEntry = {
       id: `diff-${nowTs}`,
       timestamp: now.toISOString(),
@@ -461,8 +520,8 @@ export function useVersionHistory() {
       textDiff,
       dataPatch,
       metaDiff,
-      templateText: currentTpl,
-      editorMetadata: latestStateCache.editorMetadata
+      metaPatch,
+      templateText: currentTpl
     };
 
     if (!lastSnap.diffs) lastSnap.diffs = [];

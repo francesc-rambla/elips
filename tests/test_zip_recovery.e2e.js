@@ -169,14 +169,27 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
   // 5. Test Version History & Hourly Snapshot
   console.log("➡️ 3. Verificant sistema d'històric i còpies horàries automàtiques...");
-  const historyCheck = await page.evaluate(() => {
-    const raw = localStorage.getItem('ElipsTestProject:version_history_v1');
-    const list = raw ? JSON.parse(raw) : [];
-    return {
-      count: list.length,
-      firstSnap: list[0] ? { type: list[0].type, note: list[0].note, time: list[0].displayTime } : null
+  // History is persisted to IndexedDB only now (see useVersionHistory.js --
+  // the localStorage mirror was removed, it was the actual cause of the
+  // localStorage-quota data-loss bug), so read it back the same way the app
+  // does (src/utils/db.js: DB 'ContractesGeneratorDB', store 'binary_files').
+  const historyCheck = await page.evaluate(() => new Promise((resolve) => {
+    const req = indexedDB.open('ContractesGeneratorDB', 1);
+    req.onerror = () => resolve({ count: 0, firstSnap: null });
+    req.onsuccess = (e) => {
+      const db = e.target.result;
+      const tx = db.transaction('binary_files', 'readonly');
+      const getReq = tx.objectStore('binary_files').get('ElipsTestProject:version_history_v1');
+      getReq.onsuccess = () => {
+        const list = Array.isArray(getReq.result) ? getReq.result : [];
+        resolve({
+          count: list.length,
+          firstSnap: list[0] ? { type: list[0].type, note: list[0].note, time: list[0].displayTime } : null
+        });
+      };
+      getReq.onerror = () => resolve({ count: 0, firstSnap: null });
     };
-  });
+  }));
 
   console.log("  • Nombre de punts de control a l'històric:", historyCheck.count);
   console.log("  • Primer punt de control:", historyCheck.firstSnap);

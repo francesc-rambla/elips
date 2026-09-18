@@ -17,7 +17,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { computeTextDiff, computeJsonDiff } from '../src/composables/useVersionHistory.js';
+import {
+  computeTextDiff,
+  computeJsonDiff,
+  computeDataPatch,
+  computeMetaPatch,
+  reconstructExcelJsonDataAt,
+  reconstructEditorMetadataAt,
+} from '../src/composables/useVersionHistory.js';
 
 describe('useVersionHistory - Algorísmica de Diferencials', () => {
   describe('computeTextDiff', () => {
@@ -81,6 +88,62 @@ describe('useVersionHistory - Algorísmica de Diferencials', () => {
       const diff = computeJsonDiff(oldObj, newObj);
       expect(diff).not.toBeNull();
       expect(diff.some(d => d.op === 'remove')).toBe(true);
+    });
+  });
+
+  // Regressió: l'històric de versions ja no guarda una còpia sencera
+  // d'editorMetadata a cada diferencial (era la causa principal de
+  // l'esgotament de l'espai de localStorage reportat pels usuaris) -- en
+  // comptes d'això, es guarda un pedaç RFC 6902 (metaPatch) i es reconstrueix
+  // reproduint-lo sobre la línia base del snapshot. Aquests tests cobreixen
+  // que aquesta reconstrucció dona el mateix resultat que abans.
+  describe('computeMetaPatch / reconstructEditorMetadataAt', () => {
+    it('retorna null quan dos arrays de metadades són idèntics', () => {
+      const meta = [{ element: 'preu', type: 'Number' }];
+      expect(computeMetaPatch(meta, meta)).toBeNull();
+    });
+
+    it('genera un pedaç aplicable que reconstrueix un canvi simple', () => {
+      const oldMeta = [{ element: 'preu', type: 'Number' }];
+      const newMeta = [{ element: 'preu', type: 'Number' }, { element: 'unitats', type: 'Number' }];
+      const patch = computeMetaPatch(oldMeta, newMeta);
+      expect(patch).not.toBeNull();
+
+      const snap = { editorMetadata: oldMeta, diffs: [{ metaPatch: patch }] };
+      const reconstructed = reconstructEditorMetadataAt(snap, 0);
+      expect(reconstructed).toEqual(newMeta);
+    });
+
+    it('reconstrueix correctament encadenant diversos pedaços successius', () => {
+      const v0 = [{ element: 'preu', type: 'Number' }];
+      const v1 = [{ element: 'preu', type: 'Number' }, { element: 'unitats', type: 'Number' }];
+      const v2 = [{ element: 'preu', type: 'Currency' }, { element: 'unitats', type: 'Number' }];
+
+      const snap = {
+        editorMetadata: v0,
+        diffs: [
+          { metaPatch: computeMetaPatch(v0, v1) },
+          { metaPatch: computeMetaPatch(v1, v2) },
+        ],
+      };
+
+      expect(reconstructEditorMetadataAt(snap, 0)).toEqual(v1);
+      expect(reconstructEditorMetadataAt(snap, 1)).toEqual(v2);
+    });
+
+    it('manté la compatibilitat retroactiva: un diff sense metaPatch (format antic) es queda en la línia base', () => {
+      const baseline = [{ element: 'preu', type: 'Number' }];
+      const snap = { editorMetadata: baseline, diffs: [{ /* format antic: sense metaPatch */ }] };
+      expect(reconstructEditorMetadataAt(snap, 0)).toEqual(baseline);
+    });
+  });
+
+  describe('computeDataPatch / reconstructExcelJsonDataAt (regressió de referència)', () => {
+    it('reconstrueix excelJsonData igual que abans -- comportament ja existent, no tocat per aquest canvi', () => {
+      const v0 = { pres: { import: 100 } };
+      const v1 = { pres: { import: 250 } };
+      const snap = { excelJsonData: v0, diffs: [{ dataPatch: computeDataPatch(v0, v1) }] };
+      expect(reconstructExcelJsonDataAt(snap, 0)).toEqual(v1);
     });
   });
 });

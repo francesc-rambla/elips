@@ -41,10 +41,14 @@ const showFullDataJson = ref(false);
 
 // Flatten snapshots and their diffs into a unified chronological timeline.
 // Lightweight by design: a diff entry only carries its own diff ops
-// (textDiff/dataPatch/metaDiff) plus templateText/editorMetadata (still
-// stored in full per entry -- see useVersionHistory.js's own scoping note)
-// for direct display; excelJsonData is only ever reconstructed on demand
-// (see reconstructedFullState below), never carried per list item.
+// (textDiff/dataPatch/metaDiff) plus templateText (still stored in full per
+// entry -- see useVersionHistory.js's own scoping note) for direct display;
+// excelJsonData AND editorMetadata are only ever reconstructed on demand for
+// the single selected entry (see reconstructedFullState below), never
+// carried per list item -- a diff no longer stores a full editorMetadata
+// copy of its own (reconstructed from metaPatch instead), and computing it
+// eagerly for every entry in a long timeline would be wasted work for the
+// ~499 entries never actually selected/inspected.
 const timelineEntries = computed(() => {
   const list = [];
   (props.historyData || []).forEach(snap => {
@@ -59,7 +63,6 @@ const timelineEntries = computed(() => {
       isSnapshot: true,
       note: snap.note || 'Còpia horària automàtica',
       templateText: snap.templateText || '',
-      editorMetadata: snap.editorMetadata || [],
       textDiff: null,
       dataPatch: null,
       metaDiff: null
@@ -78,10 +81,9 @@ const timelineEntries = computed(() => {
           isSnapshot: false,
           note: diff.note || 'Diferencial de canvis',
           // Backward compatibility: history saved before diff-based storage
-          // still has a full snapshotState per diff instead of templateText/
-          // editorMetadata fields of its own.
+          // still has a full snapshotState per diff instead of a templateText
+          // field of its own.
           templateText: diff.templateText ?? diff.snapshotState?.templateText ?? '',
-          editorMetadata: diff.editorMetadata ?? diff.snapshotState?.editorMetadata ?? [],
           textDiff: diff.textDiff,
           dataPatch: diff.dataPatch,
           metaDiff: diff.metaDiff
@@ -381,11 +383,11 @@ const triggerRestore = (entry, mode) => {
             <!-- Metadata Schema Preview -->
             <div style="border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; background: var(--bg-primary);">
               <div style="font-size: 0.75rem; font-weight: 700; color: var(--color-primary); margin-bottom: 6px;">
-                ⚙️ Esquema de Metadades ({{ (selectedEntry.editorMetadata || []).length }} camps)
+                ⚙️ Esquema de Metadades ({{ (reconstructedFullState?.editorMetadata || []).length }} camps)
               </div>
               <textarea
                 readonly
-                :value="JSON.stringify(selectedEntry.editorMetadata || [], null, 2)"
+                :value="JSON.stringify(reconstructedFullState?.editorMetadata || [], null, 2)"
                 class="data-input"
                 rows="4"
                 style="font-family: var(--font-mono); font-size: 0.72rem; width: 100%; resize: vertical;"
