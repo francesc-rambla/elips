@@ -585,7 +585,16 @@ const resolveSelectOptions = (meta, contextRow = null) => {
     }
     return [];
   } else {
-    const opts = Array.isArray(meta.options) ? meta.options : [];
+    // meta.options is normally an array (see saveGroupConfig in
+    // useGroupMetadata.js), but a project loaded from an Excel round-trip
+    // can carry it as a plain comma-joined string instead -- excel_io.py's
+    // editor_metadata sheet reader doesn't split it back into a list the
+    // way it does for `headers`/`multiple` (see its own fix). Tolerate
+    // both shapes here rather than silently showing an empty dropdown for
+    // any project that went through such a round-trip (including one
+    // received via "Enganxa Config", which just copies whatever shape the
+    // source project's options already had).
+    const opts = Array.isArray(meta.options) ? meta.options : (typeof meta.options === 'string' ? meta.options.split(',').map(x => x.trim()).filter(Boolean) : []);
     return opts.map(o => ({ value: o, label: o }));
   }
 };

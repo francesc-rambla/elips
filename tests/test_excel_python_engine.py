@@ -88,6 +88,23 @@ class TestExcelPythonEngine(unittest.TestCase):
         self.assertEqual(pres["pressupost"], "Pressupost anual")
         self.assertEqual(pres["anualitat"], 2026)
 
+    def test_02b_static_select_options_parsed_as_a_list_not_a_joined_string(self):
+        """Regressió: la cel·la 'options' d'un Select estàtic es desa com a text unit per comes
+        (', '.join(...), a update_excel_from_json), però el model en viu sempre l'espera com a
+        array (saveGroupConfig a useGroupMetadata.js) -- sense dividir-la en llegir l'Excel,
+        qualsevol projecte recarregat (o copiat via 'Enganxa Config' des d'un que ho estigués)
+        es quedava amb un desplegable buit, ja que tot el codi de renderitzat comprova
+        Array.isArray(meta.options)."""
+        data = self.engine.excel_to_json(self.fixture_path)["data"]
+        meta = next(m for m in data["editor_metadata"] if m["group"] == "General" and m["element"] == "modalitat")
+        self.assertEqual(meta["options"], ["Contracte Públic", "Contracte Privat"])
+
+        # Un Select estàtic sense cap opció configurada ha de quedar com a array buit, no com
+        # a cadena buida -- mateix comportament que el model en viu (saveGroupConfig) per a un
+        # camp Select recentment creat.
+        codi_meta = next(m for m in data["editor_metadata"] if m["group"] == "General" and m["element"] == "codi")
+        self.assertEqual(codi_meta["options"], [])
+
     def test_03_four_level_nested_hierarchy_incl_explicit_foreign_key(self):
         """pres -> pres.parts -> pres.parts.activitats -> pres.parts.activitats.rec (aquest darrer enllaçat
         per clau forana explícita declarada a _hierarchy_metadata, no per coincidència de nom de columna)."""
