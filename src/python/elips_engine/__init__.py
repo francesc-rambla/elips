@@ -41,6 +41,7 @@ from .excel_io import (
     update_excel_from_json,
     update_excel_hierarchy,
     create_default_workbook_from_json,
+    strip_hierarchy_ref_keys,
 )
 from .mirror_pattern import analyze_mirror_pattern, apply_mirror_column
 from .calc_fields import evaluate_custom_formula, validate_custom_formula_syntax, evaluate_computed_fields
@@ -56,6 +57,7 @@ __all__ = [
     'update_excel_from_json',
     'update_excel_hierarchy',
     'create_default_workbook_from_json',
+    'strip_hierarchy_ref_keys',
     'analyze_mirror_pattern',
     'apply_mirror_column',
     'evaluate_custom_formula',

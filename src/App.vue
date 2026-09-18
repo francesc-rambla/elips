@@ -35,7 +35,7 @@ import ExcelImportModal from './components/ExcelImportModal.vue';
 import VersionHistoryModal from './components/VersionHistoryModal.vue';
 
 const store = useWorkspaceStore();
-const { initEngines, parseExcel, renderMarkdown, compileDocx, saveExcelData, saveExcelHierarchy, writeVirtualExcel, isLoading } = useWasmEngines();
+const { initEngines, parseExcel, renderMarkdown, compileDocx, saveExcelData, saveExcelHierarchy, writeVirtualExcel, isLoading, stripHierarchyRefKeys } = useWasmEngines();
 
 const {
   historyData,
@@ -379,7 +379,15 @@ const loadProject = async (name) => {
     console.warn("Error restaurant Excel des d'IndexedDB:", e);
     store.excelFile = null;
   }
-  
+
+  // One-time cleanup of a data model saved before children stopped carrying
+  // their own (redundant, driftable) copy of the parent-linking column --
+  // see stripHierarchyRefKeys's own doc comment. A no-op on already-clean
+  // data or when hierarchySchema isn't available yet.
+  if (store.excelJsonData && store.hierarchySchema) {
+    store.excelJsonData = stripHierarchyRefKeys(store.excelJsonData, store.hierarchySchema);
+  }
+
   // Now load the active document configuration
   loadDocumentConfig(name, aDoc);
 
@@ -1046,6 +1054,16 @@ const importProjectZip = async (file) => {
       } catch (parseErr) {
         console.warn("Avís en processar Excel del paquet ZIP:", parseErr);
       }
+    }
+
+    // One-time cleanup of a data model saved before children stopped
+    // carrying their own (redundant, driftable) copy of the parent-linking
+    // column -- see stripHierarchyRefKeys's own doc comment. Needed here
+    // too (not just loadProject): a ZIP without an embedded .xlsx skips the
+    // parseExcel() call above entirely, so dades_excel.json's raw content
+    // (possibly saved by an older version of the app) is used as-is.
+    if (store.excelJsonData && store.hierarchySchema) {
+      store.excelJsonData = stripHierarchyRefKeys(store.excelJsonData, store.hierarchySchema);
     }
 
     loadDocumentConfig(pName, aDoc);

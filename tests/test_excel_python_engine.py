@@ -105,6 +105,58 @@ class TestExcelPythonEngine(unittest.TestCase):
         self.assertEqual(act1["rec"][0]["recurs"], "Tècnic instal·lador")
         self.assertEqual(act1["rec"][0]["unitats"], 2)
 
+        # Regressió: un cop una fila filla ja s'ha aniuat sota el seu pare
+        # correcte (per coincidència de nom -- id_partida -- o per clau
+        # forana explícita -- activitat_ref/id_activitat), la seva pròpia
+        # còpia d'aquesta columna de relació ja no es desa al model intern:
+        # és redundant amb la posició a l'arbre i es podia desincronitzar
+        # (editant-la a mà, o movent la fila a un altre pare sense
+        # actualitzar-la) sense que res ho detectés.
+        self.assertNotIn("id_partida", act1)
+        self.assertNotIn("activitat_ref", act1["rec"][0])
+
+    def test_03b_strip_hierarchy_ref_keys_migrates_already_saved_data(self):
+        """strip_hierarchy_ref_keys neteja un projecte ja desat (abans d'aquest canvi) que encara arrossega
+        aquestes còpies redundants -- incloent-hi el cas d'una clau d'avantpassat (no del pare immediat)
+        filtrada fins a un net net (p.ex. id_partida arribant fins a 'rec', dos nivells per sota de 'parts')."""
+        data = {
+            "pres": {
+                "parts": [{
+                    "id_partida": "PART-01",
+                    "activitats": [{
+                        "id_activitat": "ACT-01",
+                        "id_partida": "PART-01",  # còpia redundant (bug ja corregit a excel_to_json)
+                        "rec": [{
+                            "recurs": "Tècnic",
+                            "activitat_ref": "ACT-01",  # còpia redundant del pare immediat
+                            "id_partida": "PART-01",    # còpia redundant d'un avantpassat (2 nivells)
+                        }]
+                    }]
+                }]
+            }
+        }
+        schema = {
+            "pres": {"ref_key": None, "children": {
+                "parts": {"ref_key": None, "children": {
+                    "activitats": {"ref_key": "id_partida", "children": {
+                        "rec": {"ref_key": "activitat_ref", "children": {}}
+                    }}
+                }}
+            }}
+        }
+        result = json.loads(self.engine.strip_hierarchy_ref_keys(json.dumps(data), json.dumps(schema)))
+        act = result["pres"]["parts"][0]["activitats"][0]
+        self.assertNotIn("id_partida", act)
+        self.assertEqual(act["id_activitat"], "ACT-01", "la pròpia identitat de l'activitat no s'ha de tocar")
+        rec = act["rec"][0]
+        self.assertNotIn("activitat_ref", rec)
+        self.assertNotIn("id_partida", rec, "una clau d'avantpassat (no només la del pare immediat) també s'ha d'eliminar")
+        self.assertEqual(rec["recurs"], "Tècnic")
+
+        # Idempotent: aplicar-ho sobre dades ja netes no fa res ni falla.
+        twice = json.loads(self.engine.strip_hierarchy_ref_keys(json.dumps(result), json.dumps(schema)))
+        self.assertEqual(twice, result)
+
     def test_04_ghost_rows_filtered_without_cartesian_explosion(self):
         """Les files completament buides/zero (típiques de fórmules no resoltes) es descarten, i els fills
         d'una taula plana compartida (Subcriteris) es reparteixen pel pare correcte sense duplicar-se."""

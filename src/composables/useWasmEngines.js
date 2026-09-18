@@ -558,6 +558,31 @@ orphan_count
     return JSON.parse(resultStr);
   };
 
+  // One-time cleanup for a project's data model loaded from a state saved
+  // before excel_to_json stopped storing each child row's own copy of the
+  // column that links it to its parent (the foreign key, e.g. `idPartida`
+  // on a `pres.parts.activitats` row -- see excel_io.py's own doc comment
+  // on strip_hierarchy_ref_keys for why that redundant copy was removed).
+  // Mutates nothing itself: returns a new object, since it round-trips
+  // through Python via JSON. No-op (returns dataObj unchanged) if either
+  // argument is missing, or on any internal failure -- never blocks a
+  // project load over a cleanup pass.
+  const stripHierarchyRefKeys = (dataObj, hierarchySchema) => {
+    if (!_pyodide || !dataObj || !hierarchySchema || Object.keys(hierarchySchema).length === 0) return dataObj;
+    const fn = _pyodide.globals.get('strip_hierarchy_ref_keys');
+    let resultStr;
+    try {
+      resultStr = fn(JSON.stringify(dataObj), JSON.stringify(hierarchySchema));
+    } finally {
+      fn.destroy();
+    }
+    try {
+      return JSON.parse(resultStr);
+    } catch (e) {
+      return dataObj;
+    }
+  };
+
   const hydrateModelWithForeignKeys = (rootData, editorMetadata) => {
     if (!rootData || typeof rootData !== 'object') return rootData;
     const metaList = editorMetadata || rootData.editor_metadata || [];
@@ -798,6 +823,7 @@ orphan_count
     writeVirtualExcel,
     analyzeMirrorPattern,
     applyMirrorColumn,
+    stripHierarchyRefKeys,
     isLoading
   };
 }

@@ -750,8 +750,12 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                                 ck = c_custom['child_key']
                                 if pk in parent:
                                     p_val = str(parent[pk]).strip()
+                                    # The child's own copy of `ck` is dropped once grouping is
+                                    # resolved (see the case-insensitive branch below for why):
+                                    # it's now redundant with the row's position in the tree.
                                     matched_children = [
-                                        c for c in data_to_set
+                                        {k: v for k, v in c.items() if k != ck}
+                                        for c in data_to_set
                                         if isinstance(c, dict) and str(c.get(ck, '')).strip() == p_val
                                     ]
                                     parent[sub_key] = matched_children
@@ -770,8 +774,20 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
                             matching_pairs = id_pairs if id_pairs else common_pairs
 
                             if matching_pairs:
+                                # Drop the column(s) used to match each child to its parent from
+                                # the child's own copy in the tree once the match is resolved --
+                                # it's a tabular-Excel artifact (the foreign key), not real data
+                                # of the child itself. The nesting IS the relationship now, so
+                                # there's no longer a redundant, independently-editable copy of
+                                # it that can drift out of sync with which parent a row actually
+                                # sits under (the app used to let users edit this field directly
+                                # like any other, or leave it stale after moving a row to a
+                                # different parent -- reconstructed instead at Excel-export time,
+                                # see _extract_flat_rows_for_sheet).
+                                strip_keys = {ck for _pk, ck in matching_pairs}
                                 matched_children = [
-                                    c for c in data_to_set
+                                    {k: v for k, v in c.items() if k not in strip_keys}
+                                    for c in data_to_set
                                     if isinstance(c, dict) and all(str(c.get(ck, '')).strip() == str(parent.get(pk, '')).strip() for pk, ck in matching_pairs)
                                 ]
                                 parent[sub_key] = matched_children
@@ -870,6 +886,67 @@ def excel_to_json(excel_path, date_format='iso', strict=False):
         'data': root,
         'hierarchy_schema': hierarchy_schema
     }
+
+
+def _strip_ref_keys_recursive(data_node, schema_node, ancestor_ref_keys=frozenset()):
+    if not isinstance(schema_node, dict):
+        return
+    children_schema = schema_node.get('children') or {}
+    if not children_schema:
+        return
+
+    # A KV group's data_node is a single dict (one "item"); a tabular
+    # group's is the list of its rows, each row its own "item".
+    items = data_node if isinstance(data_node, list) else ([data_node] if isinstance(data_node, dict) else [])
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        for child_name, child_schema in children_schema.items():
+            if child_name not in item:
+                continue
+            child_data = item[child_name]
+            child_ref_key = child_schema.get('ref_key')
+            # Strip this level's own ref_key (its link to its immediate
+            # parent) AND every ancestor's, since some source workbooks
+            # denormalize a grandparent's (or higher) key straight down onto
+            # a grandchild sheet too (e.g. a `costs` row carrying both its
+            # own activity's `idActivitat` and that activity's part's
+            # `idPartida`) -- same redundant, driftable-copy problem, just
+            # one level further removed.
+            keys_to_strip = ancestor_ref_keys | ({child_ref_key} if child_ref_key else set())
+            if keys_to_strip and isinstance(child_data, list):
+                for row in child_data:
+                    if isinstance(row, dict):
+                        for k in keys_to_strip:
+                            row.pop(k, None)
+            _strip_ref_keys_recursive(child_data, child_schema, keys_to_strip)
+
+
+def strip_hierarchy_ref_keys(data_json, hierarchy_schema_json):
+    """One-time cleanup for a project loaded from a state saved before
+    excel_to_json stopped storing each child row's own copy of the column
+    that links it to its parent (the foreign key, e.g. `idPartida` on a
+    `pres.parts.activitats` row) -- that field is now purely reconstructed
+    at Excel-export time from the row's actual position in the tree (see
+    _extract_flat_rows_for_sheet), never stored, so it can no longer drift
+    out of sync with which parent a row actually sits under (by direct
+    editing, or by moving a row to a different parent without updating its
+    own copy of the key). Walks hierarchy_schema (as returned by
+    excel_to_json) alongside data_json and deletes any such leftover field
+    it finds. Safe to call on already-clean data (nothing to remove -> no-op);
+    never raises, since it's meant to run on every project load."""
+    try:
+        data = json.loads(data_json)
+        schema = json.loads(hierarchy_schema_json) if hierarchy_schema_json else {}
+        if not isinstance(data, dict) or not isinstance(schema, dict):
+            return data_json
+        for top_name, top_schema in schema.items():
+            if top_name in data:
+                _strip_ref_keys_recursive(data[top_name], top_schema)
+        return json.dumps(data, ensure_ascii=False, default=_custom_json_default)
+    except Exception:
+        return data_json
 
 
 def update_excel_from_json(excel_path, json_str, out_excel_path):
