@@ -95,8 +95,19 @@ def _walk_path(current, segments, ctx):
 
     if isinstance(current, (str, int, float)) and not isinstance(current, bool):
         if global_data:
+            # `current` is a scalar that itself came from the row being
+            # evaluated (e.g. row['element']), so the row's own table always
+            # contains a "match" for it -- itself. Without excluding it, a
+            # calculated field whose own column name happens to also exist
+            # on the row (e.g. a field literally named `preu`, matching the
+            # `preu` column on the FK's target table) would resolve `part`
+            # against its OWN already-computed value instead of ever
+            # reaching the real target row, converging on a fixed point that
+            # never changes (each evaluation "confirms" whatever value was
+            # already there, regardless of which row is actually selected).
+            origin_row = ctx[0]
             for table in iter_tables(global_data):
-                match_row = next((r for r in table if isinstance(r, dict)
+                match_row = next((r for r in table if isinstance(r, dict) and r is not origin_row
                                    and any(str(v) == str(current) for v in r.values())), None)
                 if match_row is not None and part in match_row:
                     return _walk_path(match_row[part], rest, ctx)

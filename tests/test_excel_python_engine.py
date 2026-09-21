@@ -787,6 +787,38 @@ class TestExcelPythonEngine(unittest.TestCase):
         self.assertEqual(result["data"]["cataleg"]["items"][0]["preu"], 25)
         self.assertEqual(result["data"]["prova"]["item"]["preu"], 25)
 
+    def test_27b_custom_formula_fk_scalar_fallback_excludes_own_row(self):
+        """Regressió real reportada per l'usuari: un camp calculat `preu` amb fórmula `element.preu`
+        dins una taula aniuada en profunditat (Full1.Full2.Full3, amb ref_key="codi") on `element`
+        encara és un ESCALAR (Select dinàmic no hidratat) que apunta a una taula de primer nivell
+        `Taula`. Com que la pròpia fila de Full3 també té una columna `preu`, i `iter_tables` troba
+        la taula pròpia de la fila (Full3) ABANS que `Taula` (ordre d'inserció), el fallback de clau
+        forana escalar de `_walk_path` "es trobava a si mateix": la fila ja conté `element` (que
+        coincideix trivialment amb ella mateixa) i `preu`, de manera que el resultat quedava fixat
+        per sempre al valor previ, sense importar quin element es triés al desplegable ni que
+        `Taula` tingués el valor correcte. `_walk_path` ha d'excloure la fila d'origen de la cerca."""
+        ecf = self.engine.evaluate_custom_formula
+        data = {
+            "Full1": {
+                "Full2": [
+                    {"codi": "C1", "nom": "Full2-1", "preu": 0, "Full3": [
+                        {"id": "1", "element": "E1", "preu": 32},
+                    ]},
+                ],
+            },
+            "Taula": [
+                {"element": "E1", "descripcio": "Element U", "preu": 13.5},
+                {"element": "E2", "descripcio": "Element D", "preu": 15},
+                {"element": "E3", "descripcio": "Element T", "preu": 18.5},
+            ],
+        }
+        row = data["Full1"]["Full2"][0]["Full3"][0]
+        self.assertEqual(ecf("element.preu", row, data), 13.5)
+        row["element"] = "E2"
+        self.assertEqual(ecf("element.preu", row, data), 15)
+        row["element"] = "E3"
+        self.assertEqual(ecf("element.preu", row, data), 18.5)
+
     def test_28_formula_comparisons_and_ternary(self):
         """El parser AST ha de suportar comparacions (amb els àlies `=`/`<>`),
         l'operador `^` com a potència, i el ternari a l'estil Python
