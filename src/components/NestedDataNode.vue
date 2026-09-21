@@ -1603,7 +1603,7 @@ const itemFormHelpers = {
                     title="🔒 Camp calculat automàticament"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-muted); opacity: 0.85; flex-shrink: 0;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                    <span style="flex-grow: 1;">
+                    <span :style="{ flexGrow: 1, textAlign: ['Number', 'Percentage', 'Currency'].includes(getElementType(h)) ? 'right' : 'left' }">
                       {{ getElementType(h) === 'Percentage' ? (formatPercentageDisplay(row[h]) + ' %') : (getElementType(h) === 'Currency' ? formatCurrencyDisplay(row[h], getElementMetadata(h)?.currencySymbol) : (row[h] !== undefined ? row[h] : 0)) }}
                     </span>
                     <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;">Calculat</span>
