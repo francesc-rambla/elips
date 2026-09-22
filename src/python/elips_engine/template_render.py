@@ -29,6 +29,7 @@ from jinja2.exceptions import TemplateSyntaxError
 from .text_utils import _custom_json_default
 from .excel_io import excel_to_json
 from .fk_hydration import hydrate_foreign_keys
+from .field_self_reference import render_field_self_references
 from .template_recovery import _wrap_tracked, _wrap_safe, render_with_recovery, _get_line
 from .template_filters import _register_common_filters
 
@@ -300,6 +301,15 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
 
         doc = hydrate_foreign_keys(doc, fk_meta_list)
 
+        # A field's own stored text may itself contain embedded Jinja2 (see
+        # field_self_reference.py's module docstring) -- rendered here, once,
+        # against a context scoped to the row that field lives on (`parent`/
+        # `parent.parent`... for the nested-table ancestor chain, its own
+        # sibling fields as bare names), BEFORE the whole-document clean_ctx/
+        # html_ctx wraps below are built from the same tree, so both passes
+        # see the field's final, already-resolved text.
+        doc, self_ref_issues = render_field_self_references(doc)
+
         with open(template_path, 'r', encoding='utf-8') as f:
             tpl_src = f.read()
 
@@ -345,7 +355,7 @@ def render_md_two_pass_with_report(excel_path, template_path, date_format='iso',
         else:
             out2_clean = out1_clean
             issues2 = []
-        all_issues = issues1 + issues2
+        all_issues = self_ref_issues + issues1 + issues2
 
         # Pass 2: Tracked Context with HTML links (for HTML preview)
         html_ctx = _wrap_tracked(doc, '', enable_links=True)

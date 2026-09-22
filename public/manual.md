@@ -55,7 +55,7 @@ A diferència dels processadors de text tradicionals, **elips** es basa en la **
 
 1. **Les plantilles de text (`.md.j2`) i l'estructura de l'Excel romanguin bastant estables**: Són dissenyades per l'equip tècnic o jurídic d'administració per a cada tipologia de contracte (serveis, subministraments, obres, etc.).
 2. **El gruix del contingut s'introdueix al model de dades**: Cada expedient concret només requereix introduir o ajustar els valors corresponents als seus camps (pressupost, terminis, justificacions tècniques, taules de preus, etc.).
-3. **Avaluació dinàmica doble**: El contingut introduït als camps de text del model de dades pot contenir expressions dinàmiques Jinja2 (`{{ doc.pres.contractant }}`), que s'avaluen automàticament durant la compilació del document final.
+3. **Avaluació dinàmica doble**: El contingut introduït als camps de text del model de dades pot contenir expressions dinàmiques Jinja2 (`{{ doc.pres.contractant }}`), que s'avaluen automàticament durant la compilació del document final. Dins d'aquest text, els propis camps de la fila on viu el camp (i, amb `parent`, els de les files que la contenen) estan disponibles directament pel seu nom — vegeu l'apartat [5.3](#53-redacció-de-text-extens-en-camps-del-model-el-mateix-editor-de-la-secció-41).
 4. **Execució 100% al navegador**: Mitjançant WebAssembly (**Pyodide** per a Python/Jinja2 i **Pandoc WASM** per a la generació Word), cap dada no viatja a servidors externs, complint les normatives més estrictes de privadesa i confidencialitat.
 5. **Compilació tolerant a errors**: El motor de renderitzat fa dues passades sobre la plantilla; si una variable no existeix al model de dades, no s'atura la generació — la substitueix per un avís visible i continua, perquè sempre pugueu obtenir un document per revisar (vegeu [6. FAQ](#6-bones-pràctiques-i-resolució-de-problemes-faq) per interpretar aquests avisos).
 
@@ -405,7 +405,10 @@ Quan un camp del model requereix una redacció extensa (justificació de necessi
 2. S'obrirà un modal amb **exactament el mateix editor de contingut descrit a l'apartat [4.1](#41-leditor-de-contingut-mode-visual-i-mode-codi)** (mode Visual/Codi, paleta de variables, assistent de taules, blocs IF/FOR), aquesta vegada centrat només en aquest camp concret.
 3. La **previsualització en temps real** us permet comprovar el resultat renderitzat abans de tancar el modal.
 
-No hi ha cap diferència funcional entre redactar la plantilla principal del document i redactar un camp de text del model: totes dues coses fan servir el mateix editor.
+No hi ha cap diferència d'editor entre redactar la plantilla principal del document i redactar un camp de text del model: totes dues coses fan servir el mateix editor. Hi ha, però, una diferència en **quines variables hi ha disponibles**:
+
+- A la **plantilla principal**, un bucle `{% for part in pres.parts %}` deixa `part` visible a dins seu de manera normal (l'abast lèxic habitual de Jinja2), inclosos els bucles aniuats: `{% for activitat in part.activitats %}` hi funciona directament.
+- Dins del **text d'un camp concret** (p. ex. el camp de notes d'una partida), no hi ha cap variable de bucle equivalent, perquè aquest text s'avalua sol, fora de qualsevol `{% for %}` de la plantilla principal. Per això, dins d'aquest text, **els propis camps de la fila (aquesta partida) estan disponibles directament pel seu nom**, exactament igual que a les fórmules personalitzades (apartat 4.5.B): si la partida té una sub-taula `activitats`, el text del seu propi camp "Notes" pot escriure `{% for a in activitats %}...{% endfor %}` sense necessitat de fixar cap índex, i el resultat serà sempre "les activitats d'aquesta partida concreta" — no cal (ni funciona) escriure `part.activitats` ni `pres.parts[0].activitats` aquí. També hi teniu accessible `parent` (i `parent.parent`, recursivament) per pujar a la fila contenidora, amb el mateix comportament que a les fórmules.
 
 ---
 

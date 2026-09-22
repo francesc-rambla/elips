@@ -918,6 +918,80 @@ class TestExcelPythonEngine(unittest.TestCase):
         self.assertEqual(cost["funcio"], "Recollida de dades")
         self.assertEqual(cost["resum"], "Recollida de dades / P1 / Servei")
 
+    def test_34_field_embedded_jinja2_self_and_parent_reference(self):
+        """Regressió/funcionalitat: un CAMP del model de dades (no una
+        fórmula CUSTOM) pot contenir Jinja2 incrustat que s'avalua durant la
+        generació del document (manual.md 1.3, "avaluació dinàmica doble").
+        Abans, aquest Jinja2 incrustat només veia el context global (calia
+        fixar l'índex a mà, `pres.parts[0].activitats`, perquè no hi havia
+        cap manera de dir "les activitats d'AQUESTA partida"). Ara, el camp
+        `notes` de cada partida pot escriure `{% for a in activitats %}`
+        (els seus propis camps, sense prefix, igual que a les fórmules
+        CUSTOM) i `parent.tipus` per pujar a l'avantpassat -- i el resultat
+        ha de dependre de CADA partida per separat, no d'un índex fix."""
+        # A fresh top-level key (not `pres`, which the fixture workbook
+        # already defines with its own unrelated shape) so the live-state
+        # merge in render_md_two_pass_with_report adds this wholesale
+        # instead of field-merging it row by row against fixture data.
+        live_data = {
+            "selfRefTest": {
+                "tipus": "Servei",
+                "parts": [
+                    {
+                        "idPartida": "P1",
+                        "nom": "Part A",
+                        "notes": "Activitats de {{ nom }} ({{ parent.tipus }}):\n{% for a in activitats %}- {{ a.nom }}\n{% endfor %}",
+                        "activitats": [
+                            {"idActivitat": "A1", "nom": "Recollida"},
+                            {"idActivitat": "A2", "nom": "Anàlisi"},
+                        ],
+                    },
+                    {
+                        "idPartida": "P2",
+                        "nom": "Part B",
+                        "notes": "Activitats de {{ nom }} ({{ parent.tipus }}):\n{% for a in activitats %}- {{ a.nom }}\n{% endfor %}",
+                        "activitats": [
+                            {"idActivitat": "A3", "nom": "Redacció"},
+                        ],
+                    },
+                ],
+            },
+            "editor_metadata": [],
+        }
+        live_json_str = json.dumps(live_data, ensure_ascii=False)
+
+        tpl_path = os.path.join(self.tmp_dir, "self_ref_template.md.j2")
+        with open(tpl_path, "w", encoding="utf-8") as f:
+            f.write("{% for part in selfRefTest.parts %}{{ part.notes }}\n{% endfor %}")
+
+        live_json_path = os.path.join(self.tmp_dir, "in_self_ref.json")
+        with open(live_json_path, "w", encoding="utf-8") as f:
+            f.write(live_json_str)
+
+        real_exists = os.path.exists
+        real_open = open
+
+        def fake_exists(path):
+            return True if path == '/work/in.json' else real_exists(path)
+
+        def fake_open(path, *args, **kwargs):
+            return real_open(live_json_path, *args, **kwargs) if path == '/work/in.json' else real_open(path, *args, **kwargs)
+
+        with mock.patch.object(self.engine.os.path, 'exists', side_effect=fake_exists), \
+             mock.patch('builtins.open', side_effect=fake_open):
+            result = json.loads(self.engine.render_md_two_pass_with_report(self.fixture_path, tpl_path))
+
+        self.assertTrue(result["success"], result.get("traceback"))
+        md = result["markdown"]
+        self.assertIn("Activitats de Part A (Servei):", md)
+        self.assertIn("- Recollida", md)
+        self.assertIn("- Anàlisi", md)
+        self.assertIn("Activitats de Part B (Servei):", md)
+        self.assertIn("- Redacció", md)
+        # Cap partida no ha de mostrar les activitats d'una altra.
+        self.assertNotIn("- Redacció\n- Recollida", md)
+        self.assertNotIn("Clau no definida", md)
+
 
 if __name__ == "__main__":
     unittest.main()
