@@ -30,7 +30,16 @@ it sits in the expression, never by the function inspecting it:
     single value: unchanged if the path never crosses a list, or the sum
     of its numeric-coercible per-row values if it does (the same implicit
     "bare field = sum across the table" quirk the old regex engine had,
-    kept for backward compatibility with existing formulas)."""
+    kept for backward compatibility with existing formulas).
+
+`ctx` is a `(row, global_data, parent_chain)` triple throughout this module.
+`parent_chain` is a tuple of ancestor rows, nearest first (the immediate
+containing row of a nested table/group, then ITS containing row, and so on
+up to the top-level sheet), empty at the root. `parent` is a reserved leading
+Path segment: `parent.camp` resolves `camp` against `parent_chain[0]`,
+`parent.parent.camp` against `parent_chain[1]`, etc. -- the recursive
+behavior falls out of simply stripping one `parent` segment at a time and
+re-indexing into the chain, no separate "grandparent" concept needed."""
 
 from . import ast_nodes as A
 from .lexer import tokenize, FormulaSyntaxError
@@ -130,8 +139,24 @@ def _resolve_path(segments, ctx):
     """Resolves `segments` against `row` first, falling back to
     `global_data` (whole tree) and then an `OUT_`-prefixed root sheet name --
     mirroring the old engine's fallback order. A `doc.`/`dades.` leading
-    segment is a root alias, stripped before resolution."""
-    row, global_data = ctx
+    segment is a root alias, stripped before resolution. One or more leading
+    `parent` segments instead jump to the corresponding ancestor row in
+    `ctx`'s parent_chain and resolve the rest of the path from there (see
+    this module's docstring) -- checked first, so `parent` always means
+    "go to the ancestor", even on the unlikely chance a row has its own
+    `parent` column."""
+    row, global_data, parent_chain = ctx
+    n_parent = 0
+    while n_parent < len(segments) and segments[n_parent][0] == 'attr' and segments[n_parent][1].lower() == 'parent':
+        n_parent += 1
+    if n_parent > 0:
+        if not parent_chain or n_parent > len(parent_chain):
+            return None, False
+        rest = segments[n_parent:]
+        if not rest:
+            return None, False
+        return _walk_path(parent_chain[n_parent - 1], rest, ctx)
+
     has_index = any(s[0] == 'index' for s in segments)
     if not has_index:
         raw_path = '.'.join(s[1] for s in segments)
@@ -197,13 +222,21 @@ def _locate_list(current, names):
 
 def _resolve_table(segments, ctx, drop_last_as_col=True):
     names = [s[1] for s in segments if s[0] == 'attr']
+    row, global_data, parent_chain = ctx
+    n_parent = 0
+    while n_parent < len(names) and names[n_parent].lower() == 'parent':
+        n_parent += 1
+    if n_parent > 0:
+        if not parent_chain or n_parent > len(parent_chain):
+            return None, None
+        row = parent_chain[n_parent - 1]
+        names = names[n_parent:]
     if names and names[0].lower() in ('doc', 'dades'):
         names = names[1:]
     if drop_last_as_col and len(names) >= 2:
         group, col = names[:-1], names[-1]
     else:
         group, col = names, None
-    row, global_data = ctx
     rows = _locate_list(row, group) if isinstance(row, (dict, list)) else None
     if rows is None and global_data:
         rows = _locate_list(global_data, group)
@@ -357,17 +390,20 @@ def eval_node(node, ctx):
 # Public entry points
 # ---------------------------------------------------------------------------
 
-def evaluate_formula(formula_str, row, global_data=None):
+def evaluate_formula(formula_str, row, global_data=None, parent_chain=None):
     """Evaluates one CUSTOM-formula string against `row` (the record being
     computed) and `global_data` (the whole data tree, for cross-group
-    lookups). Returns a number, bool or string, or `row.get(formula_str, 0)`
-    as a last-resort fallback on any error -- a broken formula shouldn't
-    crash the form, just leave the field showing something recognizable."""
+    lookups). `parent_chain` is a tuple of ancestor rows, nearest first (see
+    this module's docstring), letting the formula use `parent`/`parent.parent`
+    to reach up the nested-table structure. Returns a number, bool or string,
+    or `row.get(formula_str, 0)` as a last-resort fallback on any error -- a
+    broken formula shouldn't crash the form, just leave the field showing
+    something recognizable."""
     if not formula_str or not isinstance(formula_str, str):
         return 0
     try:
         node = Parser(tokenize(formula_str.strip())).parse()
-        result = eval_node(node, (row, global_data))
+        result = eval_node(node, (row, global_data, parent_chain or ()))
         if isinstance(result, bool):
             return result
         if isinstance(result, (int, float)):

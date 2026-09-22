@@ -861,6 +861,63 @@ class TestExcelPythonEngine(unittest.TestCase):
         self.assertFalse(bad["valid"])
         self.assertIsNotNone(bad["error"])
 
+    def test_32_formula_parent_reference(self):
+        """`parent` és una paraula reservada al minillenguatge que salta a la
+        fila contenidora immediata a l'estructura aniuada; `parent.parent`
+        hi torna a saltar des d'allà, de manera recursiva sense límit de
+        profunditat. Provat cridant evaluate_custom_formula directament amb
+        un parent_chain explícit (fila àvia, fila mare -- més a prop
+        primer), abans de provar-ho amb el recorregut real de l'arbre al
+        test següent."""
+        ecf = self.engine.evaluate_custom_formula
+        grandparent_row = {"idPartida": "P1", "tipus": "Servei"}
+        parent_row = {"idActivitat": "A1", "nom": "Recollida de dades"}
+        row = {"funcio": "X"}
+        self.assertEqual(ecf("parent.nom", row, None, (parent_row, grandparent_row)), "Recollida de dades")
+        self.assertEqual(ecf("parent.parent.idPartida", row, None, (parent_row, grandparent_row)), "P1")
+        self.assertEqual(
+            ecf('parent.nom + " (" + parent.parent.tipus + ")"', row, None, (parent_row, grandparent_row)),
+            "Recollida de dades (Servei)",
+        )
+        # Sense prou avantpassats a la cadena (aquí només n'hi ha un), un
+        # `parent.parent` ha de fallar amb tolerància (None/0), no petar.
+        self.assertEqual(ecf("parent.parent.idPartida", row, None, (parent_row,)), 0)
+        # Sense cap parent_chain (camp d'un grup de primer nivell), `parent`
+        # tampoc ha de petar.
+        self.assertEqual(ecf("parent.nom", row), 0)
+
+    def test_33_evaluate_computed_fields_parent_reference_real_nesting(self):
+        """El mateix cas que el test anterior però pel recorregut real de
+        l'arbre (run_custom_pass/evaluate_computed_fields), amb una
+        estructura de tres nivells d'aniuament amb llistes -- el cas real
+        reportat per un usuari (pres.parts.activitats.costs): un camp
+        calculat a `costs` referencia dades de la seva `activitat` (parent)
+        i de la `part` que la conté (parent.parent)."""
+        data = {"pres": {
+            "tipus": "Servei",
+            "parts": [{
+                "idPartida": "P1",
+                "nom": "Part A",
+                "activitats": [{
+                    "idActivitat": "A1",
+                    "nom": "Recollida de dades",
+                    "costs": [{"funcio": "X", "resum": ""}],
+                }],
+            }],
+        }}
+        metadata = [
+            {"group": "pres.parts.activitats.costs", "element": "funcio", "isCalculated": True,
+             "sourceType": "computed", "calcFn": "CUSTOM", "calcFormula": "parent.nom"},
+            {"group": "pres.parts.activitats.costs", "element": "resum", "isCalculated": True,
+             "sourceType": "computed", "calcFn": "CUSTOM",
+             "calcFormula": 'parent.nom + " / " + parent.parent.idPartida + " / " + parent.parent.parent.tipus'},
+        ]
+        result = json.loads(self.engine.evaluate_computed_fields(json.dumps(data), json.dumps(metadata)))
+        self.assertTrue(result["success"])
+        cost = result["data"]["pres"]["parts"][0]["activitats"][0]["costs"][0]
+        self.assertEqual(cost["funcio"], "Recollida de dades")
+        self.assertEqual(cost["resum"], "Recollida de dades / P1 / Servei")
+
 
 if __name__ == "__main__":
     unittest.main()

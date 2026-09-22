@@ -20,13 +20,14 @@ import { ref, computed, nextTick } from 'vue';
 import { isPrimitive } from './useSchemaResolver';
 
 /**
- * The built-in functions actually implemented by the CUSTOM formula
- * mini-language's AST evaluator (src/python/elips_engine/formula/), used by
- * the calcFormula editor ("FÓRMULA" option in a Computed field's "Funció"
- * menu). Static, shared verbatim by every formula editor in the app
- * (GroupConfigModal, NestedDataNode, DataInspector) — kept here as the
- * single source of truth for the autocomplete menu's function list. See
- * manual.md section 4.5.B for the full reference with examples.
+ * The built-in functions (plus the `parent` reserved keyword) actually
+ * implemented by the CUSTOM formula mini-language's AST evaluator
+ * (src/python/elips_engine/formula/), used by the calcFormula editor
+ * ("FÓRMULA" option in a Computed field's "Funció" menu). Static, shared
+ * verbatim by every formula editor in the app (GroupConfigModal,
+ * NestedDataNode, DataInspector) — kept here as the single source of truth
+ * for the autocomplete menu's suggestion list. See manual.md section 4.5.B
+ * for the full reference with examples.
  *
  * NOT the same list as itemTitleFormula's own (smaller, separate) helper
  * functions (CONCAT/MONEDA/ARRODONEIX/UPPER/LOWER, implemented directly in
@@ -49,6 +50,7 @@ export const builtinFunctions = [
   { name: 'MIN(grup.taula.columna)', insert: 'MIN(grup.taula.columna)', label: 'MÍNIM (agregació d\'una columna)', category: 'Funció' },
   { name: 'MAX(grup.taula.columna)', insert: 'MAX(grup.taula.columna)', label: 'MÀXIM (agregació d\'una columna)', category: 'Funció' },
   { name: 'SUMIF(grup.taula.critCol; "valor"; grup.taula.sumCol)', insert: 'SUMIF(grup.taula.critCol; "valor"; grup.taula.sumCol)', label: 'SUMA CONDICIONAL (SUMIF)', category: 'Funció' },
+  { name: 'parent.camp', insert: 'parent.', label: 'PARENT — camp de la fila pare (parent.parent... per avantpassats)', category: 'Paraula clau' },
 ];
 
 /**

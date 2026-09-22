@@ -116,14 +116,17 @@ def _cef_normalize_criteria(raw, row, global_data):
     return _cef_coerce_num_or_str(s)
 
 
-def evaluate_custom_formula(formula_str, row, global_data=None):
+def evaluate_custom_formula(formula_str, row, global_data=None, parent_chain=None):
     """Evaluates one CUSTOM-formula string (the SI/ARRODONEIX/CONCAT/MONEDA/...
     mini-language) against `row` (the record being computed) and `global_data`
-    (the whole data tree, for cross-group lookups). Returns a number, bool or
+    (the whole data tree, for cross-group lookups). `parent_chain` is a tuple
+    of ancestor rows, nearest first, letting the formula use `parent`/
+    `parent.parent` to reach up the nested-table structure (built by
+    run_custom_pass below as it walks down). Returns a number, bool or
     string, or `row.get(formula_str)` as a last-resort fallback on any error —
     matching the JS version's forgiving behavior (a broken formula shouldn't
     crash the form, just leave the field showing something recognizable)."""
-    return evaluate_formula(formula_str, row, global_data)
+    return evaluate_formula(formula_str, row, global_data, parent_chain=parent_chain)
 
 
 def validate_custom_formula_syntax(formula_str):
@@ -179,7 +182,15 @@ def find_sub_list(obj, target_vec, sub_visited=None, depth=0):
     return None
 
 
-def run_custom_pass(container, custom_metas, data, debug_mode, logs, group_hint='', visited=None):
+def run_custom_pass(container, custom_metas, data, debug_mode, logs, group_hint='', visited=None, parent_chain=()):
+    """`parent_chain` is a tuple of ancestor ROWS (dicts), nearest first --
+    grown by exactly one entry (the current `container`) each time this
+    recurses into a nested dict/list child, never when it merely iterates a
+    list's own items (a list isn't a row, its items' parent is whatever
+    dict held the list, which is already `parent_chain[0]` at that point).
+    This is what lets a CUSTOM formula use `parent`/`parent.parent` (see
+    evaluator.py's module docstring) to reach up the nested-table structure
+    it was evaluated inside of."""
     if visited is None:
         visited = set()
     if not isinstance(container, (dict, list)):
@@ -191,9 +202,10 @@ def run_custom_pass(container, custom_metas, data, debug_mode, logs, group_hint=
 
     if isinstance(container, list):
         for item in container:
-            run_custom_pass(item, custom_metas, data, debug_mode, logs, group_hint, visited)
+            run_custom_pass(item, custom_metas, data, debug_mode, logs, group_hint, visited, parent_chain)
         return
 
+    child_parent_chain = (container,) + parent_chain
     for k, v in container.items():
         if k in ('_sheet_info', '_hierarchy_schema', 'editor_metadata'):
             continue
@@ -211,11 +223,11 @@ def run_custom_pass(container, custom_metas, data, debug_mode, logs, group_hint=
         if isinstance(v, dict) and '_default_val' in v:
             continue
         if isinstance(v, (dict, list)):
-            run_custom_pass(v, custom_metas, data, debug_mode, logs, k if isinstance(v, list) else group_hint, visited)
+            run_custom_pass(v, custom_metas, data, debug_mode, logs, k if isinstance(v, list) else group_hint, visited, child_parent_chain)
 
     for meta in custom_metas:
         if _cef_is_group_match(meta.get('group'), group_hint):
-            calculated_val = evaluate_custom_formula(meta.get('calcFormula'), container, data)
+            calculated_val = evaluate_custom_formula(meta.get('calcFormula'), container, data, parent_chain=parent_chain)
             if calculated_val is not None:
                 old_val = container.get(meta.get('element'))
                 container[meta.get('element')] = calculated_val

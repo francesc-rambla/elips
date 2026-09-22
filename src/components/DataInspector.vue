@@ -2136,7 +2136,7 @@ onMounted(() => {
 
             <!-- Functions Palette -->
             <div>
-              <span style="font-size: 0.78rem; font-weight: 700; color: var(--text-primary); display: block; margin-bottom: 6px;">⚡ Funcions disponibles:</span>
+              <span style="font-size: 0.78rem; font-weight: 700; color: var(--text-primary); display: block; margin-bottom: 6px;">⚡ Funcions i paraules clau disponibles:</span>
               <div style="display: flex; flex-direction: column; gap: 4px;">
                 <button 
                   v-for="fn in builtinFunctions" 
