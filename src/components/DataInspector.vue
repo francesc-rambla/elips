@@ -345,7 +345,7 @@ const getTopLevelChildSchemas = (sheetName, sheetData) => {
   
   // 2. Array keys present on sheetData itself (e.g. sheetData.parts) -- must be
   // Array.isArray, not just "not primitive": a hydrated dynamic-Select FK value
-  // (see hydrateModelWithForeignKeys in useWasmEngines.js) is also a non-primitive
+  // (see hydrateModelWithForeignKeys in useSchemaResolver.js) is also a non-primitive
   // object, and mistaking it for a nested table here used to mount a NestedDataNode
   // for it, whose own `items` computed then overwrote the FK value with `[]` the
   // moment it found something other than a real array sitting at that key.

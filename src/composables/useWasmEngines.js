@@ -20,7 +20,7 @@ import { ref } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import * as pandocModule from '../vendor/pandoc/pandoc.js';
 import { saveBinaryFile, getBinaryFile } from '../utils/db';
-import { resolveVectorList } from './useSchemaResolver';
+import { hydrateModelWithForeignKeys } from './useSchemaResolver';
 
 // The Python engine now ships as a real, plain Python package
 // (src/python/elips_engine/ — see its __init__.py docstring: it also works
@@ -581,85 +581,6 @@ orphan_count
     } catch (e) {
       return dataObj;
     }
-  };
-
-  const hydrateModelWithForeignKeys = (rootData, editorMetadata) => {
-    if (!rootData || typeof rootData !== 'object') return rootData;
-    const metaList = editorMetadata || rootData.editor_metadata || [];
-    if (!Array.isArray(metaList) || metaList.length === 0) return rootData;
-
-    const dynamicMetaMap = {};
-    metaList.forEach(meta => {
-      if (meta && meta.type === 'Select' && meta.sourceType === 'dynamic' && meta.vectorPath) {
-        const group = meta.group || '';
-        const elem = meta.element || '';
-        if (group && elem) {
-          dynamicMetaMap[`${group}.${elem}`] = meta;
-          const shortGroup = group.split('.').pop();
-          dynamicMetaMap[`${shortGroup}.${elem}`] = meta;
-          const cleanGroup = group.replace(/^OUT_/, '');
-          dynamicMetaMap[`${cleanGroup}.${elem}`] = meta;
-          const cleanShort = shortGroup.replace(/^OUT_/, '');
-          dynamicMetaMap[`${cleanShort}.${elem}`] = meta;
-        }
-      }
-    });
-
-    if (Object.keys(dynamicMetaMap).length === 0) return rootData;
-
-    const resolveTargetTable = (targetPath) => resolveVectorList(rootData, targetPath);
-
-    const processGroup = (groupName, groupData) => {
-      if (!groupData || typeof groupData !== 'object') return;
-
-      if (Array.isArray(groupData)) {
-        groupData.forEach(row => processGroup(groupName, row));
-        return;
-      }
-
-      Object.keys(groupData).forEach(elemKey => {
-        const val = groupData[elemKey];
-        const metaKey = `${groupName}.${elemKey}`;
-        const meta = dynamicMetaMap[metaKey];
-
-        if (meta && val !== null && val !== undefined && val !== '' && typeof val !== 'object') {
-          const targetTable = resolveTargetTable(meta.vectorPath);
-          if (targetTable && targetTable.length > 0) {
-            const valField = meta.valueField || Object.keys(targetTable[0] || {})[0] || '';
-            const dispField = meta.displayField || valField;
-
-            const matchedRow = targetTable.find(r => {
-              if (!r || typeof r !== 'object') return false;
-              return String(r[valField]) === String(val) || String(r[dispField]) === String(val);
-            });
-
-            if (matchedRow) {
-              const hydratedObj = Object.assign({}, matchedRow);
-              const defaultScalar = matchedRow[valField] !== undefined ? matchedRow[valField] : val;
-              hydratedObj._default_val = defaultScalar;
-              hydratedObj.value = defaultScalar;
-              hydratedObj.val = defaultScalar;
-              hydratedObj.toString = () => String(defaultScalar);
-              hydratedObj.valueOf = () => defaultScalar;
-              groupData[elemKey] = hydratedObj;
-            }
-          }
-        }
-
-        if (val && typeof val === 'object' && !val.toString) {
-          const childGroupPath = `${groupName}.${elemKey}`;
-          processGroup(childGroupPath, val);
-        }
-      });
-    };
-
-    Object.keys(rootData).forEach(sheetOrGroupName => {
-      if (sheetOrGroupName !== 'editor_metadata' && sheetOrGroupName !== '_hierarchy_schema') {
-        processGroup(sheetOrGroupName, rootData[sheetOrGroupName]);
-      }
-    });
-
-    return rootData;
   };
 
   /**

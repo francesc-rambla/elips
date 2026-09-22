@@ -19,7 +19,7 @@ the related row's full data, so a Jinja2 template can write `field.otherCol`
 directly. Used by render_md_two_pass_with_report (document generation).
 
 The live-editing counterpart, hydrateModelWithForeignKeys, is JS-side
-(src/composables/useWasmEngines.js) and runs before Pyodide is even called —
+(src/composables/useSchemaResolver.js) and runs before Pyodide is even called —
 kept separate rather than shared, since it needs to run before there is any
 Python data to hand this module. Extracted here as top-level functions
 (rather than staying nested inside render_md_two_pass_with_report, as they

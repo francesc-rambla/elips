@@ -196,3 +196,115 @@ export function resolveVectorList(rootData, vectorName, depth = 0) {
   }
   return null;
 }
+
+/**
+ * Turns every dynamic-Select foreign-key field's plain scalar value (an id)
+ * into the related row's full data, so `partida.descripcio`-style dotted
+ * access works directly on the live model -- both for calculated-field
+ * formulas (see _walk_path's scalar fallback in
+ * elips_engine/formula/evaluator.py, which only needs to run at all for a
+ * field this function failed to hydrate) and for display. Mutates `rootData`
+ * in place (so Vue's reactivity keeps targeting the same objects/arrays) and
+ * returns it. Mirrors hydrate_foreign_keys in
+ * src/python/elips_engine/fk_hydration.py (document-generation pipeline);
+ * kept separate since this one runs in the browser before any Python is
+ * involved.
+ *
+ * Extracted as a top-level function (rather than a closure nested inside
+ * useWasmEngines' composable body, as it originally was) specifically so it
+ * can be called and tested on its own -- the previous nested version had a
+ * real bug that went unnoticed for exactly that reason: `!val.toString` was
+ * meant to stop recursion from re-entering an already-hydrated FK object
+ * (which has `_default_val`) as if it were a plain child group, but EVERY
+ * JS object/array already inherits `toString` from its prototype, so the
+ * condition was always false and recursion into ANY nested group never ran
+ * past the sheet/group directly under the root. A field several groups deep
+ * (e.g. `pres.parts.activitats.costs.perfil_producte`) was therefore never
+ * hydrated at all -- its formula (`perfil_producte.preu`) kept resolving via
+ * evaluator.py's blind scalar-FK fallback instead (a search across every
+ * table in the tree for ANY row containing the selected value), which
+ * happened to land on the right row only when no OTHER row anywhere in the
+ * document also used that same value, explaining why some dropdown options
+ * "worked" and others silently kept a stale price.
+ */
+export function hydrateModelWithForeignKeys(rootData, editorMetadata) {
+  if (!rootData || typeof rootData !== 'object') return rootData;
+  const metaList = editorMetadata || rootData.editor_metadata || [];
+  if (!Array.isArray(metaList) || metaList.length === 0) return rootData;
+
+  const dynamicMetaMap = {};
+  metaList.forEach(meta => {
+    if (meta && meta.type === 'Select' && meta.sourceType === 'dynamic' && meta.vectorPath) {
+      const group = meta.group || '';
+      const elem = meta.element || '';
+      if (group && elem) {
+        dynamicMetaMap[`${group}.${elem}`] = meta;
+        const shortGroup = group.split('.').pop();
+        dynamicMetaMap[`${shortGroup}.${elem}`] = meta;
+        const cleanGroup = group.replace(/^OUT_/, '');
+        dynamicMetaMap[`${cleanGroup}.${elem}`] = meta;
+        const cleanShort = shortGroup.replace(/^OUT_/, '');
+        dynamicMetaMap[`${cleanShort}.${elem}`] = meta;
+      }
+    }
+  });
+
+  if (Object.keys(dynamicMetaMap).length === 0) return rootData;
+
+  const processGroup = (groupName, groupData) => {
+    if (!groupData || typeof groupData !== 'object') return;
+
+    if (Array.isArray(groupData)) {
+      groupData.forEach(row => processGroup(groupName, row));
+      return;
+    }
+
+    Object.keys(groupData).forEach(elemKey => {
+      const val = groupData[elemKey];
+      const metaKey = `${groupName}.${elemKey}`;
+      const meta = dynamicMetaMap[metaKey];
+
+      if (meta && val !== null && val !== undefined && val !== '' && typeof val !== 'object') {
+        const targetTable = resolveVectorList(rootData, meta.vectorPath);
+        if (targetTable && targetTable.length > 0) {
+          const valField = meta.valueField || Object.keys(targetTable[0] || {})[0] || '';
+          const dispField = meta.displayField || valField;
+
+          const matchedRow = targetTable.find(r => {
+            if (!r || typeof r !== 'object') return false;
+            return String(r[valField]) === String(val) || String(r[dispField]) === String(val);
+          });
+
+          if (matchedRow) {
+            const hydratedObj = Object.assign({}, matchedRow);
+            const defaultScalar = matchedRow[valField] !== undefined ? matchedRow[valField] : val;
+            hydratedObj._default_val = defaultScalar;
+            hydratedObj.value = defaultScalar;
+            hydratedObj.val = defaultScalar;
+            hydratedObj.toString = () => String(defaultScalar);
+            hydratedObj.valueOf = () => defaultScalar;
+            groupData[elemKey] = hydratedObj;
+          }
+        }
+      }
+
+      // Recurse into any plain nested object/array (a child KV group or
+      // table) -- but not into a value this function already hydrated
+      // above (or on a previous pass), which carries `_default_val` and
+      // must stay a single scalar-like form field, never be walked as if
+      // it were a child group.
+      if (val && typeof val === 'object' && val._default_val === undefined) {
+        const childGroupPath = `${groupName}.${elemKey}`;
+        processGroup(childGroupPath, val);
+      }
+    });
+  };
+
+  Object.keys(rootData).forEach(sheetOrGroupName => {
+    if (sheetOrGroupName !== 'editor_metadata' && sheetOrGroupName !== '_hierarchy_schema') {
+      processGroup(sheetOrGroupName, rootData[sheetOrGroupName]);
+    }
+  });
+
+  return rootData;
+}
