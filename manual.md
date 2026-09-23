@@ -55,7 +55,7 @@ A diferència dels processadors de text tradicionals, **elips** es basa en la **
 
 1. **Les plantilles de text (`.md.j2`) i l'estructura de l'Excel romanguin bastant estables**: Són dissenyades per l'equip tècnic o jurídic d'administració per a cada tipologia de contracte (serveis, subministraments, obres, etc.).
 2. **El gruix del contingut s'introdueix al model de dades**: Cada expedient concret només requereix introduir o ajustar els valors corresponents als seus camps (pressupost, terminis, justificacions tècniques, taules de preus, etc.).
-3. **Avaluació dinàmica doble**: El contingut introduït als camps de text del model de dades pot contenir expressions dinàmiques Jinja2 (`{{ doc.pres.contractant }}`), que s'avaluen automàticament durant la compilació del document final.
+3. **Avaluació dinàmica doble**: El contingut introduït als camps de text del model de dades pot contenir expressions dinàmiques Jinja2 (`{{ doc.pres.contractant }}`), que s'avaluen automàticament durant la compilació del document final. Dins d'aquest text, els propis camps de la fila on viu el camp (i, amb `parent`, els de les files que la contenen) estan disponibles directament pel seu nom — vegeu l'apartat [5.3](#53-redacció-de-text-extens-en-camps-del-model-el-mateix-editor-de-la-secció-41).
 4. **Execució 100% al navegador**: Mitjançant WebAssembly (**Pyodide** per a Python/Jinja2 i **Pandoc WASM** per a la generació Word), cap dada no viatja a servidors externs, complint les normatives més estrictes de privadesa i confidencialitat.
 5. **Compilació tolerant a errors**: El motor de renderitzat fa dues passades sobre la plantilla; si una variable no existeix al model de dades, no s'atura la generació — la substitueix per un avís visible i continua, perquè sempre pugueu obtenir un document per revisar (vegeu [6. FAQ](#6-bones-pràctiques-i-resolució-de-problemes-faq) per interpretar aquests avisos).
 
@@ -245,7 +245,8 @@ Per configurar la naturalesa de cada camp, feu clic al botó **⚙️ Configura 
 4. **Boolean (Lògic)**: Desplegable de cert (`True`) o fals (`False`).
 5. **Select (Desplegable i Enllaços d'Objectes Foreign Key)**:
    - **Estàtic**: Llista manual d'opcions separades per comes (`opcio1, opcio2, opcio3`).
-   - **Dinàmic (Vector de dades / Relació Foreign Key)**: Enllaça amb una taula existent de l'Excel, permetent seleccionar la columna per fixar el valor (`valueField`, clau primària) i la columna per visualitzar-lo (`displayField`). Permet navegació directa per propietats de l'objecte associat com `part.Lot.nom`.
+   - **Dinàmic (Vector de dades / Relació Foreign Key)**: Enllaça amb una taula existent de l'Excel, permetent seleccionar la columna per fixar el valor (`valueField`, clau primària) i la columna per visualitzar-lo (`displayField`). Permet navegació directa per propietats de l'objecte associat com `part.Lot.nom` (vegeu també l'apartat 4.5, secció B, "Accés a les propietats d'una clau forana").
+   - **Desplegable condicionat a un altre camp (filtre)**: un cop triada la taula d'origen, apareixen dos selectors addicionals: la **columna de filtre** (una columna de la taula d'origen) i el **camp d'aquest grup** el valor del qual s'ha de comparar amb aquella columna. Quan els dos estan configurats, el desplegable només mostra les files de la taula d'origen on la columna de filtre coincideix amb el valor actual d'aquell altre camp — útil per encadenar desplegables (ex: triar primer un `Lot` i que el desplegable de `Partides` només mostri les partides d'aquell lot).
    - **Selecció múltiple**: Permet escollir un o diversos valors simultàniament que es guarden com a etiquetes (*pills*).
 6. **Computed (Calculat)**: Camp no editable directament que es calcula mitjançant el motor de fórmules d'elips.
 
@@ -264,31 +265,69 @@ FASE 2 (Agregacions SUM / COUNT / AVG a nivells superiors)
   └── Suma els valors ja calculats a la Fase 1 des de les sub-taules cap amunt.
 ```
 
-#### A. Agregacions estàndard (`SUM`, `COUNT`, `AVG`)
-Permet calcular el total d'una columna de la sub-taula fill des del nivell pare:
-- **Funció**: `SUM`
-- **Sub-taula**: `Activitats`
-- **Columna**: `import_activitat`
+#### A. Agregacions estàndard (menú "Funció" del camp calculat)
+Al desplegable **Funció** d'un camp **Computed** podeu triar directament una agregació sense escriure cap fórmula, indicant la **sub-taula origen** i, si escau, la **columna** a operar:
 
-#### B. Fórmules personalitzades (`CUSTOM`) i Funcions Suportades
-- `SI(condició; valor_cert; valor_fals)` / `IF(...)`: Condicional lògic.
-- `ARRODONEIX(valor; decimals)` / `ROUND(...)`: Arrodoneix al nombre de decimals indicat.
-- `ABS(valor)`: Valor absolut.
-- `MIN(a; b)` / `MAX(a; b)`: Mínim o màxim.
-- `CONCAT(text1; text2; ...)`: Concatena múltiples textos o valors.
-- `MONEDA(valor)`: Formata un número com a moneda (`12.345,67 €`).
-- `PERCENTATGE(valor)`: Formata un número com a percentatge (`21,00%`).
-- `DATA_CAT(data)`: Formata dates en text català complet.
-- `TEXT(valor)`: Converteix a text.
-- `REMPLAÇA(text; vell; nou)`: Substitueix cadenes de text.
-- `UPPER(text)` / `LOWER(text)`: Majúscules i minúscules.
+| Opció al menú | Funció | Necessita columna? |
+| :--- | :--- | :--- |
+| SUMA | `SUM` | Sí |
+| MITJANA | `AVERAGE` | Sí |
+| RECOMPTE | `COUNT` | No (compta files) |
+| MÍNIM / MÀXIM | `MIN` / `MAX` | Sí |
+| SUMA CONDICIONAL | `SUMIF` | Sí (columna de criteri + columna a sumar) |
+| BOOLEÀ OR / ALGUN | `OR` | Opcional |
+| BOOLEÀ AND / TOTS | `AND` | Opcional |
 
-> Nota: aquesta és una mini-sintaxi pròpia d'elips per als camps **Computed**, independent de la sintaxi Jinja2 de les plantilles (apartat 4.1). Els noms de funció es donen en català (`SI`, `ARRODONEIX`) i s'avaluen sobre els valors d'una mateixa fila o cap amunt de la jerarquia, no dins del document final.
+- **SUMIF** necessita, a més de la sub-taula i la columna a sumar, una **columna de criteri** i un **valor de criteri**: escriviu el valor entre cometes per un literal (`"Obra"`) o sense cometes per referir-vos al valor d'un altre camp (`pres.tipus.nom`) — el mateix conveni que a les fórmules personalitzades (vegeu més avall).
+- **OR/AND** consideren cert qualsevol valor "veritable" (`cert`, `true`, `1`, un número diferent de zero...) i fals la resta; sense columna, avaluen directament els elements de la sub-taula (útil si és una llista de booleans).
+
+#### B. Fórmules personalitzades (`FÓRMULA` / `CUSTOM`)
+
+Quan cap agregació estàndard s'ajusta al que voleu, trieu **FÓRMULA** al menú "Funció" i escriviu una expressió amb el mini-llenguatge propi d'elips. Aquesta és una sintaxi **independent** de Jinja2 (la de les plantilles, apartat 4.1): s'avalua sobre les dades, mai dins del document final, i els noms de funció es donen en català.
+
+En sortir del quadre de la fórmula (tant a la casella ràpida com a l'editor ampliat "Amplia"), elips en comprova automàticament la sintaxi amb el mateix analitzador que l'avalua realment: si hi ha un error (parèntesi sense tancar, un `;` de més, una funció desconeguda...) apareix immediatament sota el quadre en vermell i queda registrat al registre d'activitat, sense necessitat de generar cap document per descobrir-ho.
+
+**Referències a camps**
+- Un nom sol (`preu`, `unitats`) es refereix sempre a una propietat de la **mateixa fila** on s'avalua la fórmula.
+- Un camí amb punts (`pres.tipus_ref`, `pres.parts.import`) navega des de l'arrel de les dades: primer busca el camí dins la fila actual, després a tot l'arbre de dades.
+- Si el camí travessa una **sub-taula** (una llista de files) i s'utilitza en una operació aritmètica normal (no dins una funció d'agregació), el valor es converteix automàticament en la **suma** de la columna indicada a totes les files (ex: `pres.parts.import` val el total de la columna `import` de totes les partides).
+- **Accés a les propietats d'una clau forana**: si un camp és un desplegable dinàmic (Select amb relació Foreign Key, apartat 4.4) que apunta a una fila d'una altra taula, podeu navegar directament a les columnes d'aquella fila relacionada afegint-hi un punt: si el camp `partida` és un Select dinàmic cap a la taula `partides`, la fórmula `partida.descripcio` retorna la columna `descripcio` de la fila triada.
+- Podeu indexar un element concret d'una sub-taula amb claudàtors: `pres.parts[0].import` (la primera fila).
+- **`parent` — accés a la fila del node pare**: dins d'una estructura aniuada (una sub-taula dins d'una altra sub-taula, com `pres.parts.activitats.costs`), `parent` es refereix a la fila contenidora immediata (per a un `cost`, la seva `activitat`) i en permet llegir qualsevol camp amb un punt: `parent.nom_activitat`. `parent` té comportament recursiu: `parent.parent` és el pare del pare (la `part` que conté l'`activitat`), `parent.parent.parent` el següent nivell, i així indefinidament. A un grup de primer nivell (sense cap estructura aniuada per sobre) `parent` no té cap fila a què apuntar i la fórmula retorna buit — no dona error, però tampoc un valor útil. `parent` és una paraula reservada del minillenguatge: si algun dia una columna es diu literalment `parent`, aquest nom sempre es resol com "vés al node pare", mai com la columna.
+
+**Operadors**
+- Aritmètics: `+` `-` `*` `/` (divisió) `//` (divisió entera) `%` (mòdul) `^` o `**` (potència). `+` també concatena text quan els dos costats són cadenes.
+- Comparació: `=` o `==` (igual), `<>` o `!=` (diferent), `<` `<=` `>` `>=`.
+- Lògics: `and`, `or`, `not` (en minúscules exactes) combinen condicions normalment, ex: `actiu and unitats > 0`.
+- Condicional a l'estil Python: `valor_cert if condició else valor_fals` (equivalent a `SI(condició; valor_cert; valor_fals)`).
+
+**Funcions disponibles**
+- `SI(condició; valor_cert; valor_fals)` / `IF(...)`: condicional lògic.
+- `ARRODONEIX(valor; decimals)` / `ROUND(...)`: arrodoneix al nombre de decimals indicat.
+- `ABS(valor)`: valor absolut.
+- `CERT(valor)` / `FALS(valor)`: comprova si un valor és "veritable" o "fals" amb el mateix criteri tolerant que OR/AND (`cert`, `true`, `1`... compten com a cert).
+- `OR(camí)` (sinònims `O`, `ANY`, `SOME`) / `AND(camí)` (sinònims `I`, `EVERY`, `ALL`): donat un camí que travessa una sub-taula, comproven si **algun** o **tots** els valors d'aquella columna són certs. Ex: `OR(pres.parts.actiu)` és cert si alguna partida té `actiu` a cert.
+- `SUM(grup.taula.columna)` / `AVERAGE(grup.taula.columna)` / `AVG(...)` / `MIN(...)` / `MAX(...)`: agreguen una columna d'una sub-taula, igual que l'opció de menú equivalent, però utilitzables dins d'una fórmula més gran (ex: `ARRODONEIX(SUM(pres.parts.import) * 0.21; 2)`).
+- `MIN(a; b; ...)` / `MAX(a; b; ...)`: amb dos o més valors solts (no un únic camí a una sub-taula), donen el mínim o màxim element a element.
+- `COUNT(grup.taula)`: nombre de files d'una sub-taula.
+- `SUMIF(grup.taula.columna_criteri; criteri; grup.taula.columna_suma)`: suma `columna_suma` només a les files on `columna_criteri` coincideix amb `criteri`. El `criteri` segueix el mateix conveni de cometes que al menú d'agregacions: **entre cometes = valor literal** (`"Obra"`), **sense cometes = referència a un altre camp** (`pres.tipus_ref`).
+
+**Què NO fa aquest mini-llenguatge** (a diferència dels filtres Jinja2 de les plantilles): no formata monedes ni percentatges, no concatena text amb una funció `CONCAT`, ni transforma majúscules/minúscules — per a tot això, useu els [filtres Jinja2 disponibles](#43-filtres-de-format-jinja2-disponibles) directament a la plantilla. L'únic lloc on una petita variant de `CONCAT`/`MONEDA`/`ARRODONEIX`/`UPPER`/`LOWER` sí que funciona és als **títols dinàmics per fórmula** (`itemTitleFormula`, apartat 4.6), que és un mini-llenguatge encara més senzill i completament diferent, pensat només per compondre un text curt de capçalera.
+
+**Exemples**
+```
+import = preu * unitats
+import = SI(persones > 0; persones * unitats * preu; unitats * preu)
+té_partides_actives = OR(pres.parts.actiu)
+total_obra = SUMIF(pres.parts.categoria; "Obra"; pres.parts.import)
+preu_unitari = partida.preu           (accés a la fila relacionada d'un Select dinàmic)
+etiqueta = "Lot " + nom_lot if nom_lot != "" else "Sense lot"
+```
 
 #### C. Editor ampliat de fórmules amb autocompletat intel·ligent
 En fer clic al botó **✏️ Amplia** al costat d'una fórmula:
 - **Paleta de camps**: Cliqueu qualsevol camp de la fila o ruta global per inserir-lo.
-- **Autocompletat al textarea**: Comenceu a escriure el nom d'un camp o funció (ex: `imp`, `SI`, `MONEDA`) per veure el menú emergent de suggeriments. Desplaceu-vos amb les fletxes ⬆️ / ⬇️ i premeu **Enter** o **Tab** per completar.
+- **Autocompletat al textarea**: Comenceu a escriure el nom d'un camp o funció (ex: `imp`, `SI`, `SUMIF`) per veure el menú emergent de suggeriments. Desplaceu-vos amb les fletxes ⬆️ / ⬇️ i premeu **Enter** o **Tab** per completar.
 
 ---
 
@@ -366,7 +405,10 @@ Quan un camp del model requereix una redacció extensa (justificació de necessi
 2. S'obrirà un modal amb **exactament el mateix editor de contingut descrit a l'apartat [4.1](#41-leditor-de-contingut-mode-visual-i-mode-codi)** (mode Visual/Codi, paleta de variables, assistent de taules, blocs IF/FOR), aquesta vegada centrat només en aquest camp concret.
 3. La **previsualització en temps real** us permet comprovar el resultat renderitzat abans de tancar el modal.
 
-No hi ha cap diferència funcional entre redactar la plantilla principal del document i redactar un camp de text del model: totes dues coses fan servir el mateix editor.
+No hi ha cap diferència d'editor entre redactar la plantilla principal del document i redactar un camp de text del model: totes dues coses fan servir el mateix editor. Hi ha, però, una diferència en **quines variables hi ha disponibles**:
+
+- A la **plantilla principal**, un bucle `{% for part in pres.parts %}` deixa `part` visible a dins seu de manera normal (l'abast lèxic habitual de Jinja2), inclosos els bucles aniuats: `{% for activitat in part.activitats %}` hi funciona directament.
+- Dins del **text d'un camp concret** (p. ex. el camp de notes d'una partida), no hi ha cap variable de bucle equivalent, perquè aquest text s'avalua sol, fora de qualsevol `{% for %}` de la plantilla principal. Per això, dins d'aquest text, **els propis camps de la fila (aquesta partida) estan disponibles directament pel seu nom**, exactament igual que a les fórmules personalitzades (apartat 4.5.B): si la partida té una sub-taula `activitats`, el text del seu propi camp "Notes" pot escriure `{% for a in activitats %}...{% endfor %}` sense necessitat de fixar cap índex, i el resultat serà sempre "les activitats d'aquesta partida concreta" — no cal (ni funciona) escriure `part.activitats` ni `pres.parts[0].activitats` aquí. També hi teniu accessible `parent` (i `parent.parent`, recursivament) per pujar a la fila contenidora, amb el mateix comportament que a les fórmules.
 
 ---
 
@@ -398,6 +440,9 @@ No hi ha cap diferència funcional entre redactar la plantilla principal del doc
 
 ### ❓ Com puc compartir un projecte complet amb un altre company?
 **R:** Feu clic a **📦 Descarrega Projecte (ZIP)**. El fitxer descarregat conté totes les plantilles, dades, metadades i documents Word. El vostre company només haurà de pujar el fitxer ZIP a **elips** per continuar treballant exactament des del mateix punt.
+
+### ❓ Què vol dir la icona vermella 🔴 "Error en desar" al costat del botó Desa?
+**R:** elips desa el projecte i el document actiu a l'espai d'emmagatzematge local del navegador (`localStorage`), que té una mida limitada compartida entre **tots** els vostres projectes desats (normalment uns 5-10 MB per navegador). Si aquest espai s'esgota — típicament perquè s'han acumulat diversos projectes amb models grans — el desat (tant l'automàtic com el manual amb el botó **Desa**) no es pot completar, i la icona 🔴 substitueix l'habitual 🟢/🟠/🔵 fins que torneu a desar amb èxit. Els canvis d'aquesta sessió **no estan desats** mentre la icona sigui vermella. Consulteu el registre d'activitat per al detall de l'error, i esborreu algun projecte que ja no necessiteu des de **⚙️ Gestiona Projectes** per alliberar espai; torneu-ho a provar amb el botó **Desa** un cop fet.
 
 ---
 *Documentació actualitzada per a elips v2.0 - Entorn web WASM/Pyodide de generació de contractes públics.*
