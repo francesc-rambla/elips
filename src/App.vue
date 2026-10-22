@@ -23,6 +23,8 @@ import { useWasmEngines } from './composables/useWasmEngines';
 import { saveBinaryFile, getBinaryFile, deleteBinaryFile, deleteDbItem } from './utils/db';
 
 import { useVersionHistory } from './composables/useVersionHistory';
+import { useCollabFolder } from './composables/useCollabFolder';
+import { getDisplayNameOrFallback, setDisplayName as setCollabDisplayName } from './composables/useCollabIdentity';
 
 // Components
 import FileCard from './components/FileCard.vue';
@@ -33,6 +35,7 @@ import TerminalLog from './components/TerminalLog.vue';
 import SettingsModal from './components/SettingsModal.vue';
 import ExcelImportModal from './components/ExcelImportModal.vue';
 import VersionHistoryModal from './components/VersionHistoryModal.vue';
+import CollabPanel from './components/CollabPanel.vue';
 
 const store = useWorkspaceStore();
 const { initEngines, parseExcel, renderMarkdown, compileDocx, saveExcelData, saveExcelHierarchy, writeVirtualExcel, isLoading, stripHierarchyRefKeys } = useWasmEngines();
@@ -103,6 +106,45 @@ const isProjectsModalOpen = ref(false);
 
 const activeDocName = ref(localStorage.getItem(`${currentProjectName.value}:activeDocName`) || 'Document Principal');
 const documentsList = ref(JSON.parse(localStorage.getItem(`${currentProjectName.value}:documentsList`) || '["Document Principal"]'));
+
+// Folder-based collaboration (Fase 1: connexió/desconnexió de carpeta i
+// "carrega des de carpeta" -- veure .claude/plans/unified-nibbling-adleman.md).
+const isCollabPanelOpen = ref(false);
+const collabDisplayName = ref(getDisplayNameOrFallback());
+const {
+  isCollabSupported,
+  folderStatus: collabFolderStatus,
+  folderName: collabFolderName,
+  connectFolder: connectCollabFolder,
+  loadProjectFromFolder: loadProjectFromCollabFolder,
+  reconnectFolder: reconnectCollabFolder,
+  requestPermission: requestCollabPermission,
+  disconnectFolder: disconnectCollabFolder,
+} = useCollabFolder(currentProjectName);
+
+const handleConnectCollabFolder = async () => {
+  try {
+    await connectCollabFolder(buildProjectZipBlob);
+  } catch (e) {
+    alert(`Error en connectar la carpeta de col·laboració: ${e.message}`);
+  }
+};
+
+const handleLoadProjectFromCollabFolder = async () => {
+  try {
+    const result = await loadProjectFromCollabFolder(importProjectZip);
+    if (!result?.cancelled) {
+      isProjectsModalOpen.value = false;
+    }
+  } catch (e) {
+    alert(`Error en carregar el projecte des de la carpeta: ${e.message}`);
+  }
+};
+
+const handleUpdateCollabDisplayName = (name) => {
+  setCollabDisplayName(name);
+  collabDisplayName.value = getDisplayNameOrFallback();
+};
 
 // Control Panel Internal Tabs ('downloads' | 'outline')
 const controlPanelTab = ref('downloads');
@@ -851,82 +893,89 @@ const restoreConfigFromExcel = async () => {
   }
 };
 
+// Builds the full project ZIP (template, schema, data) as a Blob, without
+// triggering a download -- factored out of downloadAllProjectFiles() below
+// so useCollabFolder.js's connectFolder() can reuse the exact same project
+// snapshot when seeding a shared collaboration folder.
+const buildProjectZipBlob = async () => {
+  const pName = currentProjectName.value || 'projecte';
+  const zip = new JSZip();
+
+  // 1. Manifest file with project structure
+  const manifest = {
+    projectName: pName,
+    activeDocName: activeDocName.value,
+    documentsList: documentsList.value,
+    excelFileName: store.excelFileName || `${pName}.xlsx`,
+    created: new Date().toISOString()
+  };
+  zip.file("project.json", JSON.stringify(manifest, null, 2));
+
+  // 2. Export updated Excel file (.xlsx) into the ZIP archive
+  const xFileName = store.excelFileName || `${pName}.xlsx`;
+  try {
+    if (store.enginesReady && store.excelJsonData) {
+      store.addLog("Generant fitxer Excel (.xlsx) actualitzat per al paquet ZIP...", "info");
+      const excelBlob = await saveExcelData(store.excelJsonData);
+      const excelBuffer = await excelBlob.arrayBuffer();
+      zip.file(xFileName, excelBuffer);
+    } else if (store.excelFile) {
+      const excelBuffer = await store.excelFile.arrayBuffer();
+      zip.file(xFileName, excelBuffer);
+    } else {
+      const idbBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
+      if (idbBuf) {
+        zip.file(xFileName, idbBuf);
+      }
+    }
+  } catch (e) {
+    store.addLog(`Avís en incloure Excel al ZIP: ${e.message}`, 'warning');
+    try {
+      const idbBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
+      if (idbBuf) {
+        zip.file(xFileName, idbBuf);
+      }
+    } catch (_) {}
+  }
+
+  // 3. Always include raw JSON data and schemas as a 100% fail-safe copy
+  if (store.excelJsonData) {
+    zip.file("dades_excel.json", JSON.stringify(store.excelJsonData, null, 2));
+  }
+  if (store.editorMetadata && store.editorMetadata.length > 0) {
+    zip.file("editor_metadata.json", JSON.stringify(store.editorMetadata, null, 2));
+  }
+  if (store.hierarchySchema && Object.keys(store.hierarchySchema).length > 0) {
+    zip.file("hierarchy_schema.json", JSON.stringify(store.hierarchySchema, null, 2));
+  }
+
+  // 4. Add all Documents (.md.j2 templates & .docx reference files)
+  const docsFolder = zip.folder("documents");
+  for (const docName of documentsList.value) {
+    const cleanDocName = docName.replace(/[/\\?%*:|"<>]/g, '_');
+    const tText = localStorage.getItem(`${pName}:doc:${docName}:templateText`);
+    const tFileName = localStorage.getItem(`${pName}:doc:${docName}:templateFileName`) || `${cleanDocName}.md.j2`;
+    const rFileName = localStorage.getItem(`${pName}:doc:${docName}:refDocFileName`);
+
+    if (tText !== null && tText !== undefined) {
+      docsFolder.file(tFileName, tText);
+    }
+
+    const rBuf = await getBinaryFile(`${pName}:doc:${docName}:refDocBuffer`);
+    if (rBuf && rFileName) {
+      docsFolder.file(rFileName, rBuf);
+    }
+  }
+
+  return await zip.generateAsync({ type: "blob" });
+};
+
 // Export entire project into a portable ZIP archive
 const downloadAllProjectFiles = async () => {
   const pName = currentProjectName.value || 'projecte';
   store.addLog(`Generant paquet ZIP complet del projecte '${pName}'...`, 'info');
-  
   try {
-    const zip = new JSZip();
-    
-    // 1. Manifest file with project structure
-    const manifest = {
-      projectName: pName,
-      activeDocName: activeDocName.value,
-      documentsList: documentsList.value,
-      excelFileName: store.excelFileName || `${pName}.xlsx`,
-      created: new Date().toISOString()
-    };
-    zip.file("project.json", JSON.stringify(manifest, null, 2));
-
-    // 2. Export updated Excel file (.xlsx) into the ZIP archive
-    const xFileName = store.excelFileName || `${pName}.xlsx`;
-    try {
-      if (store.enginesReady && store.excelJsonData) {
-        store.addLog("Generant fitxer Excel (.xlsx) actualitzat per al paquet ZIP...", "info");
-        const excelBlob = await saveExcelData(store.excelJsonData);
-        const excelBuffer = await excelBlob.arrayBuffer();
-        zip.file(xFileName, excelBuffer);
-      } else if (store.excelFile) {
-        const excelBuffer = await store.excelFile.arrayBuffer();
-        zip.file(xFileName, excelBuffer);
-      } else {
-        const idbBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
-        if (idbBuf) {
-          zip.file(xFileName, idbBuf);
-        }
-      }
-    } catch (e) {
-      store.addLog(`Avís en incloure Excel al ZIP: ${e.message}`, 'warning');
-      try {
-        const idbBuf = await getBinaryFile(`${pName}:excelFileBuffer`);
-        if (idbBuf) {
-          zip.file(xFileName, idbBuf);
-        }
-      } catch (_) {}
-    }
-
-    // 3. Always include raw JSON data and schemas as a 100% fail-safe copy
-    if (store.excelJsonData) {
-      zip.file("dades_excel.json", JSON.stringify(store.excelJsonData, null, 2));
-    }
-    if (store.editorMetadata && store.editorMetadata.length > 0) {
-      zip.file("editor_metadata.json", JSON.stringify(store.editorMetadata, null, 2));
-    }
-    if (store.hierarchySchema && Object.keys(store.hierarchySchema).length > 0) {
-      zip.file("hierarchy_schema.json", JSON.stringify(store.hierarchySchema, null, 2));
-    }
-
-    // 4. Add all Documents (.md.j2 templates & .docx reference files)
-    const docsFolder = zip.folder("documents");
-    for (const docName of documentsList.value) {
-      const cleanDocName = docName.replace(/[/\\?%*:|"<>]/g, '_');
-      const tText = localStorage.getItem(`${pName}:doc:${docName}:templateText`);
-      const tFileName = localStorage.getItem(`${pName}:doc:${docName}:templateFileName`) || `${cleanDocName}.md.j2`;
-      const rFileName = localStorage.getItem(`${pName}:doc:${docName}:refDocFileName`);
-
-      if (tText !== null && tText !== undefined) {
-        docsFolder.file(tFileName, tText);
-      }
-
-      const rBuf = await getBinaryFile(`${pName}:doc:${docName}:refDocBuffer`);
-      if (rBuf && rFileName) {
-        docsFolder.file(rFileName, rBuf);
-      }
-    }
-
-    // Generate and trigger download of the ZIP file
-    const content = await zip.generateAsync({ type: "blob" });
+    const content = await buildProjectZipBlob();
     const url = URL.createObjectURL(content);
     triggerDownload(url, `projecte_${pName}.zip`);
     store.addLog(`Paquet ZIP del projecte '${pName}' descarregat satisfactòriament.`, 'success');
@@ -1216,6 +1265,11 @@ onMounted(async () => {
 
   // Active periodic hourly check timer
   startHourlyCheckInterval();
+
+  // Resume a previously connected collaboration folder for this project, if
+  // any -- silent unless the browser needs a fresh permission grant (see
+  // useCollabFolder.js's reconnectFolder doc comment).
+  await reconnectCollabFolder();
 
   // Watchers for automatic change differential recording (debounced by autoSaveDebounceSeconds) and instant localStorage sync
   watch(() => store.templateText, () => {
@@ -1821,8 +1875,12 @@ const generateDocuments = async () => {
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             <span v-if="store.config.showButtonTexts">Històric</span>
           </button>
+          <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem; width: auto; height: 26px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" @click="isCollabPanelOpen = true" title="🔗 Col·laboració via carpeta compartida">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :style="{ color: collabFolderStatus === 'connected' ? 'var(--color-success, #16a34a)' : 'currentColor' }"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span v-if="store.config.showButtonTexts">Col·laboració</span>
+          </button>
         </div>
-        
+
         <div class="header-actions">
           <!-- Universal Maximize / Restore Toggle Button (Icon only) -->
           <button 
@@ -2980,7 +3038,14 @@ const generateDocuments = async () => {
               ➕ Nou Projecte
             </button>
           </div>
-          
+
+          <div v-if="isCollabSupported" style="display: flex; justify-content: space-between; align-items: center; padding: 0 1.25rem;">
+            <span style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 500;">Carrega un projecte compartit per un company:</span>
+            <button class="btn btn-secondary" style="width: auto; padding: 6px 14px; font-size: 0.8rem; display: flex; align-items: center; gap: 4px;" @click="handleLoadProjectFromCollabFolder">
+              📁 Carrega des de Carpeta
+            </button>
+          </div>
+
           <div style="border-top: 1px solid var(--border-color); padding: 1rem 1.25rem 0;">
             <div style="font-size: 0.8rem; font-weight: bold; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; text-align: left;">
               Projectes Desats:
@@ -3189,6 +3254,20 @@ const generateDocuments = async () => {
       @close="isHistoryModalOpen = false"
       @restore="restoreVersion($event.state, $event.mode, $event.displayTime)"
       @create-snapshot="createSnapshot('manual', $event)"
+    />
+
+    <!-- Folder-based Collaboration Panel -->
+    <CollabPanel
+      :is-open="isCollabPanelOpen"
+      :is-collab-supported="isCollabSupported"
+      :folder-status="collabFolderStatus"
+      :folder-name="collabFolderName"
+      :display-name="collabDisplayName"
+      @close="isCollabPanelOpen = false"
+      @connect="handleConnectCollabFolder"
+      @disconnect="disconnectCollabFolder"
+      @request-permission="requestCollabPermission"
+      @update-display-name="handleUpdateCollabDisplayName"
     />
 
     <!-- Ultra-Compact Minimal Footer -->

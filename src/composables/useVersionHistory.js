@@ -17,9 +17,9 @@
  */
 
 import { ref, computed, watch } from 'vue';
-import { compare as jsonPatchCompare, applyPatch as jsonPatchApply } from 'fast-json-patch';
 import { useWorkspaceStore } from '../stores/workspace.js';
 import { saveDbItem, getDbItem } from '../utils/db.js';
+import { computeDataPatch, computeMetaPatch, applyDataPatch } from '../utils/dataPatch.js';
 
 // Fast & lightweight line-based text diff helper
 export const computeTextDiff = (oldText = '', newText = '') => {
@@ -87,28 +87,12 @@ export const computeJsonDiff = (oldObj, newObj) => {
 // Real, granular JSON diff for excelJsonData (the data model) -- RFC 6902
 // JSON Patch via fast-json-patch, unlike computeJsonDiff above (which only
 // compares TOP-LEVEL keys and stores the entire subtree whenever anything
-// inside it changes). null/undefined are normalized to {} since
-// jsonPatchCompare requires actual objects on both sides.
-export const computeDataPatch = (oldObj, newObj) => {
-  const a = oldObj && typeof oldObj === 'object' ? oldObj : {};
-  const b = newObj && typeof newObj === 'object' ? newObj : {};
-  const patch = jsonPatchCompare(a, b);
-  return patch.length > 0 ? patch : null;
-};
-
-// Same RFC 6902 patch as computeDataPatch, for editorMetadata (an array of
-// field-config objects) -- used for RECONSTRUCTION (getLatestState/
-// reconstructStateForEntry below), so a diff entry no longer needs to carry
-// a full copy of editorMetadata alongside it. computeJsonDiff above stays in
-// use for VersionHistoryModal's display purposes (it's cheap and already
-// wired into that UI); this is purely an additional, smaller patch for
-// replaying history without duplicating the whole array on every entry.
-export const computeMetaPatch = (oldMeta, newMeta) => {
-  const a = Array.isArray(oldMeta) ? oldMeta : [];
-  const b = Array.isArray(newMeta) ? newMeta : [];
-  const patch = jsonPatchCompare(a, b);
-  return patch.length > 0 ? patch : null;
-};
+// inside it changes). computeDataPatch/computeMetaPatch/applyDataPatch now
+// live in ../utils/dataPatch.js (re-exported here for existing importers of
+// this module) -- also reused by useCollabSync.js for the same diff/replay
+// primitives, without pulling in this whole stateful composable just for
+// two pure functions.
+export { computeDataPatch, computeMetaPatch };
 
 // Replays diffs[0..uptoDiffIndex] (inclusive) on top of snap's own baseline
 // excelJsonData to reconstruct the full data model as of that point. Each
@@ -124,7 +108,7 @@ export const reconstructExcelJsonDataAt = (snap, uptoDiffIndex) => {
     const patch = diffs[i]?.dataPatch;
     if (patch && patch.length > 0) {
       try {
-        current = jsonPatchApply(current || {}, patch, false, false).newDocument;
+        current = applyDataPatch(current || {}, patch);
       } catch (err) {
         console.warn(`Error aplicant el pedaç de dades del diff #${i}:`, err);
       }
@@ -145,7 +129,7 @@ export const reconstructEditorMetadataAt = (snap, uptoDiffIndex) => {
     const patch = diffs[i]?.metaPatch;
     if (patch && patch.length > 0) {
       try {
-        current = jsonPatchApply(current || [], patch, false, false).newDocument;
+        current = applyDataPatch(current || [], patch);
       } catch (err) {
         console.warn(`Error aplicant el pedaç de metadades del diff #${i}:`, err);
       }

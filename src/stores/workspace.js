@@ -138,7 +138,10 @@ export const useWorkspaceStore = defineStore('workspace', {
       mainThreadPandoc: true,
       showButtonTexts: localStorage.getItem('showButtonTexts') !== 'false',
       labelPosition: localStorage.getItem('labelPosition') || 'top', // 'top' (default) or 'left'
-      autoSaveDebounceSeconds: parseInt(localStorage.getItem('autoSaveDebounceSeconds') || '5', 10) // 5 seconds default
+      autoSaveDebounceSeconds: parseInt(localStorage.getItem('autoSaveDebounceSeconds') || '5', 10), // 5 seconds default
+      // Folder-based collaboration (see useCollabFolder.js/useCollabSync.js)
+      collabPollIntervalSeconds: parseInt(localStorage.getItem('collabPollIntervalSeconds') || '5', 10),
+      collabCaptureDebounceSeconds: parseInt(localStorage.getItem('collabCaptureDebounceSeconds') || '5', 10)
     }
   }),
   
