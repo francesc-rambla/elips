@@ -24,6 +24,7 @@ import { saveBinaryFile, getBinaryFile, deleteBinaryFile, deleteDbItem } from '.
 
 import { useVersionHistory } from './composables/useVersionHistory';
 import { useCollabFolder } from './composables/useCollabFolder';
+import { useCollabSync } from './composables/useCollabSync';
 import { getDisplayNameOrFallback, setDisplayName as setCollabDisplayName } from './composables/useCollabIdentity';
 
 // Components
@@ -108,9 +109,11 @@ const activeDocName = ref(localStorage.getItem(`${currentProjectName.value}:acti
 const documentsList = ref(JSON.parse(localStorage.getItem(`${currentProjectName.value}:documentsList`) || '["Document Principal"]'));
 
 // Folder-based collaboration (Fase 1: connexió/desconnexió de carpeta i
-// "carrega des de carpeta" -- veure .claude/plans/unified-nibbling-adleman.md).
+// "carrega des de carpeta"; Fase 2: captura d'edicions locals al propi
+// fitxer de deltes -- veure .claude/plans/unified-nibbling-adleman.md).
 const isCollabPanelOpen = ref(false);
 const collabDisplayName = ref(getDisplayNameOrFallback());
+const collabFolder = useCollabFolder(currentProjectName);
 const {
   isCollabSupported,
   folderStatus: collabFolderStatus,
@@ -120,7 +123,16 @@ const {
   reconnectFolder: reconnectCollabFolder,
   requestPermission: requestCollabPermission,
   disconnectFolder: disconnectCollabFolder,
-} = useCollabFolder(currentProjectName);
+} = collabFolder;
+
+const { startCollabSync, stopCollabSync } = useCollabSync(collabFolder);
+watch(collabFolderStatus, (status) => {
+  if (status === 'connected') {
+    startCollabSync();
+  } else {
+    stopCollabSync();
+  }
+});
 
 const handleConnectCollabFolder = async () => {
   try {
