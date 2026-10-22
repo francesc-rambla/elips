@@ -37,16 +37,31 @@ import { useWorkspaceStore } from '../src/stores/workspace.js';
 import { useCollabSync } from '../src/composables/useCollabSync.js';
 
 /** Minimal in-memory stand-in for useCollabFolder.js's returned API --
- * only the two methods useCollabSync.js actually calls. */
+ * just the methods useCollabSync.js actually calls. */
 function makeFakeCollabFolder() {
   const files = new Map(); // name -> string content
   return {
     async readTextFile(name) {
       return files.has(name) ? files.get(name) : null;
     },
+    async readJsonFile(name) {
+      const text = files.has(name) ? files.get(name) : null;
+      return text === null ? null : JSON.parse(text);
+    },
+    async writeJsonFile(name, obj) {
+      files.set(name, JSON.stringify(obj));
+    },
     async appendLinesToFile(name, entries) {
       const addition = entries.map(e => JSON.stringify(e)).join('\n') + '\n';
       files.set(name, (files.get(name) || '') + addition);
+    },
+    async listDeltaFileUserIds() {
+      const ids = [];
+      for (const name of files.keys()) {
+        const m = /^collab_deltas_(.+)\.jsonl$/.exec(name);
+        if (m) ids.push(m[1]);
+      }
+      return ids;
     },
     _files: files,
   };
@@ -163,5 +178,139 @@ describe('useCollabSync (Fase 2: captura de deltes, només escriptura)', () => {
 
     const userId = localStorage.getItem('elipsCollabUserId');
     expect(readDeltaEntries(fakeFolder, userId)).toEqual([]);
+  });
+});
+
+describe('useCollabSync (Fase 3: motor de fusió/repetició)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('merges a peer change (a different path) into store.excelJsonData', async () => {
+    const store = useWorkspaceStore();
+    const baseline = { pres: { a: 1, b: 2 } };
+    store.excelJsonData = JSON.parse(JSON.stringify(baseline));
+    store.config.collabPollIntervalSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', baseline);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_peer-1.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-1', baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/b', value: 20 }] },
+    ]);
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(store.excelJsonData).toEqual({ pres: { a: 1, b: 20 } });
+  });
+
+  it('merges changes from several different peers at once', async () => {
+    const store = useWorkspaceStore();
+    const baseline = { pres: { a: 1, b: 2, c: 3 } };
+    store.excelJsonData = JSON.parse(JSON.stringify(baseline));
+    store.config.collabPollIntervalSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', baseline);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_peer-1.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-1', baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/b', value: 20 }] },
+    ]);
+    await fakeFolder.appendLinesToFile('collab_deltas_peer-2.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:02.000Z', userId: 'peer-2', baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/c', value: 30 }] },
+    ]);
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(store.excelJsonData).toEqual({ pres: { a: 1, b: 20, c: 30 } });
+  });
+
+  it('a same-path conflict converges on the later timestamp, regardless of userId order', async () => {
+    const store = useWorkspaceStore();
+    const baseline = { pres: { import: 100 } };
+    store.excelJsonData = JSON.parse(JSON.stringify(baseline));
+    store.config.collabPollIntervalSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', baseline);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    // "z-peer" writes FIRST (earlier ts) but would sort AFTER "a-peer" by
+    // userId alone -- the later timestamp must still win.
+    await fakeFolder.appendLinesToFile('collab_deltas_z-peer.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'z-peer', baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/import', value: 111 }] },
+    ]);
+    await fakeFolder.appendLinesToFile('collab_deltas_a-peer.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:02.000Z', userId: 'a-peer', baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/import', value: 222 }] },
+    ]);
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(store.excelJsonData).toEqual({ pres: { import: 222 } });
+  });
+
+  it('applying a remote merge is never re-captured as a new local delta entry (no feedback loop)', async () => {
+    const store = useWorkspaceStore();
+    const baseline = { pres: { a: 1, b: 2 } };
+    store.excelJsonData = JSON.parse(JSON.stringify(baseline));
+    store.config.collabPollIntervalSeconds = 1;
+    store.config.collabCaptureDebounceSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', baseline);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_peer-1.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-1', baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/b', value: 20 }] },
+    ]);
+    // This client's own delta file already has an (unrelated, irrelevant to
+    // this check) prior entry, so we can tell apart "nothing new was
+    // appended" from "the file never existed".
+    const ownUserId = (() => {
+      let id = localStorage.getItem('elipsCollabUserId');
+      if (!id) { id = crypto.randomUUID(); localStorage.setItem('elipsCollabUserId', id); }
+      return id;
+    })();
+    await fakeFolder.appendLinesToFile(`collab_deltas_${ownUserId}.jsonl`, [
+      { seq: 1, ts: '2025-12-31T00:00:00.000Z', userId: ownUserId, baselineSeq: 1, patch: [] },
+    ]);
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    // Let the poll cycle apply the remote merge, THEN also let the local
+    // capture debounce window pass -- if the merge's own
+    // store.excelJsonData assignment were mistaken for a local edit, a
+    // second entry would appear here.
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(store.excelJsonData).toEqual({ pres: { a: 1, b: 20 } });
+    const ownEntries = readDeltaEntries(fakeFolder, ownUserId);
+    expect(ownEntries.length).toBe(1); // still just the pre-seeded entry -- nothing new appended
+  });
+
+  it('does not touch store.excelJsonData when the merge result is unchanged', async () => {
+    const store = useWorkspaceStore();
+    const baseline = { pres: { a: 1 } };
+    store.excelJsonData = JSON.parse(JSON.stringify(baseline));
+    store.config.collabPollIntervalSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', baseline);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    // No delta files at all -- merged state should equal the baseline,
+    // which already equals what the store has.
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+
+    const refBefore = store.excelJsonData;
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(store.excelJsonData).toBe(refBefore); // same object reference -- no reassignment happened
   });
 });
