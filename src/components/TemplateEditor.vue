@@ -59,6 +59,24 @@ const editHistory = useEditHistory(editorText.value);
 // (which would silently cancel the undo/redo the instant it happened).
 let isApplyingHistory = false;
 
+// Transient, non-blocking notice (main template mode only -- see the
+// store.templateText watcher below) shown when a live collaboration merge
+// overwrites in-progress local edits (last-write-wins, whole document --
+// no character-level merge for free-form template text).
+const remoteTemplateMergeBannerVisible = ref(false);
+let remoteTemplateMergeBannerTimer = null;
+function showRemoteTemplateMergeBanner() {
+  remoteTemplateMergeBannerVisible.value = true;
+  clearTimeout(remoteTemplateMergeBannerTimer);
+  remoteTemplateMergeBannerTimer = setTimeout(() => {
+    remoteTemplateMergeBannerVisible.value = false;
+  }, 9000);
+}
+function dismissRemoteTemplateMergeBanner() {
+  clearTimeout(remoteTemplateMergeBannerTimer);
+  remoteTemplateMergeBannerVisible.value = false;
+}
+
 const undoEdit = () => {
   const prev = editHistory.undo();
   if (prev === undefined) return;
@@ -99,6 +117,10 @@ if (props.isCellMode) {
   // Main Template Mode: Single Source of Truth is store.templateText
   watch(() => store.templateText, (newVal) => {
     if (editorText.value !== newVal) {
+      // Captured BEFORE editHistory.push() below mutates the stack, so it
+      // reflects whether THIS user had in-progress local edits at the
+      // moment a remote merge landed on top of them.
+      const hadLocalUndoPending = editHistory.canUndo.value;
       editorText.value = newVal || '';
       // A live collaboration merge (useCollabSync.js's template channel)
       // landing mid-session is NOT a document switch: preserve the local
@@ -107,6 +129,12 @@ if (props.isCellMode) {
       // would silently clear this user's own in-progress Ctrl+Z history.
       if (store.collabApplyingRemoteTemplate) {
         editHistory.push(newVal || '', { immediate: true });
+        // Last-write-wins is silent by design for a clean/matching
+        // document, but when it overwrites edits THIS user hadn't shared
+        // yet, surface it right where they're working -- not just as a
+        // line in CollabPanel.vue's side activity log, which they may not
+        // have open.
+        if (hadLocalUndoPending) showRemoteTemplateMergeBanner();
       } else {
         // Same reasoning as the cell-mode branch above: templateText
         // changing out from under us means a different
@@ -3920,6 +3948,7 @@ onUnmounted(() => {
   codeMirrorView = null;
   visualCodeMirrorView?.destroy();
   visualCodeMirrorView = null;
+  clearTimeout(remoteTemplateMergeBannerTimer);
 });
 </script>
 
@@ -4043,6 +4072,25 @@ onUnmounted(() => {
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
         <span>Refés</span>
+      </button>
+    </div>
+
+    <!-- Live-collaboration notice: a remote template merge just overwrote
+         in-progress local edits (see store.templateText watcher above). -->
+    <div
+      v-if="!isCellMode && remoteTemplateMergeBannerVisible"
+      style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid #d97706; background: rgba(217, 119, 6, 0.1); border-radius: var(--radius-sm); font-size: 0.8rem; color: #b45309; flex-shrink: 0;"
+    >
+      <span style="flex-shrink: 0;">⚠️</span>
+      <span style="flex: 1;">Algú més ha editat la plantilla alhora que vosaltres: s'ha mantingut la versió més recent (pot haver sobreescrit canvis vostres encara no compartits). Podeu desfer (Ctrl+Z) per recuperar-los.</span>
+      <button
+        type="button"
+        class="btn-icon-only"
+        style="border: none; background: none; font-size: 1rem; line-height: 1; color: #b45309; flex-shrink: 0;"
+        @click="dismissRemoteTemplateMergeBanner"
+        title="Tanca l'avís"
+      >
+        &times;
       </button>
     </div>
 
