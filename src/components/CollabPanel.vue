@@ -22,6 +22,11 @@ import { ref, watch } from 'vue';
 // Connect/disconnect a collaboration folder for the CURRENT project, its
 // permission lifecycle, the display name shown to other participants, and
 // (Fase 5) the live participant list + activity log fed by useCollabSync.js.
+// Fase 11 adds a second, independent transport: a WebRTC+Yjs "live session"
+// (useCollabRealtime.js) that works in ANY browser (not gated by
+// isCollabSupported, which is specifically about the File System Access
+// API the folder transport needs) -- the two can be connected at the same
+// time on the same project, see .claude/plans/unified-nibbling-adleman.md.
 const props = defineProps({
   isOpen: { type: Boolean, default: false },
   isCollabSupported: { type: Boolean, default: false },
@@ -30,9 +35,17 @@ const props = defineProps({
   displayName: { type: String, default: '' },
   connectedPeers: { type: Array, default: () => [] },
   activityLog: { type: Array, default: () => [] },
+  realtimeStatus: { type: String, default: 'disconnected' }, // 'disconnected' | 'connecting' | 'connected' | 'error'
+  realtimeError: { type: String, default: null },
+  realtimeRoomId: { type: String, default: '' },
+  realtimePassword: { type: String, default: '' },
+  realtimePeers: { type: Array, default: () => [] },
 });
 
-const emit = defineEmits(['close', 'connect', 'disconnect', 'request-permission', 'update-display-name']);
+const emit = defineEmits([
+  'close', 'connect', 'disconnect', 'request-permission', 'update-display-name',
+  'start-realtime-session', 'join-realtime-session', 'stop-realtime-session',
+]);
 
 const nameInput = ref(props.displayName);
 watch(() => props.displayName, (v) => { nameInput.value = v; });
@@ -50,6 +63,33 @@ const statusLabel = {
   connected: 'Connectat',
   error: 'Error de connexió',
 };
+
+const realtimeStatusLabel = {
+  disconnected: 'Sense connectar',
+  connecting: 'Connectant...',
+  connected: 'Connectat',
+  error: 'Error de connexió',
+};
+
+const joinRoomIdInput = ref('');
+const joinPasswordInput = ref('');
+const isPasswordRevealed = ref(false);
+
+const submitJoinRealtimeSession = () => {
+  if (!joinRoomIdInput.value.trim() || !joinPasswordInput.value.trim()) return;
+  emit('join-realtime-session', { roomId: joinRoomIdInput.value.trim(), password: joinPasswordInput.value.trim() });
+  joinRoomIdInput.value = '';
+  joinPasswordInput.value = '';
+};
+
+const copyToClipboard = async (text) => {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    // Clipboard API pot no estar disponible (p. ex. context no segur) --
+    // no és crític, la persona sempre pot seleccionar el text a mà.
+  }
+};
 </script>
 
 <template>
@@ -64,29 +104,33 @@ const statusLabel = {
       </div>
 
       <div class="modal-body" style="display: flex; flex-direction: column; gap: 1rem; padding: 1rem 0;">
+        <!-- El nom és compartit per totes dues vies (carpeta i sessió en
+             viu) -- no gated per isCollabSupported, que és específic de la
+             carpeta. -->
+        <div style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 4px;">
+          <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">El vostre nom (visible per als altres participants)</label>
+          <div style="display: flex; gap: 6px;">
+            <input
+              type="text"
+              v-model="nameInput"
+              class="data-input"
+              placeholder="El vostre nom..."
+              style="font-size: 0.85rem; height: 32px; padding: 2px 8px;"
+              @keyup.enter="saveDisplayName"
+              @blur="saveDisplayName"
+            >
+          </div>
+        </div>
+
         <template v-if="!isCollabSupported">
           <p style="font-size: 0.85rem; color: var(--text-secondary); padding: 0 1.25rem;">
-            La col·laboració en viu requereix una carpeta compartida (p. ex. dins el vostre OneDrive
-            sincronitzat) accessible mitjançant la File System Access API del navegador, disponible
-            només a <strong>Chrome</strong> i <strong>Edge</strong>.
+            La col·laboració via <strong>carpeta compartida</strong> (p. ex. dins el vostre OneDrive
+            sincronitzat) requereix la File System Access API del navegador, disponible
+            només a <strong>Chrome</strong> i <strong>Edge</strong>. La <strong>sessió en viu
+            (WebRTC)</strong> de més avall funciona igualment en aquest navegador.
           </p>
         </template>
         <template v-else>
-          <div style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 4px;">
-            <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">El vostre nom (visible per als altres participants)</label>
-            <div style="display: flex; gap: 6px;">
-              <input
-                type="text"
-                v-model="nameInput"
-                class="data-input"
-                placeholder="El vostre nom..."
-                style="font-size: 0.85rem; height: 32px; padding: 2px 8px;"
-                @keyup.enter="saveDisplayName"
-                @blur="saveDisplayName"
-              >
-            </div>
-          </div>
-
           <div style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 1rem;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
               <span style="font-size: 0.85rem; color: var(--text-secondary);">Estat:</span>
@@ -157,6 +201,107 @@ const statusLabel = {
             </div>
           </div>
         </template>
+
+        <!-- Sessió en viu (WebRTC) -- funciona a qualsevol navegador, no
+             gated per isCollabSupported (això és específic de la carpeta,
+             que necessita la File System Access API). Pot coexistir amb
+             la carpeta compartida sense coordinar-s'hi. -->
+        <div style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+          <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary);">📡 Sessió en viu (WebRTC)</span>
+          <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0;">
+            Edició en temps real amb qualsevol navegador, sense carpeta compartida.
+            La plantilla es fusiona caràcter a caràcter mentre la sessió estigui oberta;
+            en tancar-se, deixa d'actualitzar-se fins que algú la torni a obrir.
+          </p>
+
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 0.85rem; color: var(--text-secondary);">Estat:</span>
+            <span style="font-size: 0.85rem; font-weight: 700;" :style="{ color: realtimeStatus === 'connected' ? 'var(--color-success, #16a34a)' : (realtimeStatus === 'error' ? 'var(--color-danger, #dc2626)' : 'var(--text-primary)') }">
+              {{ realtimeStatusLabel[realtimeStatus] || realtimeStatus }}
+            </span>
+          </div>
+          <div v-if="realtimeStatus === 'error' && realtimeError" style="font-size: 0.78rem; color: var(--color-danger, #dc2626);">
+            {{ realtimeError }}
+          </div>
+
+          <template v-if="realtimeStatus === 'disconnected' || realtimeStatus === 'error'">
+            <button
+              class="btn btn-primary"
+              style="width: auto; padding: 6px 14px; font-size: 0.8rem; align-self: flex-start;"
+              @click="emit('start-realtime-session')"
+            >
+              🆕 Inicia una sessió nova
+            </button>
+
+            <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
+              <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);">O uneix-te a una sessió existent</label>
+              <input
+                type="text"
+                v-model="joinRoomIdInput"
+                class="data-input"
+                placeholder="Identificador de sala"
+                style="font-size: 0.82rem; height: 30px; padding: 2px 8px; font-family: monospace;"
+              >
+              <input
+                type="text"
+                v-model="joinPasswordInput"
+                class="data-input"
+                placeholder="Contrasenya"
+                style="font-size: 0.82rem; height: 30px; padding: 2px 8px; font-family: monospace;"
+                @keyup.enter="submitJoinRealtimeSession"
+              >
+              <button
+                class="btn btn-secondary"
+                style="width: auto; padding: 5px 12px; font-size: 0.78rem; align-self: flex-start;"
+                :disabled="!joinRoomIdInput.trim() || !joinPasswordInput.trim()"
+                @click="submitJoinRealtimeSession"
+              >
+                Uneix-te
+              </button>
+            </div>
+          </template>
+
+          <template v-if="realtimeStatus === 'connected'">
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 0.78rem; color: var(--text-secondary); flex-shrink: 0;">Sala:</span>
+                <code style="font-size: 0.78rem; background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; flex: 1; overflow-x: auto; white-space: nowrap;">{{ realtimeRoomId }}</code>
+                <button type="button" class="btn-icon-only" style="border: none; background: none; cursor: pointer;" title="Copia l'identificador de sala" @click="copyToClipboard(realtimeRoomId)">📋</button>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 0.78rem; color: var(--text-secondary); flex-shrink: 0;">Contrasenya:</span>
+                <code style="font-size: 0.78rem; background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; flex: 1; overflow-x: auto; white-space: nowrap;">{{ isPasswordRevealed ? realtimePassword : '••••••••••••' }}</code>
+                <button type="button" class="btn-icon-only" style="border: none; background: none; cursor: pointer;" :title="isPasswordRevealed ? 'Amaga' : 'Mostra'" @click="isPasswordRevealed = !isPasswordRevealed">{{ isPasswordRevealed ? '🙈' : '👁️' }}</button>
+                <button type="button" class="btn-icon-only" style="border: none; background: none; cursor: pointer;" title="Copia la contrasenya" @click="copyToClipboard(realtimePassword)">📋</button>
+              </div>
+              <p style="font-size: 0.72rem; color: var(--text-muted); margin: 0;">
+                Comparteix aquests dos valors (p. ex. per xat) amb qui es vulgui unir -- no hi ha cap altra manera de distribuir-los.
+              </p>
+            </div>
+
+            <button
+              class="btn btn-secondary text-danger"
+              style="width: auto; padding: 6px 14px; font-size: 0.8rem; align-self: flex-start;"
+              @click="emit('stop-realtime-session')"
+            >
+              Desconnecta
+            </button>
+
+            <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
+              <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">Participants a la sessió en viu</span>
+              <div v-if="realtimePeers.length === 0" style="font-size: 0.8rem; color: var(--text-muted);">
+                Esperant que algú més s'hi uneixi...
+              </div>
+              <div v-for="peer in realtimePeers" :key="peer.userId" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem;">
+                <span>
+                  <span style="color: var(--color-success, #16a34a);">●</span>
+                  {{ peer.displayName }}
+                </span>
+                <span v-if="peer.isSelf" style="font-size: 0.72rem; color: var(--text-muted);">(tu)</span>
+              </div>
+            </div>
+          </template>
+        </div>
       </div>
 
       <div class="modal-footer" style="display: flex; justify-content: flex-end; padding-top: 0.75rem; border-top: 1px solid var(--border-color);">

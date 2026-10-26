@@ -43,10 +43,18 @@
  * nom humà del projecte -- i la contrasenya és obligatòria perquè y-webrtc
  * xifri els payloads abans d'enviar-los, de manera que ni el servidor de
  * senyalització els pugui llegir.
+ *
+ * Fase 11: presència/participants via el protocol d'Awareness de Yjs, ja
+ * integrat a `WebrtcProvider` (`provider.awareness`) -- no calen fitxers
+ * `collab_presence_*.json` com useCollabSync.js. `currentRoomId`/
+ * `currentPassword` queden exposats perquè qui inicia la sessió els pugui
+ * mostrar/compartir (CollabPanel.vue), ja que no hi ha cap mecanisme de
+ * distribució implícit com triar la mateixa carpeta OneDrive.
  */
 
 import { ref, watch, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
+import { getOrCreateUserId, getDisplayNameOrFallback } from './useCollabIdentity';
 
 const DEFAULT_SIGNALING_SERVERS = ['wss://y-webrtc-eu.fly.dev'];
 
@@ -78,6 +86,25 @@ export function applyStringDiffToYText(ytext, oldStr, newStr) {
   const insertText = newStr.slice(prefix, newEnd);
   if (deleteLen > 0) ytext.delete(prefix, deleteLen);
   if (insertText.length > 0) ytext.insert(prefix, insertText);
+}
+
+/** Converteix el mapa d'estats bruts de l'Awareness de Yjs (clientId ->
+ * {user: {userId, displayName}}) en la llista de participants que
+ * CollabPanel.vue mostra -- extret com a funció pura perquè es pugui
+ * provar directament, sense necessitat d'un WebrtcProvider real
+ * (`statesMap` pot ser qualsevol `Map`, no cal que vingui de Yjs). */
+export function mapAwarenessStatesToPeers(statesMap, selfClientId) {
+  const peers = [];
+  statesMap.forEach((state, clientId) => {
+    const user = state?.user;
+    if (!user) return;
+    peers.push({
+      userId: user.userId || String(clientId),
+      displayName: user.displayName || 'Algú',
+      isSelf: clientId === selfClientId,
+    });
+  });
+  return peers;
 }
 
 /**
@@ -124,16 +151,34 @@ export function useCollabRealtime() {
 
   const sessionStatus = ref('disconnected'); // 'disconnected' | 'connecting' | 'connected' | 'error'
   const lastRealtimeError = ref(null);
+  // La sala/contrasenya ACTUALS (no les que algú podria passar a
+  // startRealtimeSession() la propera vegada) -- CollabPanel.vue les mostra
+  // perquè qui ha iniciat la sessió les pugui compartir fora de banda amb
+  // la resta, ja que (a diferència de triar la mateixa carpeta OneDrive) no
+  // hi ha cap mecanisme de distribució implícit.
+  const currentRoomId = ref('');
+  const currentPassword = ref('');
+  // Llista de participants connectats, derivada del protocol d'Awareness de
+  // Yjs (integrat a WebrtcProvider -- no cal cap fitxer de presència com
+  // useCollabSync.js). Mateixa forma que useCollabSync.js's connectedPeers
+  // perquè CollabPanel.vue en pugui reutilitzar el mateix bloc de marcatge.
+  const connectedPeers = ref([]);
 
   let ydoc = null;
   let ytext = null;
   let provider = null;
   let stopLocalWatch = null;
+  let awarenessChangeHandler = null;
   // Marca les transaccions pròpies perquè l'observer de ytext les pugui
   // distingir de canvis arribats d'altres participants (mateix propòsit que
   // la bandera isApplyingRemote del motor de useCollabSync.js, però aquí
   // expressada com a origen de transacció Yjs en lloc d'una bandera externa).
   const localOrigin = Symbol('elips-collab-realtime-local');
+
+  function updatePeerListFromAwareness() {
+    if (!provider) return;
+    connectedPeers.value = mapAwarenessStatesToPeers(provider.awareness.getStates(), provider.awareness.clientID);
+  }
 
   function teardown() {
     if (stopLocalWatch) {
@@ -141,6 +186,10 @@ export function useCollabRealtime() {
       stopLocalWatch = null;
     }
     if (provider) {
+      if (awarenessChangeHandler) {
+        provider.awareness.off('change', awarenessChangeHandler);
+        awarenessChangeHandler = null;
+      }
       provider.destroy();
       provider = null;
     }
@@ -149,6 +198,9 @@ export function useCollabRealtime() {
       ydoc = null;
     }
     ytext = null;
+    connectedPeers.value = [];
+    currentRoomId.value = '';
+    currentPassword.value = '';
   }
 
   async function startRealtimeSession({ roomId, password, signaling }) {
@@ -195,6 +247,16 @@ export function useCollabRealtime() {
 
       stopLocalWatch = attachTemplateBridge(ydoc, ytext, store, localOrigin);
 
+      provider.awareness.setLocalStateField('user', {
+        userId: getOrCreateUserId(),
+        displayName: getDisplayNameOrFallback(),
+      });
+      awarenessChangeHandler = () => updatePeerListFromAwareness();
+      provider.awareness.on('change', awarenessChangeHandler);
+      updatePeerListFromAwareness();
+
+      currentRoomId.value = roomId;
+      currentPassword.value = password;
       sessionStatus.value = 'connected';
     } catch (err) {
       teardown();
@@ -212,6 +274,9 @@ export function useCollabRealtime() {
   return {
     sessionStatus,
     lastRealtimeError,
+    currentRoomId,
+    currentPassword,
+    connectedPeers,
     startRealtimeSession,
     stopRealtimeSession,
   };

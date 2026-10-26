@@ -22,7 +22,6 @@ import App from './App.vue';
 import './assets/base.css';
 import 'katex/dist/katex.min.css';
 import { useWorkspaceStore } from './stores/workspace';
-import { useCollabRealtime } from './composables/useCollabRealtime';
 
 const app = createApp(App);
 const pinia = createPinia();
@@ -33,13 +32,6 @@ app.mount('#app');
 const store = useWorkspaceStore();
 window.store = store;
 window.__pinia = pinia;
-
-// Fase 10 (sessió en viu WebRTC+Yjs, canal de plantilla -- prova de
-// concepte): exposat a window perquè la UI real (generació/entrada de
-// sala+contrasenya, botons connecta/desconnecta) de la Fase 11 hi crida
-// exactament igual des de CollabPanel.vue; mentrestant serveix per a la
-// verificació manual/Puppeteer d'aquesta fase.
-window.collabRealtime = useCollabRealtime();
 
 window.dumpStore = () => {
   console.group('📌 estat de Pinia Store (workspace)');

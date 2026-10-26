@@ -23,6 +23,7 @@ import {
   applyStringDiffToYText,
   attachTemplateBridge,
   generateSessionCredentials,
+  mapAwarenessStatesToPeers,
 } from '../src/composables/useCollabRealtime.js';
 
 /** Simulates what WebrtcProvider does under the hood (exchange + apply Yjs
@@ -80,6 +81,39 @@ describe('generateSessionCredentials', () => {
     expect(a.password).toBeTruthy();
     expect(a.roomId).not.toBe(b.roomId);
     expect(a.password).not.toBe(b.password);
+  });
+});
+
+describe('mapAwarenessStatesToPeers (Fase 11: participants des de l\'Awareness de Yjs)', () => {
+  it('maps user state entries and flags the self entry', () => {
+    const states = new Map([
+      [1, { user: { userId: 'u1', displayName: 'Anna' } }],
+      [2, { user: { userId: 'u2', displayName: 'Bernat' } }],
+    ]);
+    const peers = mapAwarenessStatesToPeers(states, 2);
+    expect(peers).toEqual([
+      { userId: 'u1', displayName: 'Anna', isSelf: false },
+      { userId: 'u2', displayName: 'Bernat', isSelf: true },
+    ]);
+  });
+
+  it('ignores awareness entries with no user field (e.g. a peer that has not set it yet)', () => {
+    const states = new Map([
+      [1, {}],
+      [2, { user: { userId: 'u2', displayName: 'Bernat' } }],
+    ]);
+    const peers = mapAwarenessStatesToPeers(states, 1);
+    expect(peers).toEqual([{ userId: 'u2', displayName: 'Bernat', isSelf: false }]);
+  });
+
+  it('falls back to a generic label and the raw clientId when userId/displayName are missing', () => {
+    const states = new Map([[42, { user: {} }]]);
+    const peers = mapAwarenessStatesToPeers(states, 1);
+    expect(peers).toEqual([{ userId: '42', displayName: 'Algú', isSelf: false }]);
+  });
+
+  it('returns an empty list for an empty states map', () => {
+    expect(mapAwarenessStatesToPeers(new Map(), 1)).toEqual([]);
   });
 });
 

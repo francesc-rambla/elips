@@ -25,6 +25,7 @@ import { saveBinaryFile, getBinaryFile, deleteBinaryFile, deleteDbItem } from '.
 import { useVersionHistory } from './composables/useVersionHistory';
 import { useCollabFolder } from './composables/useCollabFolder';
 import { useCollabSync } from './composables/useCollabSync';
+import { useCollabRealtime, generateSessionCredentials } from './composables/useCollabRealtime';
 import { getDisplayNameOrFallback, setDisplayName as setCollabDisplayName } from './composables/useCollabIdentity';
 
 // Components
@@ -138,6 +139,40 @@ watch(collabFolderStatus, (status) => {
     stopCollabSync();
   }
 });
+
+// Sessió en viu WebRTC+Yjs (Fase 10/11 -- veure .claude/plans/
+// unified-nibbling-adleman.md): alternativa complementària a la carpeta
+// compartida, no un reemplaçament -- totes dues poden estar connectades
+// alhora al mateix projecte. Exposada a window per a depuració/verificació,
+// mateix criteri que window.store a main.js.
+const collabRealtime = useCollabRealtime();
+const {
+  sessionStatus: collabRealtimeStatus,
+  lastRealtimeError: collabRealtimeError,
+  currentRoomId: collabRealtimeRoomId,
+  currentPassword: collabRealtimePassword,
+  connectedPeers: collabRealtimePeers,
+  startRealtimeSession,
+  stopRealtimeSession,
+} = collabRealtime;
+window.collabRealtime = collabRealtime;
+
+const handleStartRealtimeSession = async () => {
+  try {
+    const { roomId, password } = generateSessionCredentials();
+    await startRealtimeSession({ roomId, password });
+  } catch (e) {
+    alert(`Error en iniciar la sessió en viu: ${e.message}`);
+  }
+};
+
+const handleJoinRealtimeSession = async ({ roomId, password }) => {
+  try {
+    await startRealtimeSession({ roomId, password });
+  } catch (e) {
+    alert(`Error en unir-se a la sessió en viu: ${e.message}`);
+  }
+};
 
 const handleConnectCollabFolder = async () => {
   try {
@@ -3282,11 +3317,19 @@ const generateDocuments = async () => {
       :display-name="collabDisplayName"
       :connected-peers="collabConnectedPeers"
       :activity-log="collabActivityLog"
+      :realtime-status="collabRealtimeStatus"
+      :realtime-error="collabRealtimeError"
+      :realtime-room-id="collabRealtimeRoomId"
+      :realtime-password="collabRealtimePassword"
+      :realtime-peers="collabRealtimePeers"
       @close="isCollabPanelOpen = false"
       @connect="handleConnectCollabFolder"
       @disconnect="disconnectCollabFolder"
       @request-permission="requestCollabPermission"
       @update-display-name="handleUpdateCollabDisplayName"
+      @start-realtime-session="handleStartRealtimeSession"
+      @join-realtime-session="handleJoinRealtimeSession"
+      @stop-realtime-session="stopRealtimeSession"
     />
 
     <!-- Ultra-Compact Minimal Footer -->
