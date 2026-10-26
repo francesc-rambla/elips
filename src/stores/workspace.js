@@ -90,6 +90,11 @@ export const useWorkspaceStore = defineStore('workspace', {
     debugComputedFields: (() => {
       return localStorage.getItem('debugComputedFields') === 'true';
     })(),
+    // Transient (never persisted) coordination flag: true only while
+    // useCollabSync.js's template channel is applying a remote merge to
+    // store.templateText, so TemplateEditor.vue can tell that apart from a
+    // real document/project switch (see its store.templateText watcher).
+    collabApplyingRemoteTemplate: false,
     previewViewMode: (() => {
       const v = localStorage.getItem('previewViewMode');
       return ['markdown', 'html', 'both'].includes(v) ? v : 'both';

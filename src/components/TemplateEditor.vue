@@ -100,10 +100,20 @@ if (props.isCellMode) {
   watch(() => store.templateText, (newVal) => {
     if (editorText.value !== newVal) {
       editorText.value = newVal || '';
-      // Same reasoning as the cell-mode branch above: templateText changing
-      // out from under us means a different document/project/version-history
-      // restore just loaded, not an edit — reset, don't accumulate.
-      editHistory.reset(newVal || '');
+      // A live collaboration merge (useCollabSync.js's template channel)
+      // landing mid-session is NOT a document switch: preserve the local
+      // undo stack (push the incoming value as the new "most recent"
+      // state) instead of wiping it, or a remote peer's template edit
+      // would silently clear this user's own in-progress Ctrl+Z history.
+      if (store.collabApplyingRemoteTemplate) {
+        editHistory.push(newVal || '', { immediate: true });
+      } else {
+        // Same reasoning as the cell-mode branch above: templateText
+        // changing out from under us means a different
+        // document/project/version-history restore just loaded, not an
+        // edit — reset, don't accumulate.
+        editHistory.reset(newVal || '');
+      }
     }
   }, { immediate: true });
 

@@ -18,6 +18,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
+import { watch } from 'vue';
 
 beforeEach(() => {
   if (typeof globalThis.localStorage === 'undefined') {
@@ -91,6 +92,11 @@ function readDeltaEntries(fakeFolder, userId) {
 
 function readSchemaDeltaEntries(fakeFolder, userId) {
   const text = fakeFolder._files.get(`collab_deltas_schema_${userId}.jsonl`) || '';
+  return text.trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+}
+
+function readTemplateDeltaEntries(fakeFolder, userId) {
+  const text = fakeFolder._files.get(`collab_deltas_template_${userId}.jsonl`) || '';
   return text.trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
 }
 
@@ -644,5 +650,132 @@ describe('useCollabSync (Fase 7: canal d\'esquema -- editorMetadata)', () => {
 
     expect(store.excelJsonData).toEqual({ pres: { a: 2 } });
     expect(store.editorMetadata).toEqual([{ field: 'nom', label: 'Nom complet' }]);
+  });
+});
+
+describe("useCollabSync (Fase 8: canal de plantilla -- templateText)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('captures a local templateText change into its own template delta file, as a whole-string replace', async () => {
+    const store = useWorkspaceStore();
+    store.templateText = 'Hola {{ nom }}';
+    store.config.collabCaptureDebounceSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+
+    store.templateText = 'Hola {{ nom }}, benvingut';
+    await vi.advanceTimersByTimeAsync(1100);
+
+    const userId = localStorage.getItem('elipsCollabUserId');
+    const entries = readTemplateDeltaEntries(fakeFolder, userId);
+    expect(entries.length).toBe(1);
+    expect(entries[0].patch).toEqual([{ op: 'replace', path: '/text', value: 'Hola {{ nom }}, benvingut' }]);
+    // Neither the data nor the schema channel should see any of this.
+    expect(readDeltaEntries(fakeFolder, userId)).toEqual([]);
+    expect(readSchemaDeltaEntries(fakeFolder, userId)).toEqual([]);
+  });
+
+  it("merges a peer's template change into store.templateText, independently of the other channels", async () => {
+    const store = useWorkspaceStore();
+    store.templateText = 'Versió original';
+    store.config.collabPollIntervalSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline_template.json', { text: 'Versió original' });
+    await fakeFolder.writeJsonFile('collab_baseline_template.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_template_peer-1.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-1', baselineSeq: 1, patch: [{ op: 'replace', path: '/text', value: 'Versió del company' }] },
+    ]);
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(store.templateText).toBe('Versió del company');
+  });
+
+  it('toggles store.collabApplyingRemoteTemplate around a remote template merge, so TemplateEditor.vue can preserve local undo history', async () => {
+    const store = useWorkspaceStore();
+    store.templateText = 'Versió original';
+    store.config.collabPollIntervalSeconds = 1;
+    const transitions = [];
+    watch(() => store.collabApplyingRemoteTemplate, (v) => transitions.push(v), { flush: 'sync' });
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline_template.json', { text: 'Versió original' });
+    await fakeFolder.writeJsonFile('collab_baseline_template.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_template_peer-1.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-1', baselineSeq: 1, patch: [{ op: 'replace', path: '/text', value: 'Versió del company' }] },
+    ]);
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(transitions).toEqual([true, false]);
+    expect(store.collabApplyingRemoteTemplate).toBe(false);
+  });
+
+  it('applying a remote template merge is never re-captured as a new local template delta entry (no feedback loop)', async () => {
+    const store = useWorkspaceStore();
+    store.templateText = 'Versió original';
+    store.config.collabPollIntervalSeconds = 1;
+    store.config.collabCaptureDebounceSeconds = 1;
+    vi.setSystemTime(new Date('2026-01-01T00:00:05.000Z'));
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline_template.json', { text: 'Versió original' });
+    await fakeFolder.writeJsonFile('collab_baseline_template.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_template_peer-1.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-1', baselineSeq: 1, patch: [{ op: 'replace', path: '/text', value: 'Versió del company' }] },
+    ]);
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(store.templateText).toBe('Versió del company');
+    const userId = localStorage.getItem('elipsCollabUserId');
+    expect(readTemplateDeltaEntries(fakeFolder, userId)).toEqual([]);
+  });
+
+  it('all three channels (schema, template, data) merge concurrent remote changes independently in one poll cycle', async () => {
+    const store = useWorkspaceStore();
+    store.excelJsonData = { pres: { a: 1 } };
+    store.editorMetadata = [{ field: 'nom', label: 'Nom' }];
+    store.templateText = 'Versió original';
+    store.config.collabPollIntervalSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', { pres: { a: 1 } });
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_peer-1.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-1', baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/a', value: 2 }] },
+    ]);
+    await fakeFolder.writeJsonFile('collab_baseline_schema.json', [{ field: 'nom', label: 'Nom' }]);
+    await fakeFolder.writeJsonFile('collab_baseline_schema.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_schema_peer-2.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-2', baselineSeq: 1, patch: [{ op: 'replace', path: '/0/label', value: 'Nom complet' }] },
+    ]);
+    await fakeFolder.writeJsonFile('collab_baseline_template.json', { text: 'Versió original' });
+    await fakeFolder.writeJsonFile('collab_baseline_template.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_template_peer-3.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-3', baselineSeq: 1, patch: [{ op: 'replace', path: '/text', value: 'Versió del company 3' }] },
+    ]);
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(store.excelJsonData).toEqual({ pres: { a: 2 } });
+    expect(store.editorMetadata).toEqual([{ field: 'nom', label: 'Nom complet' }]);
+    expect(store.templateText).toBe('Versió del company 3');
   });
 });

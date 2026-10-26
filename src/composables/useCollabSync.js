@@ -462,7 +462,38 @@ export function useCollabSync(collabFolder, buildProjectZipBlob) {
     logEvent: logCollabEvent,
   });
 
-  const channels = [schemaChannel, dataChannel];
+  const templateChannel = createDocChannel({
+    docKey: 'template',
+    collabFolder,
+    deltaFileName: (userId) => `collab_deltas_template_${userId}.jsonl`,
+    baselineFile: 'collab_baseline_template.json',
+    baselineMetaFile: 'collab_baseline_template.meta.json',
+    listUserIds: () => collabFolder.listDeltaFileUserIds('template'),
+    getLocal: () => store.templateText,
+    setLocal: (v) => { store.templateText = v; },
+    // templateText is a plain string; wrap/unwrap it as {text: ...} so the
+    // same object-shaped fast-json-patch machinery (computeDataPatch) can
+    // diff/apply it -- one whole-string "replace" patch per change, the
+    // same "store a full copy, not a character diff" choice
+    // useVersionHistory.js already makes for this same field.
+    wrap: (v) => ({ text: v ?? '' }),
+    unwrap: (v) => v?.text ?? '',
+    computePatch: computeDataPatch,
+    // Mirrored onto the store so TemplateEditor.vue can tell a live sync
+    // merge apart from a real document/project switch (see its
+    // store.templateText watcher) and preserve the local undo stack
+    // instead of wiping it.
+    onApplyingRemoteChange: (v) => { store.collabApplyingRemoteTemplate = v; },
+    mergeMessage: "S'han incorporat canvis a la plantilla fets per altres persones.",
+    compactMessage: "S'ha compactat la carpeta de col·laboració (plantilla).",
+    logEvent: logCollabEvent,
+  });
+
+  // Order matters: schema and template merge BEFORE data each cycle, so
+  // when the data channel's merge triggers evaluateComputedFields (via
+  // DataInspector.vue's existing watcher), the schema/template locally
+  // already reflect that same cycle's latest remote state.
+  const channels = [schemaChannel, templateChannel, dataChannel];
 
   async function runPollTick() {
     if (!running || pollRunning) return;
@@ -520,7 +551,12 @@ export function useCollabSync(collabFolder, buildProjectZipBlob) {
       const delaySec = store.config.collabCaptureDebounceSeconds || 5;
       schemaChannel.scheduleCaptureOnChange(delaySec * 1000);
     }, { deep: true });
-    stopWatchers = [dataWatchStop, schemaWatchStop];
+    const templateWatchStop = watch(() => store.templateText, () => {
+      if (templateChannel.isApplyingRemote.value) return;
+      const delaySec = store.config.collabCaptureDebounceSeconds || 5;
+      templateChannel.scheduleCaptureOnChange(delaySec * 1000);
+    });
+    stopWatchers = [dataWatchStop, schemaWatchStop, templateWatchStop];
 
     const pollDelayMs = (store.config.collabPollIntervalSeconds || 5) * 1000;
     pollTimer = setInterval(runPollTick, pollDelayMs);

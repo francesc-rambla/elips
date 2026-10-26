@@ -217,12 +217,15 @@ export function useCollabFolder(projectNameRef) {
       const seededAt = new Date().toISOString();
       await writeJsonFile('collab_baseline.json', store.excelJsonData || {});
       await writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: seededAt, updatedBy: getOrCreateUserId() });
-      // Same seeding, for the schema (editorMetadata) live-sync channel --
-      // without this, collab_baseline_schema.json never exists and that
-      // channel stays permanently inert (it never bootstraps its own
-      // baseline on its own, by design: see useCollabSync.js's pollCycle).
+      // Same seeding, for the schema (editorMetadata) and template
+      // (templateText) live-sync channels -- without this, their baseline
+      // files never exist and those channels stay permanently inert (they
+      // never bootstrap their own baseline on their own, by design: see
+      // useCollabSync.js's pollCycle).
       await writeJsonFile('collab_baseline_schema.json', store.editorMetadata || []);
       await writeJsonFile('collab_baseline_schema.meta.json', { seq: 1, updatedAt: seededAt, updatedBy: getOrCreateUserId() });
+      await writeJsonFile('collab_baseline_template.json', { text: store.templateText || '' });
+      await writeJsonFile('collab_baseline_template.meta.json', { seq: 1, updatedAt: seededAt, updatedBy: getOrCreateUserId() });
 
       await saveDbItem(handleStorageKey(projectNameRef.value), handle);
       folderStatus.value = 'connected';
