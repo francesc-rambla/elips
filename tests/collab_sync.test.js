@@ -61,10 +61,13 @@ function makeFakeCollabFolder() {
     async writeBinaryFile(name, blob) {
       files.set(name, blob);
     },
-    async listDeltaFileUserIds() {
+    async listDeltaFileUserIds(prefix = '') {
+      const re = prefix
+        ? new RegExp(`^collab_deltas_${prefix}_(.+)\\.jsonl$`)
+        : /^collab_deltas_(?!(?:schema|template)_)(.+)\.jsonl$/;
       const ids = [];
       for (const name of files.keys()) {
-        const m = /^collab_deltas_(.+)\.jsonl$/.exec(name);
+        const m = re.exec(name);
         if (m) ids.push(m[1]);
       }
       return ids;
@@ -83,6 +86,11 @@ function makeFakeCollabFolder() {
 
 function readDeltaEntries(fakeFolder, userId) {
   const text = fakeFolder._files.get(`collab_deltas_${userId}.jsonl`) || '';
+  return text.trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+}
+
+function readSchemaDeltaEntries(fakeFolder, userId) {
+  const text = fakeFolder._files.get(`collab_deltas_schema_${userId}.jsonl`) || '';
   return text.trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
 }
 
@@ -531,5 +539,110 @@ describe('useCollabSync (Fase 5: presència, participants i avís de conflicte)'
 
     expect(countAfterFirstCycle).toBe(1);
     expect(countAfterSecondCycle).toBe(1); // same conflict, not reported again
+  });
+});
+
+describe('useCollabSync (Fase 7: canal d\'esquema -- editorMetadata)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('captures a local editorMetadata change into its own schema delta file, separate from the data channel', async () => {
+    const store = useWorkspaceStore();
+    store.excelJsonData = { pres: { import: 100 } };
+    store.editorMetadata = [{ field: 'nom', label: 'Nom' }];
+    store.config.collabCaptureDebounceSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+
+    store.editorMetadata = [{ field: 'nom', label: 'Nom complet' }];
+    await vi.advanceTimersByTimeAsync(1100);
+
+    const userId = localStorage.getItem('elipsCollabUserId');
+    const schemaEntries = readSchemaDeltaEntries(fakeFolder, userId);
+    expect(schemaEntries.length).toBe(1);
+    expect(schemaEntries[0].patch).toEqual([{ op: 'replace', path: '/0/label', value: 'Nom complet' }]);
+    // The data channel's own delta file must stay untouched -- editing the
+    // schema is not a data edit.
+    expect(readDeltaEntries(fakeFolder, userId)).toEqual([]);
+  });
+
+  it('merges a peer\'s schema change into store.editorMetadata, independently of the data channel', async () => {
+    const store = useWorkspaceStore();
+    store.excelJsonData = { pres: { a: 1 } };
+    const baselineSchema = [{ field: 'nom', label: 'Nom' }];
+    store.editorMetadata = JSON.parse(JSON.stringify(baselineSchema));
+    store.config.collabPollIntervalSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline_schema.json', baselineSchema);
+    await fakeFolder.writeJsonFile('collab_baseline_schema.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_schema_peer-1.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-1', baselineSeq: 1, patch: [{ op: 'replace', path: '/0/label', value: 'Nom (actualitzat pel company)' }] },
+    ]);
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(store.editorMetadata).toEqual([{ field: 'nom', label: 'Nom (actualitzat pel company)' }]);
+    // The (untouched) data baseline/channel must not have been disturbed.
+    expect(store.excelJsonData).toEqual({ pres: { a: 1 } });
+  });
+
+  it('applying a remote schema merge is never re-captured as a new local schema delta entry (no feedback loop)', async () => {
+    const store = useWorkspaceStore();
+    store.excelJsonData = { pres: { a: 1 } };
+    const baselineSchema = [{ field: 'nom', label: 'Nom' }, { field: 'cognoms', label: 'Cognoms' }];
+    store.editorMetadata = JSON.parse(JSON.stringify(baselineSchema));
+    store.config.collabPollIntervalSeconds = 1;
+    store.config.collabCaptureDebounceSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline_schema.json', baselineSchema);
+    await fakeFolder.writeJsonFile('collab_baseline_schema.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    vi.setSystemTime(new Date('2026-01-01T00:00:05.000Z'));
+    await fakeFolder.appendLinesToFile('collab_deltas_schema_peer-1.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-1', baselineSeq: 1, patch: [{ op: 'replace', path: '/1/label', value: 'Cognoms (company)' }] },
+    ]);
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(store.editorMetadata).toEqual([{ field: 'nom', label: 'Nom' }, { field: 'cognoms', label: 'Cognoms (company)' }]);
+    const userId = localStorage.getItem('elipsCollabUserId');
+    expect(readSchemaDeltaEntries(fakeFolder, userId)).toEqual([]); // nothing captured back
+  });
+
+  it('the schema and data channels merge concurrent, unrelated remote changes independently in the same poll cycle', async () => {
+    const store = useWorkspaceStore();
+    store.excelJsonData = { pres: { a: 1 } };
+    store.editorMetadata = [{ field: 'nom', label: 'Nom' }];
+    store.config.collabPollIntervalSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', { pres: { a: 1 } });
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_peer-1.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-1', baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/a', value: 2 }] },
+    ]);
+    await fakeFolder.writeJsonFile('collab_baseline_schema.json', [{ field: 'nom', label: 'Nom' }]);
+    await fakeFolder.writeJsonFile('collab_baseline_schema.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_schema_peer-2.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'peer-2', baselineSeq: 1, patch: [{ op: 'replace', path: '/0/label', value: 'Nom complet' }] },
+    ]);
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(store.excelJsonData).toEqual({ pres: { a: 2 } });
+    expect(store.editorMetadata).toEqual([{ field: 'nom', label: 'Nom complet' }]);
   });
 });

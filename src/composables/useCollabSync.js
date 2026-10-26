@@ -50,7 +50,7 @@
 
 import { ref, watch, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace.js';
-import { computeDataPatch, applyDataPatch } from '../utils/dataPatch.js';
+import { computeDataPatch, computeMetaPatch, applyDataPatch } from '../utils/dataPatch.js';
 import { getOrCreateUserId, getDisplayNameOrFallback } from './useCollabIdentity.js';
 
 const PROJECT_ZIP_FILE = 'collab_project.zip';
@@ -447,7 +447,22 @@ export function useCollabSync(collabFolder, buildProjectZipBlob) {
     logEvent: logCollabEvent,
   });
 
-  const channels = [dataChannel];
+  const schemaChannel = createDocChannel({
+    docKey: 'schema',
+    collabFolder,
+    deltaFileName: (userId) => `collab_deltas_schema_${userId}.jsonl`,
+    baselineFile: 'collab_baseline_schema.json',
+    baselineMetaFile: 'collab_baseline_schema.meta.json',
+    listUserIds: () => collabFolder.listDeltaFileUserIds('schema'),
+    getLocal: () => store.editorMetadata,
+    setLocal: (v) => { store.editorMetadata = v; },
+    computePatch: computeMetaPatch,
+    mergeMessage: "S'han incorporat canvis a l'esquema de dades fets per altres persones.",
+    compactMessage: "S'ha compactat la carpeta de col·laboració (esquema de dades).",
+    logEvent: logCollabEvent,
+  });
+
+  const channels = [schemaChannel, dataChannel];
 
   async function runPollTick() {
     if (!running || pollRunning) return;
@@ -500,7 +515,12 @@ export function useCollabSync(collabFolder, buildProjectZipBlob) {
       const delaySec = store.config.collabCaptureDebounceSeconds || 5;
       dataChannel.scheduleCaptureOnChange(delaySec * 1000);
     }, { deep: true });
-    stopWatchers = [dataWatchStop];
+    const schemaWatchStop = watch(() => store.editorMetadata, () => {
+      if (schemaChannel.isApplyingRemote.value) return;
+      const delaySec = store.config.collabCaptureDebounceSeconds || 5;
+      schemaChannel.scheduleCaptureOnChange(delaySec * 1000);
+    }, { deep: true });
+    stopWatchers = [dataWatchStop, schemaWatchStop];
 
     const pollDelayMs = (store.config.collabPollIntervalSeconds || 5) * 1000;
     pollTimer = setInterval(runPollTick, pollDelayMs);

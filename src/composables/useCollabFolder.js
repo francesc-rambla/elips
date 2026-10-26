@@ -36,8 +36,28 @@ import { getOrCreateUserId } from './useCollabIdentity.js';
 
 export const isCollabSupported = typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
 
-const DELTA_FILE_RE = /^collab_deltas_(.+)\.jsonl$/;
 const PRESENCE_FILE_RE = /^collab_presence_(.+)\.json$/;
+
+// Other channels' filename prefixes -- the bare (data channel) pattern
+// below must explicitly exclude these, or its greedy `(.+)` userId capture
+// would also match e.g. `collab_deltas_schema_<userId>.jsonl` and treat
+// "schema_<userId>" as a bogus data-channel userId, reading (and
+// misapplying) that channel's patches as if they were data patches. Safe
+// to exclude: a real userId is a crypto.randomUUID(), never literally
+// "schema"/"template".
+const OTHER_CHANNEL_PREFIXES = ['schema', 'template'];
+
+// Builds the delta-file matcher for a given channel: 'data' (the default,
+// no prefix) keeps the ORIGINAL `collab_deltas_<userId>.jsonl` pattern
+// untouched (no migration for already-connected folders) but excludes the
+// other channels' filenames (see above); any other channel (e.g. 'schema',
+// 'template') gets a sibling pattern `collab_deltas_<prefix>_<userId>.jsonl`
+// so its files never collide with the data channel's or each other's.
+function deltaFileRegex(prefix) {
+  if (prefix) return new RegExp(`^collab_deltas_${prefix}_(.+)\\.jsonl$`);
+  const exclude = OTHER_CHANNEL_PREFIXES.join('|');
+  return new RegExp(`^collab_deltas_(?!(?:${exclude})_)(.+)\\.jsonl$`);
+}
 
 function handleStorageKey(projectName) {
   return `collabFolderHandle:${projectName}`;
@@ -138,10 +158,13 @@ export function useCollabFolder(projectNameRef) {
   // Lists this folder's own per-user delta/presence files, keyed by the
   // userId each one belongs to -- the mechanism by which useCollabSync
   // discovers OTHER connected users without knowing their ids in advance.
-  async function listDeltaFileUserIds() {
+  // `prefix`: '' (default) for the data channel's original filenames,
+  // 'schema'/'template' for the other channels' sibling files.
+  async function listDeltaFileUserIds(prefix = '') {
+    const re = deltaFileRegex(prefix);
     const ids = [];
     for await (const name of getHandle().keys()) {
-      const m = DELTA_FILE_RE.exec(name);
+      const m = re.exec(name);
       if (m) ids.push(m[1]);
     }
     return ids;
@@ -191,12 +214,15 @@ export function useCollabFolder(projectNameRef) {
 
       const zipBlob = await buildProjectZipBlob();
       await writeBinaryFile('collab_project.zip', zipBlob);
+      const seededAt = new Date().toISOString();
       await writeJsonFile('collab_baseline.json', store.excelJsonData || {});
-      await writeJsonFile('collab_baseline.meta.json', {
-        seq: 1,
-        updatedAt: new Date().toISOString(),
-        updatedBy: getOrCreateUserId(),
-      });
+      await writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: seededAt, updatedBy: getOrCreateUserId() });
+      // Same seeding, for the schema (editorMetadata) live-sync channel --
+      // without this, collab_baseline_schema.json never exists and that
+      // channel stays permanently inert (it never bootstraps its own
+      // baseline on its own, by design: see useCollabSync.js's pollCycle).
+      await writeJsonFile('collab_baseline_schema.json', store.editorMetadata || []);
+      await writeJsonFile('collab_baseline_schema.meta.json', { seq: 1, updatedAt: seededAt, updatedBy: getOrCreateUserId() });
 
       await saveDbItem(handleStorageKey(projectNameRef.value), handle);
       folderStatus.value = 'connected';
