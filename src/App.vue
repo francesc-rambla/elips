@@ -151,8 +151,10 @@ const {
   lastRealtimeError: collabRealtimeError,
   currentRoomId: collabRealtimeRoomId,
   currentPassword: collabRealtimePassword,
+  currentDocName: collabRealtimeDocName,
   connectedPeers: collabRealtimePeers,
   startRealtimeSession,
+  switchRealtimeDocument,
   stopRealtimeSession,
 } = collabRealtime;
 window.collabRealtime = collabRealtime;
@@ -160,7 +162,13 @@ window.collabRealtime = collabRealtime;
 const handleStartRealtimeSession = async () => {
   try {
     const { roomId, password } = generateSessionCredentials();
-    await startRealtimeSession({ roomId, password });
+    await startRealtimeSession({
+      roomId,
+      password,
+      mode: 'start',
+      projectName: currentProjectName.value,
+      docName: activeDocName.value,
+    });
   } catch (e) {
     alert(`Error en iniciar la sessió en viu: ${e.message}`);
   }
@@ -168,7 +176,14 @@ const handleStartRealtimeSession = async () => {
 
 const handleJoinRealtimeSession = async ({ roomId, password }) => {
   try {
-    await startRealtimeSession({ roomId, password });
+    await startRealtimeSession({
+      roomId,
+      password,
+      mode: 'join',
+      projectName: currentProjectName.value,
+      savedProjectNames: savedProjectsList.value,
+      docName: activeDocName.value,
+    });
   } catch (e) {
     alert(`Error en unir-se a la sessió en viu: ${e.message}`);
   }
@@ -665,7 +680,12 @@ const switchActiveDocument = (newDocName) => {
   
   // 3. Load document state
   loadDocumentConfig(pName, newDocName);
-  
+
+  // Si hi ha una sessió en viu oberta, revincula-la al document nou (Fase
+  // 11.2) -- no cal desconnectar-la, cada document té el seu propi Y.Text
+  // dins la mateixa sala/projecte.
+  switchRealtimeDocument(newDocName);
+
   store.addLog(`S'ha canviat al document '${newDocName}'.`, 'info');
 };
 
@@ -737,7 +757,8 @@ const createNewDocument = () => {
   activeDocName.value = cleanName;
   localStorage.setItem(`${pName}:activeDocName`, cleanName);
   loadDocumentConfig(pName, cleanName);
-  
+  switchRealtimeDocument(cleanName);
+
   store.addLog(`Document '${cleanName}' creat correctament.`, 'success');
 };
 
@@ -773,6 +794,7 @@ const deleteDocument = (dName) => {
     activeDocName.value = 'Document Principal';
     localStorage.setItem(`${pName}:activeDocName`, 'Document Principal');
     loadDocumentConfig(pName, 'Document Principal');
+    switchRealtimeDocument('Document Principal');
   }
   
   store.addLog(`Document '${dName}' eliminat d'aquest projecte.`, 'info');
@@ -3321,6 +3343,7 @@ const generateDocuments = async () => {
       :realtime-error="collabRealtimeError"
       :realtime-room-id="collabRealtimeRoomId"
       :realtime-password="collabRealtimePassword"
+      :realtime-doc-name="collabRealtimeDocName"
       :realtime-peers="collabRealtimePeers"
       @close="isCollabPanelOpen = false"
       @connect="handleConnectCollabFolder"

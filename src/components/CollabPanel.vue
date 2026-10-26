@@ -39,6 +39,7 @@ const props = defineProps({
   realtimeError: { type: String, default: null },
   realtimeRoomId: { type: String, default: '' },
   realtimePassword: { type: String, default: '' },
+  realtimeDocName: { type: String, default: '' },
   realtimePeers: { type: Array, default: () => [] },
 });
 
@@ -235,6 +236,12 @@ const copyToClipboard = async (text) => {
 
             <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
               <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);">O uneix-te a una sessió existent</label>
+              <p style="font-size: 0.72rem; color: var(--text-muted); margin: 0;">
+                Només et pots unir a una sessió del mateix projecte que tens obert ara mateix
+                (se t'avisarà i no es connectarà si no coincideix). Un cop dins, cada participant
+                pot anar per un document diferent (memòria, plec...) del mateix projecte --
+                la sincronització et segueix si en canvies.
+              </p>
               <input
                 type="text"
                 v-model="joinRoomIdInput"
@@ -277,6 +284,9 @@ const copyToClipboard = async (text) => {
               <p style="font-size: 0.72rem; color: var(--text-muted); margin: 0;">
                 Comparteix aquests dos valors (p. ex. per xat) amb qui es vulgui unir -- no hi ha cap altra manera de distribuir-los.
               </p>
+              <div style="font-size: 0.78rem; color: var(--text-secondary);">
+                Document sincronitzat ara: <strong>{{ realtimeDocName }}</strong>
+              </div>
             </div>
 
             <button
@@ -296,8 +306,9 @@ const copyToClipboard = async (text) => {
                 <span>
                   <span style="color: var(--color-success, #16a34a);">●</span>
                   {{ peer.displayName }}
+                  <span v-if="peer.isSelf" style="font-size: 0.72rem; color: var(--text-muted);">(tu)</span>
                 </span>
-                <span v-if="peer.isSelf" style="font-size: 0.72rem; color: var(--text-muted);">(tu)</span>
+                <span v-if="peer.docName" style="font-size: 0.72rem; color: var(--text-muted);">{{ peer.docName }}</span>
               </div>
             </div>
           </template>
