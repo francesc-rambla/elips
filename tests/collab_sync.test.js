@@ -55,10 +55,24 @@ function makeFakeCollabFolder() {
       const addition = entries.map(e => JSON.stringify(e)).join('\n') + '\n';
       files.set(name, (files.get(name) || '') + addition);
     },
+    async writeTextFile(name, text) {
+      files.set(name, text);
+    },
+    async writeBinaryFile(name, blob) {
+      files.set(name, blob);
+    },
     async listDeltaFileUserIds() {
       const ids = [];
       for (const name of files.keys()) {
         const m = /^collab_deltas_(.+)\.jsonl$/.exec(name);
+        if (m) ids.push(m[1]);
+      }
+      return ids;
+    },
+    async listPresenceFileUserIds() {
+      const ids = [];
+      for (const name of files.keys()) {
+        const m = /^collab_presence_(.+)\.json$/.exec(name);
         if (m) ids.push(m[1]);
       }
       return ids;
@@ -263,6 +277,11 @@ describe('useCollabSync (Fase 3: motor de fusió/repetició)', () => {
     store.excelJsonData = JSON.parse(JSON.stringify(baseline));
     store.config.collabPollIntervalSeconds = 1;
     store.config.collabCaptureDebounceSeconds = 1;
+    // Kept close to the baseline's own updatedAt so Fase 4 compaction (time
+    // threshold) doesn't trigger here -- compaction is covered by its own
+    // tests and would truncate the pre-seeded entry below, unrelated to
+    // what THIS test checks.
+    vi.setSystemTime(new Date('2026-01-01T00:00:05.000Z'));
 
     const fakeFolder = makeFakeCollabFolder();
     await fakeFolder.writeJsonFile('collab_baseline.json', baseline);
@@ -279,7 +298,7 @@ describe('useCollabSync (Fase 3: motor de fusió/repetició)', () => {
       return id;
     })();
     await fakeFolder.appendLinesToFile(`collab_deltas_${ownUserId}.jsonl`, [
-      { seq: 1, ts: '2025-12-31T00:00:00.000Z', userId: ownUserId, baselineSeq: 1, patch: [] },
+      { seq: 1, ts: '2026-01-01T00:00:00.500Z', userId: ownUserId, baselineSeq: 1, patch: [] },
     ]);
 
     const { startCollabSync } = useCollabSync(fakeFolder);
@@ -312,5 +331,205 @@ describe('useCollabSync (Fase 3: motor de fusió/repetició)', () => {
     const refBefore = store.excelJsonData;
     await vi.advanceTimersByTimeAsync(1100);
     expect(store.excelJsonData).toBe(refBefore); // same object reference -- no reassignment happened
+  });
+});
+
+function ownUserId() {
+  let id = localStorage.getItem('elipsCollabUserId');
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem('elipsCollabUserId', id); }
+  return id;
+}
+
+describe('useCollabSync (Fase 4: compactació/rotació de base)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('compacts the baseline once enough time has passed since the last one, and truncates this client\'s own delta file down to only entries newer than it', async () => {
+    const store = useWorkspaceStore();
+    const baseline = { pres: { a: 1 } };
+    store.excelJsonData = JSON.parse(JSON.stringify(baseline));
+    store.config.collabPollIntervalSeconds = 1;
+    vi.setSystemTime(new Date('2026-01-01T00:20:00.000Z'));
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', baseline);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    const userId = ownUserId();
+    await fakeFolder.appendLinesToFile(`collab_deltas_${userId}.jsonl`, [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId, baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/a', value: 2 }] },
+    ]);
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    const meta = await fakeFolder.readJsonFile('collab_baseline.meta.json');
+    expect(meta.seq).toBe(2);
+    expect(await fakeFolder.readJsonFile('collab_baseline.json')).toEqual({ pres: { a: 2 } });
+    // the only entry on disk predates the new baseline's cutoff -- already
+    // folded into it, so it's dropped from this client's own file
+    expect(readDeltaEntries(fakeFolder, userId)).toEqual([]);
+  });
+
+  it('does not compact when the baseline is recent and the delta count is low', async () => {
+    const store = useWorkspaceStore();
+    const baseline = { pres: { a: 1 } };
+    store.excelJsonData = JSON.parse(JSON.stringify(baseline));
+    store.config.collabPollIntervalSeconds = 1;
+    vi.setSystemTime(new Date('2026-01-01T00:00:30.000Z'));
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', baseline);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    const meta = await fakeFolder.readJsonFile('collab_baseline.meta.json');
+    expect(meta.seq).toBe(1); // unchanged -- no compaction triggered
+  });
+
+  it('refreshes collab_project.zip via the supplied buildProjectZipBlob when compacting', async () => {
+    const store = useWorkspaceStore();
+    const baseline = { pres: { a: 1 } };
+    store.excelJsonData = JSON.parse(JSON.stringify(baseline));
+    store.config.collabPollIntervalSeconds = 1;
+    vi.setSystemTime(new Date('2026-01-01T00:20:00.000Z'));
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', baseline);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+
+    const zipBlob = { marker: 'fake-zip' };
+    const buildProjectZipBlob = vi.fn().mockResolvedValue(zipBlob);
+    const { startCollabSync } = useCollabSync(fakeFolder, buildProjectZipBlob);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(buildProjectZipBlob).toHaveBeenCalled();
+    expect(fakeFolder._files.get('collab_project.zip')).toBe(zipBlob);
+  });
+});
+
+describe('useCollabSync (Fase 5: presència, participants i avís de conflicte)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('writes its own presence file every poll cycle', async () => {
+    const store = useWorkspaceStore();
+    store.excelJsonData = { pres: { a: 1 } };
+    store.config.collabPollIntervalSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', store.excelJsonData);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+
+    const { startCollabSync } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    const userId = ownUserId();
+    const presence = await fakeFolder.readJsonFile(`collab_presence_${userId}.json`);
+    expect(presence).toMatchObject({ displayName: expect.any(String) });
+    expect(presence.lastSeen).toBeTruthy();
+  });
+
+  it('lists another connected peer (read from their presence file) as not stale when seen recently', async () => {
+    const store = useWorkspaceStore();
+    store.excelJsonData = { pres: { a: 1 } };
+    store.config.collabPollIntervalSeconds = 1;
+    vi.setSystemTime(new Date('2026-01-01T00:00:10.000Z'));
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', store.excelJsonData);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.writeJsonFile('collab_presence_peer-1.json', { displayName: 'Companya', lastSeen: '2026-01-01T00:00:09.000Z' });
+
+    const { startCollabSync, connectedPeers } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    const peer = connectedPeers.value.find(p => p.userId === 'peer-1');
+    expect(peer).toMatchObject({ displayName: 'Companya', isSelf: false, isStale: false });
+  });
+
+  it('marks a peer as stale once their presence has not been refreshed for a while', async () => {
+    const store = useWorkspaceStore();
+    store.excelJsonData = { pres: { a: 1 } };
+    store.config.collabPollIntervalSeconds = 1;
+    vi.setSystemTime(new Date('2026-01-01T00:05:00.000Z'));
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', store.excelJsonData);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.writeJsonFile('collab_presence_peer-1.json', { displayName: 'Companya', lastSeen: '2026-01-01T00:00:00.000Z' });
+
+    const { startCollabSync, connectedPeers } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    const peer = connectedPeers.value.find(p => p.userId === 'peer-1');
+    expect(peer).toMatchObject({ isStale: true });
+  });
+
+  it('logs a visible warning when two different users touch the same path in the same batch', async () => {
+    const store = useWorkspaceStore();
+    const baseline = { pres: { import: 100 } };
+    store.excelJsonData = JSON.parse(JSON.stringify(baseline));
+    store.config.collabPollIntervalSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', baseline);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_z-peer.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'z-peer', baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/import', value: 111 }] },
+    ]);
+    await fakeFolder.appendLinesToFile('collab_deltas_a-peer.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:02.000Z', userId: 'a-peer', baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/import', value: 222 }] },
+    ]);
+
+    const { startCollabSync, collabActivityLog } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(store.excelJsonData).toEqual({ pres: { import: 222 } });
+    const warning = collabActivityLog.value.find(e => e.type === 'warning' && e.text.includes('/pres/import'));
+    expect(warning).toBeTruthy();
+  });
+
+  it('does not re-flag the same historical conflict on a later poll cycle', async () => {
+    const store = useWorkspaceStore();
+    const baseline = { pres: { import: 100 } };
+    store.excelJsonData = JSON.parse(JSON.stringify(baseline));
+    store.config.collabPollIntervalSeconds = 1;
+
+    const fakeFolder = makeFakeCollabFolder();
+    await fakeFolder.writeJsonFile('collab_baseline.json', baseline);
+    await fakeFolder.writeJsonFile('collab_baseline.meta.json', { seq: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'seed' });
+    await fakeFolder.appendLinesToFile('collab_deltas_z-peer.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:01.000Z', userId: 'z-peer', baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/import', value: 111 }] },
+    ]);
+    await fakeFolder.appendLinesToFile('collab_deltas_a-peer.jsonl', [
+      { seq: 1, ts: '2026-01-01T00:00:02.000Z', userId: 'a-peer', baselineSeq: 1, patch: [{ op: 'replace', path: '/pres/import', value: 222 }] },
+    ]);
+
+    const { startCollabSync, collabActivityLog } = useCollabSync(fakeFolder);
+    await startCollabSync();
+    await vi.advanceTimersByTimeAsync(1100);
+    const countAfterFirstCycle = collabActivityLog.value.filter(e => e.type === 'warning').length;
+    await vi.advanceTimersByTimeAsync(1100);
+    const countAfterSecondCycle = collabActivityLog.value.filter(e => e.type === 'warning').length;
+
+    expect(countAfterFirstCycle).toBe(1);
+    expect(countAfterSecondCycle).toBe(1); // same conflict, not reported again
   });
 });

@@ -63,6 +63,8 @@ const saveSettings = () => {
   localStorage.setItem('showButtonTexts', store.config.showButtonTexts ? 'true' : 'false');
   localStorage.setItem('labelPosition', store.config.labelPosition || 'top');
   localStorage.setItem('autoSaveDebounceSeconds', String(store.config.autoSaveDebounceSeconds || 5));
+  localStorage.setItem('collabPollIntervalSeconds', String(store.config.collabPollIntervalSeconds || 5));
+  localStorage.setItem('collabCaptureDebounceSeconds', String(store.config.collabCaptureDebounceSeconds || 5));
   store.addLog("Configuració de motors, rendiment i interfície desada reactivament.", "success");
   emit('close');
 };
@@ -78,6 +80,8 @@ const resetSettings = () => {
   localConfig.showButtonTexts = true;
   localConfig.labelPosition = 'top';
   localConfig.autoSaveDebounceSeconds = 5;
+  localConfig.collabPollIntervalSeconds = 5;
+  localConfig.collabCaptureDebounceSeconds = 5;
 };
 </script>
 
@@ -129,6 +133,40 @@ const resetSettings = () => {
           <label for="cfgShowButtonTexts" style="display:inline; margin:0; text-transform:none; font-weight: 600;">
             Mostra els textos als botons de les eines (si es desactiva, es mostraran només les icones amb consells al passar el cursor)
           </label>
+        </div>
+
+        <div style="font-size: 0.85rem; font-weight: bold; color: var(--color-primary); margin-bottom: 0.5rem; text-transform: uppercase; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">
+          🔗 Col·laboració (carpeta compartida)
+        </div>
+
+        <div class="form-row" style="margin-bottom: 0.85rem;">
+          <label for="cfgCollabPollSec" style="font-weight: 600;">Interval de sondeig de canvis d'altres persones (segons)</label>
+          <input
+            type="number"
+            id="cfgCollabPollSec"
+            v-model.number="localConfig.collabPollIntervalSeconds"
+            min="1"
+            max="60"
+            style="width: 100%; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.85rem;"
+          >
+          <span style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-top: 2px;">
+            Cada quants segons es rellegeix la carpeta de col·laboració per incorporar canvis d'altres persones (Defecte: 5s). Només té efecte amb una carpeta connectada.
+          </span>
+        </div>
+
+        <div class="form-row" style="margin-bottom: 1.25rem;">
+          <label for="cfgCollabCaptureSec" style="font-weight: 600;">Temps d'espera per desar els propis canvis a la carpeta (segons)</label>
+          <input
+            type="number"
+            id="cfgCollabCaptureSec"
+            v-model.number="localConfig.collabCaptureDebounceSeconds"
+            min="1"
+            max="60"
+            style="width: 100%; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.85rem;"
+          >
+          <span style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-top: 2px;">
+            Temps en segons després del darrer canvi per desar-lo al propi fitxer de deltes de la carpeta de col·laboració (Defecte: 5s).
+          </span>
         </div>
 
         <div style="font-size: 0.85rem; font-weight: bold; color: var(--color-primary); margin-bottom: 0.5rem; text-transform: uppercase; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">

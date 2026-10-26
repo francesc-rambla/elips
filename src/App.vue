@@ -125,7 +125,12 @@ const {
   disconnectFolder: disconnectCollabFolder,
 } = collabFolder;
 
-const { startCollabSync, stopCollabSync } = useCollabSync(collabFolder);
+const {
+  startCollabSync,
+  stopCollabSync,
+  connectedPeers: collabConnectedPeers,
+  collabActivityLog,
+} = useCollabSync(collabFolder, () => buildProjectZipBlob());
 watch(collabFolderStatus, (status) => {
   if (status === 'connected') {
     startCollabSync();
@@ -3275,6 +3280,8 @@ const generateDocuments = async () => {
       :folder-status="collabFolderStatus"
       :folder-name="collabFolderName"
       :display-name="collabDisplayName"
+      :connected-peers="collabConnectedPeers"
+      :activity-log="collabActivityLog"
       @close="isCollabPanelOpen = false"
       @connect="handleConnectCollabFolder"
       @disconnect="disconnectCollabFolder"

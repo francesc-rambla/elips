@@ -37,6 +37,7 @@ import { getOrCreateUserId } from './useCollabIdentity.js';
 export const isCollabSupported = typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
 
 const DELTA_FILE_RE = /^collab_deltas_(.+)\.jsonl$/;
+const PRESENCE_FILE_RE = /^collab_presence_(.+)\.json$/;
 
 function handleStorageKey(projectName) {
   return `collabFolderHandle:${projectName}`;
@@ -94,6 +95,16 @@ export function useCollabFolder(projectNameRef) {
     }
   }
 
+  // Full overwrite (unlike appendLinesToFile below) -- used to rewrite a
+  // delta file with only its still-relevant entries after a baseline
+  // compaction (see useCollabSync.js's truncateOwnDeltaFile).
+  async function writeTextFile(name, text) {
+    const fh = await getHandle().getFileHandle(name, { create: true });
+    const writable = await fh.createWritable();
+    await writable.write(text);
+    await writable.close();
+  }
+
   // Appends one JSON-stringified line per entry, without reading/rewriting
   // the file's existing content: createWritable({keepExistingData: true})
   // plus a positioned write at the file's current size is the File System
@@ -124,13 +135,22 @@ export function useCollabFolder(projectNameRef) {
     await writable.close();
   }
 
-  // Lists this folder's own per-user delta files, keyed by the userId each
-  // one belongs to -- the mechanism by which useCollabSync discovers OTHER
-  // connected users without knowing their ids in advance.
+  // Lists this folder's own per-user delta/presence files, keyed by the
+  // userId each one belongs to -- the mechanism by which useCollabSync
+  // discovers OTHER connected users without knowing their ids in advance.
   async function listDeltaFileUserIds() {
     const ids = [];
     for await (const name of getHandle().keys()) {
       const m = DELTA_FILE_RE.exec(name);
+      if (m) ids.push(m[1]);
+    }
+    return ids;
+  }
+
+  async function listPresenceFileUserIds() {
+    const ids = [];
+    for await (const name of getHandle().keys()) {
+      const m = PRESENCE_FILE_RE.exec(name);
       if (m) ids.push(m[1]);
     }
     return ids;
@@ -269,9 +289,11 @@ export function useCollabFolder(projectNameRef) {
     readJsonFile,
     writeJsonFile,
     readTextFile,
+    writeTextFile,
     appendLinesToFile,
     readBinaryFile,
     writeBinaryFile,
     listDeltaFileUserIds,
+    listPresenceFileUserIds,
   };
 }

@@ -19,17 +19,17 @@
 <script setup>
 import { ref, watch } from 'vue';
 
-// Phase 1 only: connect/disconnect a collaboration folder for the CURRENT
-// project, its permission lifecycle, and the display name shown to other
-// participants. Live sync status (peers, activity log) is added once
-// useCollabSync.js lands (Fase 3-5 of the plan) -- this panel has no data
-// to show for that yet.
+// Connect/disconnect a collaboration folder for the CURRENT project, its
+// permission lifecycle, the display name shown to other participants, and
+// (Fase 5) the live participant list + activity log fed by useCollabSync.js.
 const props = defineProps({
   isOpen: { type: Boolean, default: false },
   isCollabSupported: { type: Boolean, default: false },
   folderStatus: { type: String, default: 'disconnected' }, // 'unsupported' | 'disconnected' | 'needs-permission' | 'connected' | 'error'
   folderName: { type: String, default: '' },
   displayName: { type: String, default: '' },
+  connectedPeers: { type: Array, default: () => [] },
+  activityLog: { type: Array, default: () => [] },
 });
 
 const emit = defineEmits(['close', 'connect', 'disconnect', 'request-permission', 'update-display-name']);
@@ -123,6 +123,37 @@ const statusLabel = {
               >
                 Desconnecta
               </button>
+            </div>
+          </div>
+
+          <div v-if="folderStatus === 'connected'" style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+            <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">Participants connectats</span>
+            <div v-if="connectedPeers.length === 0" style="font-size: 0.8rem; color: var(--text-muted);">
+              Cap altra persona connectada encara.
+            </div>
+            <div v-for="peer in connectedPeers" :key="peer.userId" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem;">
+              <span>
+                <span :style="{ color: peer.isStale ? 'var(--text-muted)' : 'var(--color-success, #16a34a)' }">●</span>
+                {{ peer.displayName }}
+              </span>
+              <span v-if="!peer.isSelf" style="font-size: 0.72rem; color: var(--text-muted);">
+                {{ peer.isStale ? 'possiblement desconnectat' : 'actiu' }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="folderStatus === 'connected' && activityLog.length" style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+            <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">Activitat recent</span>
+            <div style="max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;">
+              <div
+                v-for="(entry, idx) in activityLog"
+                :key="idx"
+                style="font-size: 0.75rem; display: flex; gap: 6px;"
+                :style="{ color: entry.type === 'error' ? 'var(--color-danger, #dc2626)' : (entry.type === 'warning' ? '#b45309' : 'var(--text-secondary)') }"
+              >
+                <span style="font-family: monospace; color: var(--text-muted); flex-shrink: 0;">{{ entry.time }}</span>
+                <span>{{ entry.text }}</span>
+              </div>
             </div>
           </div>
         </template>
