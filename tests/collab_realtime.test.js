@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { reactive, watch, nextTick } from 'vue';
 import * as Y from 'yjs';
 import {
@@ -27,6 +27,9 @@ import {
   waitForRemoteProjectName,
   checkProjectMatch,
   templateYTextName,
+  normalizeSignalingServers,
+  findWorkingSignalingServer,
+  KNOWN_SIGNALING_SERVERS,
 } from '../src/composables/useCollabRealtime.js';
 
 /** Simulates what WebrtcProvider does under the hood (exchange + apply Yjs
@@ -337,5 +340,93 @@ describe('attachTemplateBridge (Fase 10: canal de plantilla en temps real via Y.
     await nextTick();
     // No observer left on peer A -- store.templateText must stay untouched.
     expect(a.store.templateText).toBe('changed locally after stop');
+  });
+});
+
+describe('normalizeSignalingServers (Fase 11.3: llista configurable de servidors de senyalització)', () => {
+  it('passes through {url, label} objects unchanged', () => {
+    expect(normalizeSignalingServers([{ url: 'wss://a', label: 'A' }])).toEqual([{ url: 'wss://a', label: 'A' }]);
+  });
+
+  it('wraps plain string URLs into {url, label}', () => {
+    expect(normalizeSignalingServers(['wss://a'])).toEqual([{ url: 'wss://a', label: 'wss://a' }]);
+  });
+
+  it('drops entries with no url', () => {
+    expect(normalizeSignalingServers([{ label: 'sense url' }, null, { url: 'wss://a' }])).toEqual([{ url: 'wss://a' }]);
+  });
+
+  it('returns an empty list for null/undefined input', () => {
+    expect(normalizeSignalingServers(null)).toEqual([]);
+    expect(normalizeSignalingServers(undefined)).toEqual([]);
+  });
+});
+
+describe('findWorkingSignalingServer (Fase 11.3)', () => {
+  it('returns the first server that responds when there is no preferred one, without asking anything', async () => {
+    const probeFn = vi.fn(async (url) => url === 'wss://b');
+    const confirmFn = vi.fn();
+    const result = await findWorkingSignalingServer(['wss://a', 'wss://b', 'wss://c'], '', probeFn, confirmFn);
+    expect(result).toBe('wss://b');
+    expect(confirmFn).not.toHaveBeenCalled();
+  });
+
+  it('returns null when nothing responds and there is no preferred server', async () => {
+    const probeFn = vi.fn(async () => false);
+    const result = await findWorkingSignalingServer(['wss://a', 'wss://b'], '', probeFn);
+    expect(result).toBeNull();
+    expect(probeFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses the preferred server directly when it responds, without probing the rest', async () => {
+    const probeFn = vi.fn(async (url) => url === 'wss://preferred');
+    const confirmFn = vi.fn();
+    const result = await findWorkingSignalingServer(['wss://a', 'wss://preferred', 'wss://b'], 'wss://preferred', probeFn, confirmFn);
+    expect(result).toBe('wss://preferred');
+    expect(probeFn).toHaveBeenCalledTimes(1);
+    expect(confirmFn).not.toHaveBeenCalled();
+  });
+
+  it('asks before falling back when the preferred server fails, and tries the rest in order if accepted', async () => {
+    const probeFn = vi.fn(async (url) => url === 'wss://b');
+    const confirmFn = vi.fn(() => true);
+    const result = await findWorkingSignalingServer(['wss://preferred', 'wss://a', 'wss://b'], 'wss://preferred', probeFn, confirmFn);
+    expect(confirmFn).toHaveBeenCalledTimes(1);
+    expect(confirmFn.mock.calls[0][0]).toMatch(/wss:\/\/preferred/);
+    expect(result).toBe('wss://b');
+  });
+
+  it('gives up without probing anything else when the user declines to try the rest', async () => {
+    const probeFn = vi.fn(async (url) => url === 'wss://b');
+    const confirmFn = vi.fn(() => false);
+    const result = await findWorkingSignalingServer(['wss://preferred', 'wss://b'], 'wss://preferred', probeFn, confirmFn);
+    expect(result).toBeNull();
+    expect(probeFn).toHaveBeenCalledTimes(1); // només el preferit -- mai s'arriba a provar wss://b
+  });
+
+  it('falls back to sequential order (ignoring the stale preference) when the preferred URL is no longer in the list', async () => {
+    const probeFn = vi.fn(async (url) => url === 'wss://a');
+    const confirmFn = vi.fn();
+    const result = await findWorkingSignalingServer(['wss://a', 'wss://b'], 'wss://removed', probeFn, confirmFn);
+    expect(result).toBe('wss://a');
+    expect(confirmFn).not.toHaveBeenCalled();
+  });
+
+  it('returns null without asking when the preferred server fails and there is nothing else configured', async () => {
+    const probeFn = vi.fn(async () => false);
+    const confirmFn = vi.fn();
+    const result = await findWorkingSignalingServer(['wss://preferred'], 'wss://preferred', probeFn, confirmFn);
+    expect(result).toBeNull();
+    expect(confirmFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('KNOWN_SIGNALING_SERVERS', () => {
+  it('is a non-empty, well-formed default list', () => {
+    expect(KNOWN_SIGNALING_SERVERS.length).toBeGreaterThan(0);
+    for (const s of KNOWN_SIGNALING_SERVERS) {
+      expect(s.url).toMatch(/^wss?:\/\//);
+      expect(typeof s.label).toBe('string');
+    }
   });
 });

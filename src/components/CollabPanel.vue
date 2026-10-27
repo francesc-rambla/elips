@@ -40,6 +40,7 @@ const props = defineProps({
   realtimeRoomId: { type: String, default: '' },
   realtimePassword: { type: String, default: '' },
   realtimeDocName: { type: String, default: '' },
+  realtimeSignalingServer: { type: String, default: '' },
   realtimePeers: { type: Array, default: () => [] },
 });
 
@@ -286,6 +287,9 @@ const copyToClipboard = async (text) => {
               </p>
               <div style="font-size: 0.78rem; color: var(--text-secondary);">
                 Document sincronitzat ara: <strong>{{ realtimeDocName }}</strong>
+              </div>
+              <div style="font-size: 0.72rem; color: var(--text-muted); font-family: monospace; overflow-x: auto; white-space: nowrap;">
+                Servidor de senyalització: {{ realtimeSignalingServer || '—' }}
               </div>
             </div>
 

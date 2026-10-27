@@ -17,6 +17,7 @@
  */
 
 import { defineStore } from 'pinia';
+import { KNOWN_SIGNALING_SERVERS } from '../utils/collabSignalingServers';
 
 export const useWorkspaceStore = defineStore('workspace', {
   state: () => ({
@@ -146,7 +147,11 @@ export const useWorkspaceStore = defineStore('workspace', {
       autoSaveDebounceSeconds: parseInt(localStorage.getItem('autoSaveDebounceSeconds') || '5', 10), // 5 seconds default
       // Folder-based collaboration (see useCollabFolder.js/useCollabSync.js)
       collabPollIntervalSeconds: parseInt(localStorage.getItem('collabPollIntervalSeconds') || '5', 10),
-      collabCaptureDebounceSeconds: parseInt(localStorage.getItem('collabCaptureDebounceSeconds') || '5', 10)
+      collabCaptureDebounceSeconds: parseInt(localStorage.getItem('collabCaptureDebounceSeconds') || '5', 10),
+      // Sessió en viu WebRTC (see useCollabRealtime.js, Fase 11.3) --
+      // servidors de senyalització configurables, cap amb SLA garantit.
+      collabSignalingServers: JSON.parse(localStorage.getItem('collabSignalingServers') || JSON.stringify(KNOWN_SIGNALING_SERVERS)),
+      collabPreferredSignalingServer: localStorage.getItem('collabPreferredSignalingServer') || ''
     }
   }),
   

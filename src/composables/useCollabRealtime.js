@@ -87,13 +87,27 @@
  * per un document diferent del mateix projecte simultàniament, sense
  * interferir-se: l'Awareness inclou `docName` perquè la llista de
  * participants mostri en quin document és cadascú.
+ *
+ * Fase 11.3: llista de servidors de senyalització configurable (trobat en
+ * ús real: el públic fixat per defecte, wss://y-webrtc-eu.fly.dev, pot
+ * respondre 503 -- sense SLA, és un risc ja documentat al pla, no un bug).
+ * `store.config.collabSignalingServers` (array `{url, label}`, editable des
+ * de SettingsModal.vue, llavor `KNOWN_SIGNALING_SERVERS`) i
+ * `store.config.collabPreferredSignalingServer` (URL o buit). En connectar,
+ * `findWorkingSignalingServer` sonda cada candidat amb un WebSocket cru
+ * (`probeSignalingServer`) ABANS de crear el `WebrtcProvider`: si hi ha un
+ * preferit i falla, pregunta (via `confirm()`) abans de provar la resta;
+ * sense preferit, les prova totes seguides sense preguntar. El servidor que
+ * respon queda exposat a `currentSignalingServer` perquè CollabPanel.vue el
+ * mostri al costat de la Sala i la Contrasenya.
  */
 
 import { ref, watch, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import { getOrCreateUserId, getDisplayNameOrFallback } from './useCollabIdentity';
+import { KNOWN_SIGNALING_SERVERS } from '../utils/collabSignalingServers';
 
-const DEFAULT_SIGNALING_SERVERS = ['wss://y-webrtc-eu.fly.dev'];
+export { KNOWN_SIGNALING_SERVERS };
 
 /** Genera un identificador de sala i una contrasenya nous, per a qui inicia
  * una sessió en viu i els ha de compartir (fora de banda) amb la resta. */
@@ -123,6 +137,72 @@ export function applyStringDiffToYText(ytext, oldStr, newStr) {
   const insertText = newStr.slice(prefix, newEnd);
   if (deleteLen > 0) ytext.delete(prefix, deleteLen);
   if (insertText.length > 0) ytext.insert(prefix, insertText);
+}
+
+/** Normalitza la llista de servidors de senyalització (array de cadenes
+ * `ws(s)://...` o d'objectes `{url, label}`, tal com pot venir de
+ * `store.config.collabSignalingServers` o d'una crida de prova amb una
+ * sola URL) a sempre `{url, label}` -- descarta entrades sense `url`. */
+export function normalizeSignalingServers(servers) {
+  return (servers || [])
+    .map((s) => (typeof s === 'string' ? { url: s, label: s } : s))
+    .filter((s) => s && s.url);
+}
+
+/** Comprova si un servidor de senyalització respon obrint-hi un WebSocket
+ * cru (sense cap lògica de y-webrtc) -- és la mateixa comprovació que
+ * trobar un codi 503 al handshake (servidor caigut/adormit) detecta
+ * directament, en lloc d'esperar fins que `waitForRemoteProjectName`
+ * expiri sense cap pista de la causa real. */
+export function probeSignalingServer(url, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let ws;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { ws && ws.close(); } catch { /* ja tancat o mai obert */ }
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    try {
+      ws = new WebSocket(url);
+      ws.onopen = () => finish(true);
+      ws.onerror = () => finish(false);
+      ws.onclose = () => finish(false);
+    } catch {
+      finish(false);
+    }
+  });
+}
+
+/** Tria quin servidor de senyalització fer servir d'entre la llista
+ * configurada: si hi ha un preferit, el prova primer; si falla, avisa
+ * l'usuari (via `confirmFn`, per defecte el `confirm()` natiu del navegador
+ * -- mateix idioma que `deleteDocument`/`createNewProject` a App.vue) i
+ * només si accepta es proven la resta EN ORDRE (no totes alhora). Sense cap
+ * preferit, es proven totes seqüencialment sense preguntar res. Retorna la
+ * URL que ha respost, o `null` si cap ho ha fet (o l'usuari ha declinat
+ * continuar). `probeFn`/`confirmFn` són injectables perquè es puguin provar
+ * sense WebSockets ni diàlegs reals -- veure tests/collab_realtime.test.js. */
+export async function findWorkingSignalingServer(servers, preferredUrl, probeFn = probeSignalingServer, confirmFn = (msg) => confirm(msg)) {
+  const urls = normalizeSignalingServers(servers).map((s) => s.url);
+  if (preferredUrl && urls.includes(preferredUrl)) {
+    if (await probeFn(preferredUrl)) return preferredUrl;
+    const rest = urls.filter((u) => u !== preferredUrl);
+    if (rest.length === 0) return null;
+    const keepTrying = confirmFn(`El servidor de senyalització preferit (${preferredUrl}) no respon. Vols provar la resta de servidors configurats?`);
+    if (!keepTrying) return null;
+    for (const url of rest) {
+      if (await probeFn(url)) return url;
+    }
+    return null;
+  }
+  for (const url of urls) {
+    if (await probeFn(url)) return url;
+  }
+  return null;
 }
 
 /** Nom del `Y.Text` compartit per a un document concret dins del Y.Doc d'una
@@ -257,6 +337,11 @@ export function useCollabRealtime() {
   // Document (d'aquest mateix projecte) al qual està vinculat el pont de
   // plantilla ara mateix -- vegeu bindDocument() més avall (Fase 11.2).
   const currentDocName = ref('');
+  // Servidor de senyalització que ha respost i s'està fent servir ara
+  // mateix (Fase 11.3) -- CollabPanel.vue el mostra al costat de la Sala i
+  // la Contrasenya, perquè qui ha iniciat/s'ha unit a la sessió sàpiga
+  // exactament per on hi passa (útil si cal diagnosticar-ho més endavant).
+  const currentSignalingServer = ref('');
 
   let ydoc = null;
   let ytext = null;
@@ -342,6 +427,7 @@ export function useCollabRealtime() {
     ytext = null;
     boundDocName = null;
     currentDocName.value = '';
+    currentSignalingServer.value = '';
     connectedPeers.value = [];
     currentRoomId.value = '';
     currentPassword.value = '';
@@ -356,11 +442,29 @@ export function useCollabRealtime() {
     }
     sessionStatus.value = 'connecting';
     lastRealtimeError.value = null;
+    currentSignalingServer.value = '';
     try {
       const [Y, { WebrtcProvider }] = await Promise.all([
         import('yjs'),
         import('y-webrtc'),
       ]);
+
+      // Comprova QUIN servidor de senyalització de la llista configurada
+      // respon de debò ABANS de crear cap provider -- detecta directament
+      // un servidor caigut/adormit (p. ex. un 503 al handshake, el cas real
+      // que ens ha portat fins aquí) en lloc de confondre'l més avall amb
+      // "la contrapart no hi és" (waitForRemoteProjectName). Si hi ha un
+      // preferit configurat i falla, es pregunta abans de provar la resta
+      // (findWorkingSignalingServer); sense preferit, es proven totes
+      // seqüencialment sense preguntar.
+      const workingServer = await findWorkingSignalingServer(
+        signaling || store.config.collabSignalingServers || KNOWN_SIGNALING_SERVERS,
+        store.config.collabPreferredSignalingServer || '',
+      );
+      if (!workingServer) {
+        throw new Error("No s'ha pogut connectar a cap servidor de senyalització de la llista configurada (Configuració -> Sessió en viu). Comprova la connexió o afegeix-ne un altre.");
+      }
+      currentSignalingServer.value = workingServer;
 
       ydoc = new Y.Doc();
       const ymeta = ydoc.getMap('meta');
@@ -378,7 +482,7 @@ export function useCollabRealtime() {
       }
 
       provider = new WebrtcProvider(roomId, ydoc, {
-        signaling: signaling || DEFAULT_SIGNALING_SERVERS,
+        signaling: [workingServer],
         password,
       });
 
@@ -387,8 +491,12 @@ export function useCollabRealtime() {
       // error (mateix camí que qualsevol altre error de connexió, vegeu el
       // catch de més avall) i la sessió es tanca sense haver adjuntat mai
       // attachTemplateBridge, és a dir, sense haver tocat store.templateText.
+      // El límit és generós (15s) perquè, un cop confirmat que el servidor
+      // de senyalització respon, el que queda per resoldre's és la
+      // negociació ICE P2P real -- sense TURN gratuït, pot trigar uns
+      // segons més que un simple handshake WebSocket.
       if (mode === 'join' && projectName) {
-        const remoteProjectName = await waitForRemoteProjectName(ymeta, 6000);
+        const remoteProjectName = await waitForRemoteProjectName(ymeta, 15000);
         if (ydoc !== thisYdoc) return; // stopRealtimeSession() ha corregut mentrestant
         const mismatchError = checkProjectMatch(remoteProjectName, projectName, savedProjectNames);
         if (mismatchError) throw new Error(mismatchError);
@@ -450,6 +558,7 @@ export function useCollabRealtime() {
     currentRoomId,
     currentPassword,
     currentDocName,
+    currentSignalingServer,
     connectedPeers,
     startRealtimeSession,
     switchRealtimeDocument,

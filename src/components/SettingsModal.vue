@@ -17,8 +17,9 @@
 -->
 
 <script setup>
-import { reactive, watch, onMounted, onUnmounted } from 'vue';
+import { reactive, ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
+import { KNOWN_SIGNALING_SERVERS } from '../utils/collabSignalingServers';
 
 const props = defineProps({
   isOpen: Boolean
@@ -27,8 +28,15 @@ const props = defineProps({
 const emit = defineEmits(['close']);
 const store = useWorkspaceStore();
 
-// Local copy for cancellation
-const localConfig = reactive({ ...store.config });
+// Local copy for cancellation. collabSignalingServers és un array -- cal
+// clonar-lo explícitament (no n'hi ha prou amb el spread superficial
+// `{...store.config}`, que copiaria la MATEIXA referència) perquè afegir/
+// treure servidors mentre el modal és obert no muti store.config abans de
+// prémer "Desa la configuració".
+const localConfig = reactive({
+  ...store.config,
+  collabSignalingServers: JSON.parse(JSON.stringify(store.config.collabSignalingServers || [])),
+});
 
 const handleKeydown = (e) => {
   if (!props.isOpen) return;
@@ -55,6 +63,7 @@ onUnmounted(() => {
 watch(() => props.isOpen, (newVal) => {
   if (newVal) {
     Object.assign(localConfig, store.config);
+    localConfig.collabSignalingServers = JSON.parse(JSON.stringify(store.config.collabSignalingServers || []));
   }
 });
 
@@ -65,6 +74,8 @@ const saveSettings = () => {
   localStorage.setItem('autoSaveDebounceSeconds', String(store.config.autoSaveDebounceSeconds || 5));
   localStorage.setItem('collabPollIntervalSeconds', String(store.config.collabPollIntervalSeconds || 5));
   localStorage.setItem('collabCaptureDebounceSeconds', String(store.config.collabCaptureDebounceSeconds || 5));
+  localStorage.setItem('collabSignalingServers', JSON.stringify(store.config.collabSignalingServers || []));
+  localStorage.setItem('collabPreferredSignalingServer', store.config.collabPreferredSignalingServer || '');
   store.addLog("Configuració de motors, rendiment i interfície desada reactivament.", "success");
   emit('close');
 };
@@ -82,6 +93,36 @@ const resetSettings = () => {
   localConfig.autoSaveDebounceSeconds = 5;
   localConfig.collabPollIntervalSeconds = 5;
   localConfig.collabCaptureDebounceSeconds = 5;
+  localConfig.collabSignalingServers = JSON.parse(JSON.stringify(KNOWN_SIGNALING_SERVERS));
+  localConfig.collabPreferredSignalingServer = '';
+};
+
+const newSignalingUrl = ref('');
+const newSignalingLabel = ref('');
+const isValidNewSignalingUrl = computed(() => /^wss?:\/\/.+/.test(newSignalingUrl.value.trim()));
+
+// Afegeix un servidor de senyalització nou a la llista local (no es desa a
+// localStorage fins a "Desa la configuració", mateix criteri que la resta
+// de camps d'aquest modal).
+const addSignalingServer = () => {
+  const url = newSignalingUrl.value.trim();
+  if (!/^wss?:\/\/.+/.test(url)) return;
+  if (localConfig.collabSignalingServers.some((s) => s.url === url)) {
+    alert('Ja hi ha un servidor amb aquesta URL a la llista.');
+    return;
+  }
+  localConfig.collabSignalingServers.push({ url, label: newSignalingLabel.value.trim() || url });
+  newSignalingUrl.value = '';
+  newSignalingLabel.value = '';
+};
+
+const removeSignalingServer = (idx) => {
+  const server = localConfig.collabSignalingServers[idx];
+  if (!confirm(`Segur que vols eliminar el servidor '${server.label || server.url}' de la llista?`)) return;
+  if (localConfig.collabPreferredSignalingServer === server.url) {
+    localConfig.collabPreferredSignalingServer = '';
+  }
+  localConfig.collabSignalingServers.splice(idx, 1);
 };
 </script>
 
@@ -167,6 +208,82 @@ const resetSettings = () => {
           <span style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-top: 2px;">
             Temps en segons després del darrer canvi per desar-lo al propi fitxer de deltes de la carpeta de col·laboració (Defecte: 5s).
           </span>
+        </div>
+
+        <div style="font-size: 0.85rem; font-weight: bold; color: var(--color-primary); margin-bottom: 0.5rem; text-transform: uppercase; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">
+          📡 Sessió en viu (WebRTC) — servidors de senyalització
+        </div>
+
+        <div style="margin-bottom: 0.5rem;">
+          <span style="font-size: 0.72rem; color: var(--text-muted); display: block;">
+            Servidors gratuïts de tercers, sense garantia de disponibilitat. El marcat com a
+            preferit es prova primer; si falla, se't preguntarà si vols provar la resta. Sense
+            cap preferit, es proven tots seguits, en ordre.
+          </span>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 0.5rem;">
+          <div
+            v-for="(server, idx) in localConfig.collabSignalingServers"
+            :key="server.url"
+            style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem;"
+          >
+            <input
+              type="radio"
+              name="cfgPreferredSignaling"
+              :id="`cfgSignalingPreferred${idx}`"
+              :checked="localConfig.collabPreferredSignalingServer === server.url"
+              @change="localConfig.collabPreferredSignalingServer = server.url"
+              title="Fes-lo servir com a preferit"
+            >
+            <label :for="`cfgSignalingPreferred${idx}`" style="flex: 1; overflow: hidden; cursor: pointer; margin: 0; text-transform: none;">
+              <div style="font-weight: 600;">{{ server.label || server.url }}</div>
+              <div style="font-size: 0.72rem; color: var(--text-muted); font-family: monospace; overflow-x: auto; white-space: nowrap;">{{ server.url }}</div>
+            </label>
+            <button
+              type="button"
+              class="btn-icon-only"
+              style="color: var(--color-danger); border: none; background: transparent; cursor: pointer; padding: 4px;"
+              title="Elimina aquest servidor de la llista"
+              @click="removeSignalingServer(idx)"
+            >&times;</button>
+          </div>
+          <div v-if="localConfig.collabSignalingServers.length === 0" style="font-size: 0.78rem; color: var(--text-muted);">
+            Cap servidor configurat.
+          </div>
+          <label style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem; margin: 2px 0 0; cursor: pointer; text-transform: none;">
+            <input
+              type="radio"
+              name="cfgPreferredSignaling"
+              :checked="!localConfig.collabPreferredSignalingServer"
+              @change="localConfig.collabPreferredSignalingServer = ''"
+            >
+            Cap preferit (prova'ls tots seguits, en ordre)
+          </label>
+        </div>
+
+        <div style="display: flex; gap: 6px; margin-bottom: 1.25rem;">
+          <input
+            type="text"
+            v-model="newSignalingUrl"
+            placeholder="wss://el-teu-servidor..."
+            style="flex: 1; min-width: 0; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.82rem;"
+          >
+          <input
+            type="text"
+            v-model="newSignalingLabel"
+            placeholder="Nom (opcional)"
+            style="width: 140px; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.82rem;"
+          >
+          <button
+            type="button"
+            class="btn btn-secondary"
+            style="width: auto; padding: 6px 12px; font-size: 0.8rem; flex-shrink: 0;"
+            :disabled="!isValidNewSignalingUrl"
+            @click="addSignalingServer"
+          >
+            Afegeix
+          </button>
         </div>
 
         <div style="font-size: 0.85rem; font-weight: bold; color: var(--color-primary); margin-bottom: 0.5rem; text-transform: uppercase; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">

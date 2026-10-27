@@ -152,6 +152,7 @@ const {
   currentRoomId: collabRealtimeRoomId,
   currentPassword: collabRealtimePassword,
   currentDocName: collabRealtimeDocName,
+  currentSignalingServer: collabRealtimeSignalingServer,
   connectedPeers: collabRealtimePeers,
   startRealtimeSession,
   switchRealtimeDocument,
@@ -3344,6 +3345,7 @@ const generateDocuments = async () => {
       :realtime-room-id="collabRealtimeRoomId"
       :realtime-password="collabRealtimePassword"
       :realtime-doc-name="collabRealtimeDocName"
+      :realtime-signaling-server="collabRealtimeSignalingServer"
       :realtime-peers="collabRealtimePeers"
       @close="isCollabPanelOpen = false"
       @connect="handleConnectCollabFolder"
