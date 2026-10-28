@@ -22,6 +22,7 @@ import * as Y from 'yjs';
 import {
   applyStringDiffToYText,
   attachTemplateBridge,
+  attachJsonChannelBridge,
   generateSessionCredentials,
   mapAwarenessStatesToPeers,
   waitForRemoteProjectName,
@@ -31,6 +32,7 @@ import {
   findWorkingSignalingServer,
   KNOWN_SIGNALING_SERVERS,
 } from '../src/composables/useCollabRealtime.js';
+import { computeDataPatch } from '../src/utils/dataPatch.js';
 
 /** Simulates what WebrtcProvider does under the hood (exchange + apply Yjs
  * update vectors), without any real network -- same spirit as the fake
@@ -418,6 +420,220 @@ describe('findWorkingSignalingServer (Fase 11.3)', () => {
     const result = await findWorkingSignalingServer(['wss://preferred'], 'wss://preferred', probeFn, confirmFn);
     expect(result).toBeNull();
     expect(confirmFn).not.toHaveBeenCalled();
+  });
+});
+
+/** A thin peer helper for attachJsonChannelBridge tests, mirroring
+ * makePeer()/seedBaseline() above but for a plain-value field (`store.value`)
+ * instead of templateText -- attach happens eagerly (it's async because the
+ * bridge's own reconciliation step may await a nextTick). */
+async function makeJsonPeer(key, initialVal, computePatch, debounceMs = 20) {
+  const store = reactive({ value: initialVal });
+  const ydoc = new Y.Doc();
+  const ymap = ydoc.getMap('jsonChannels');
+  const localOrigin = Symbol('local');
+  const stop = await attachJsonChannelBridge(ydoc, ymap, key, {
+    getLocal: () => store.value,
+    setLocal: (v) => { store.value = v; },
+    computePatch,
+  }, localOrigin, debounceMs);
+  return { store, ydoc, ymap, stop };
+}
+
+describe('attachJsonChannelBridge (Fases 12/13: canals schema/data com a mirall de transport)', () => {
+  it('propagates a local edit from one peer to the other after the debounce', async () => {
+    const a = await makeJsonPeer('data', { foo: 1 }, computeDataPatch, 15);
+    const b = await makeJsonPeer('data', { foo: 1 }, computeDataPatch, 15);
+    syncDocs(a.ydoc, b.ydoc);
+
+    a.store.value = { foo: 2 };
+    await nextTick();
+    await new Promise((r) => setTimeout(r, 30));
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+
+    expect(b.store.value).toEqual({ foo: 2 });
+    a.stop();
+    b.stop();
+  });
+
+  it('waits for the debounce before writing a local change to the shared Y.Map', async () => {
+    const a = await makeJsonPeer('data', { n: 1 }, computeDataPatch, 50);
+    a.store.value = { n: 2 };
+    await nextTick();
+    expect(a.ymap.get('data')).toEqual({ n: 1 }); // encara no ha passat el debounce
+    await new Promise((r) => setTimeout(r, 70));
+    expect(a.ymap.get('data')).toEqual({ n: 2 });
+    a.stop();
+  });
+
+  it('reconciles remote content that had already synced before the bridge was attached', async () => {
+    const hostDoc = new Y.Doc();
+    hostDoc.getMap('jsonChannels').set('data', { foo: 'remot' });
+
+    const joinerDoc = new Y.Doc();
+    syncDocs(hostDoc, joinerDoc); // el valor ja hi és abans d'adjuntar el pont
+    const joinerMap = joinerDoc.getMap('jsonChannels');
+    const joinerStore = reactive({ value: { foo: 'local' } });
+
+    const stop = await attachJsonChannelBridge(joinerDoc, joinerMap, 'data', {
+      getLocal: () => joinerStore.value,
+      setLocal: (v) => { joinerStore.value = v; },
+      computePatch: computeDataPatch,
+    }, Symbol('local'));
+
+    expect(joinerStore.value).toEqual({ foo: 'remot' });
+    stop();
+  });
+
+  it('does not keep generating outgoing changes once both peers have converged (no feedback loop)', async () => {
+    const a = await makeJsonPeer('data', { n: 1 }, computeDataPatch, 10);
+    const b = await makeJsonPeer('data', { n: 1 }, computeDataPatch, 10);
+    syncDocs(a.ydoc, b.ydoc);
+
+    a.store.value = { n: 2 };
+    await new Promise((r) => setTimeout(r, 25));
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+    expect(b.store.value).toEqual({ n: 2 });
+
+    const stateBefore = Y.encodeStateAsUpdate(a.ydoc);
+    await new Promise((r) => setTimeout(r, 25)); // cap canvi pendent als dos costats
+    syncDocs(a.ydoc, b.ydoc);
+    const stateAfter = Y.encodeStateAsUpdate(a.ydoc);
+    expect(stateAfter).toEqual(stateBefore);
+    a.stop();
+    b.stop();
+  });
+
+  it('stop() detaches both the Y.Map observer and the local watcher', async () => {
+    const a = await makeJsonPeer('data', { n: 1 }, computeDataPatch, 10);
+    const b = await makeJsonPeer('data', { n: 1 }, computeDataPatch, 10);
+    syncDocs(a.ydoc, b.ydoc);
+    a.stop();
+
+    a.store.value = { n: 99 };
+    await new Promise((r) => setTimeout(r, 20));
+    expect(a.ymap.get('data')).toEqual({ n: 1 }); // no watcher left -- no capture
+
+    b.store.value = { n: 42 };
+    await new Promise((r) => setTimeout(r, 20));
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+    // No observer left on peer A -- store.value must stay whatever it was
+    // set to locally (99), untouched by B's incoming change.
+    expect(a.store.value).toEqual({ n: 99 });
+    b.stop();
+  });
+});
+
+describe('dual transport (Fase 13): carpeta OneDrive + sessió en viu WebRTC connectades alhora al mateix camp', () => {
+  /** A deliberately minimal stand-in for useCollabSync.js's createDocChannel
+   * engine: a debounced watcher + an `applyingRemote` flag local to ITSELF
+   * (never shared with the WebRTC bridge), using the SAME computeDataPatch
+   * used in production -- enough to exercise the actual interaction
+   * contract (two independent watchers on the same reactive field) without
+   * dragging in useCollabFolder.js/File System Access mocking, already
+   * covered on its own in collab_sync.test.js. */
+  function makeFolderLikeChannel(getLocal, setLocal, computePatch, debounceMs) {
+    let applyingRemote = false;
+    let lastKnown = JSON.parse(JSON.stringify(getLocal() ?? null));
+    let debounceTimer = null;
+    const capturedLog = [];
+
+    const captureLocalChange = () => {
+      if (applyingRemote) return;
+      const patch = computePatch(lastKnown, getLocal());
+      if (!patch) return;
+      capturedLog.push(patch);
+      lastKnown = JSON.parse(JSON.stringify(getLocal()));
+    };
+    const stopWatch = watch(getLocal, () => {
+      if (applyingRemote) return;
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(captureLocalChange, debounceMs);
+    }, { deep: true });
+
+    return {
+      capturedLog,
+      applyRemote(value) {
+        applyingRemote = true;
+        setLocal(value);
+        nextTick(() => {
+          applyingRemote = false;
+          lastKnown = JSON.parse(JSON.stringify(value));
+        });
+      },
+      stop: () => { clearTimeout(debounceTimer); stopWatch(); },
+    };
+  }
+
+  it('bridges a WebRTC-originated change into the folder-style channel without an infinite loop', async () => {
+    // Comença sense contingut local propi (store.value = null) perquè el
+    // pas de sembra d'attachJsonChannelBridge no competeixi amb el valor
+    // remot que arribarà tot seguit -- dos Y.Doc independents mai fusionats
+    // abans no tenen cap ordre determinista de "qui ha escrit primer" pel
+    // seu propi rellotge intern, cosa que faria aquest test inestable si
+    // tots dos costats haguessin escrit la mateixa clau.
+    const store = reactive({ value: null });
+    const ydoc = new Y.Doc();
+    const ymap = ydoc.getMap('jsonChannels');
+    const localOrigin = Symbol('local');
+
+    const stopRealtime = await attachJsonChannelBridge(ydoc, ymap, 'data', {
+      getLocal: () => store.value,
+      setLocal: (v) => { store.value = v; },
+      computePatch: computeDataPatch,
+    }, localOrigin, 15);
+
+    const folder = makeFolderLikeChannel(() => store.value, (v) => { store.value = v; }, computeDataPatch, 15);
+
+    // Un altre participant WebRTC (un Y.Doc independent) envia un canvi.
+    const remoteDoc = new Y.Doc();
+    remoteDoc.getMap('jsonChannels').set('data', { n: 2 });
+    Y.applyUpdate(ydoc, Y.encodeStateAsUpdate(remoteDoc));
+
+    await new Promise((r) => setTimeout(r, 40));
+    await nextTick();
+
+    expect(store.value).toEqual({ n: 2 });
+    // El canal de carpeta (independent, sense saber res del WebRTC) ha
+    // repropagat aquest canvi -- comportament previst, no un bucle: hi ha
+    // d'haver EXACTAMENT una entrada capturada, no una cascada contínua.
+    expect(folder.capturedLog.length).toBe(1);
+
+    const logLengthAfterSettling = folder.capturedLog.length;
+    await new Promise((r) => setTimeout(r, 40));
+    expect(folder.capturedLog.length).toBe(logLengthAfterSettling); // sense soroll addicional
+
+    stopRealtime();
+    folder.stop();
+  });
+
+  it('bridges a folder-originated change out through the WebRTC channel too', async () => {
+    const store = reactive({ value: { n: 1 } });
+    const ydoc = new Y.Doc();
+    const ymap = ydoc.getMap('jsonChannels');
+    const localOrigin = Symbol('local');
+
+    const stopRealtime = await attachJsonChannelBridge(ydoc, ymap, 'data', {
+      getLocal: () => store.value,
+      setLocal: (v) => { store.value = v; },
+      computePatch: computeDataPatch,
+    }, localOrigin, 15);
+
+    const folder = makeFolderLikeChannel(() => store.value, (v) => { store.value = v; }, computeDataPatch, 15);
+
+    // Algú ha editat la carpeta compartida -- aplica la fusió com faria
+    // useCollabSync.js en acabar un cicle de sondeig.
+    folder.applyRemote({ n: 3 });
+    await nextTick();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(ymap.get('data')).toEqual({ n: 3 });
+
+    stopRealtime();
+    folder.stop();
   });
 });
 

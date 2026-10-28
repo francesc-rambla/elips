@@ -100,12 +100,39 @@
  * sense preferit, les prova totes seguides sense preguntar. El servidor que
  * respon queda exposat a `currentSignalingServer` perquè CollabPanel.vue el
  * mostri al costat de la Sala i la Contrasenya.
+ *
+ * Fases 12/13: canals `schema` (`editorMetadata`) i `data` (`excelJsonData`)
+ * com a mirall de transport -- NO una estructura Yjs niada real (massa
+ * invasiu, vegeu el pla). A diferència del canal `template` (Y.Text, fusió
+ * caràcter a caràcter), aquí un únic `Y.Map` compartit (`jsonChannels`)
+ * només guarda l'última instantània plana coneguda de cada camp, sota les
+ * claus `'schema'`/`'data'`. Es reutilitzen tal qual `computeMetaPatch`/
+ * `computeDataPatch` (`src/utils/dataPatch.js`, les mateixes que
+ * `useCollabSync.js` fa servir per al transport de carpeta) -- però només
+ * per DETECTAR si hi ha hagut un canvi real (evita soroll i bucles), no per
+ * aplicar-lo: `setLocal` sempre rep la instantània sencera, és a dir, es
+ * manté conscientment la fusió última-escriptura-guanya sobre tot el valor
+ * (no per camí JSON com als deltes de la carpeta) -- un canvi de transport,
+ * no de semàntica. A diferència del canal `template`, aquests dos són
+ * d'abast de PROJECTE, no de document: s'adjunten un únic cop en connectar
+ * (`startRealtimeSession`), no es revinculen en canviar de document.
+ *
+ * Com que és el mateix camp de l'store (`store.excelJsonData`/
+ * `editorMetadata`) que ja observa `useCollabSync.js` (transport de
+ * carpeta), un canvi arribat per WebRTC es repropaga de manera natural cap
+ * a la carpeta compartida si totes dues vies estan connectades alhora (i
+ * viceversa) -- és el comportament previst, no un efecte advers: cada
+ * transport té el seu propi flag `applyingRemote` intern (no compartit),
+ * així que cap d'ells confon un canvi aplicat per l'altre amb un bucle
+ * infinit propi (verificat explícitament, veure
+ * tests/collab_realtime.test.js, "dual transport").
  */
 
 import { ref, watch, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import { getOrCreateUserId, getDisplayNameOrFallback } from './useCollabIdentity';
 import { KNOWN_SIGNALING_SERVERS } from '../utils/collabSignalingServers';
+import { computeDataPatch, computeMetaPatch } from '../utils/dataPatch';
 
 export { KNOWN_SIGNALING_SERVERS };
 
@@ -317,6 +344,83 @@ export function attachTemplateBridge(ydoc, ytext, store, localOrigin) {
   };
 }
 
+/**
+ * Pont de transport per a un canal d'"instantània JSON completa" (Fases
+ * 12/13: `schema`/`editorMetadata` o `data`/`excelJsonData`) -- a diferència
+ * d'attachTemplateBridge (Y.Text, fusió caràcter a caràcter), aquí `ymap`
+ * només guarda l'última instantània plana coneguda sota `key`. Reutilitza
+ * `computePatch` (`computeMetaPatch`/`computeDataPatch`) NOMÉS per detectar
+ * si hi ha hagut un canvi real -- `setLocal` sempre rep la instantània
+ * sencera, és última-escriptura-guanya sobre tot el valor, no una fusió per
+ * camí JSON. `localOrigin` distingeix els propis canvis (eco), mateix criteri
+ * que attachTemplateBridge.
+ *
+ * Com que la sembra inicial és un reemplaçament de valor sencer (no una
+ * inserció posicional com a Y.Text), dos participants connectant-se gairebé
+ * alhora NO poden duplicar contingut (al contrari que el canal `template`):
+ * com a molt, un dels dos valors "guanya" segons el rellotge intern de Yjs
+ * -- per això no cal cap espera de gràcia aleatòria aquí, n'hi ha prou de
+ * comprovar l'estat ja present en adjuntar-se.
+ *
+ * Asíncrona perquè la reconciliació inicial (si el valor remot ja hi era en
+ * adjuntar-se) pot necessitar un `nextTick()` abans de considerar el canal
+ * llest -- mateix idioma que bindDocument() per al canal `template`.
+ * Retorna una funció per desconnectar (atura l'observer i el watcher local;
+ * no toca el Y.Doc).
+ */
+export async function attachJsonChannelBridge(ydoc, ymap, key, { getLocal, setLocal, computePatch }, localOrigin, debounceMs = 1500) {
+  const remoteVal = ymap.get(key);
+  if (remoteVal === undefined) {
+    const localVal = getLocal();
+    if (localVal !== null && localVal !== undefined) {
+      ydoc.transact(() => {
+        if (ymap.get(key) === undefined) ymap.set(key, JSON.parse(JSON.stringify(localVal)));
+      }, localOrigin);
+    }
+  } else if (computePatch(getLocal(), remoteVal)) {
+    setLocal(remoteVal);
+    await nextTick();
+  }
+
+  let applyingRemote = false;
+  let debounceTimer = null;
+
+  const observer = (event) => {
+    if (event.transaction.origin === localOrigin) return; // eco de la pròpia escriptura
+    const incoming = ymap.get(key);
+    if (incoming === undefined) return;
+    if (!computePatch(getLocal(), incoming)) return;
+    applyingRemote = true;
+    setLocal(incoming);
+    nextTick(() => {
+      applyingRemote = false;
+    });
+  };
+  ymap.observe(observer);
+
+  const captureLocalChange = () => {
+    if (applyingRemote) return; // és el nostre propi merge remot acabat d'aplicar
+    const current = ymap.get(key);
+    const newVal = getLocal();
+    if (!computePatch(current, newVal)) return;
+    ydoc.transact(() => {
+      ymap.set(key, JSON.parse(JSON.stringify(newVal)));
+    }, localOrigin);
+  };
+
+  const stopWatch = watch(getLocal, () => {
+    if (applyingRemote) return;
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(captureLocalChange, debounceMs);
+  }, { deep: true });
+
+  return () => {
+    clearTimeout(debounceTimer);
+    ymap.unobserve(observer);
+    stopWatch();
+  };
+}
+
 export function useCollabRealtime() {
   const store = useWorkspaceStore();
 
@@ -347,6 +451,8 @@ export function useCollabRealtime() {
   let ytext = null;
   let provider = null;
   let stopLocalWatch = null;
+  let stopSchemaChannel = null;
+  let stopDataChannel = null;
   let awarenessChangeHandler = null;
   let boundDocName = null;
   // Marca les transaccions pròpies perquè l'observer de ytext les pugui
@@ -411,6 +517,14 @@ export function useCollabRealtime() {
     if (stopLocalWatch) {
       stopLocalWatch();
       stopLocalWatch = null;
+    }
+    if (stopSchemaChannel) {
+      stopSchemaChannel();
+      stopSchemaChannel = null;
+    }
+    if (stopDataChannel) {
+      stopDataChannel();
+      stopDataChannel = null;
     }
     if (provider) {
       if (awarenessChangeHandler) {
@@ -515,7 +629,30 @@ export function useCollabRealtime() {
       await new Promise((resolve) => setTimeout(resolve, 300 + Math.random() * 400));
       if (ydoc !== thisYdoc) return; // stopRealtimeSession() ha corregut mentrestant
 
+      // Canals `schema`/`data` (Fases 12/13): abast de PROJECTE, no de
+      // document -- s'adjunten un únic cop aquí, no es revinculen en
+      // canviar de document (a diferència del canal `template`). Mateix
+      // ordre que useCollabSync.js aplica al seu cicle de sondeig: esquema
+      // -> plantilla -> dades, perquè quan el canal de dades dispara
+      // evaluateComputedFields (via DataInspector.vue), l'esquema local ja
+      // reflecteix l'últim estat remot.
+      const yjson = ydoc.getMap('jsonChannels');
+      const debounceMs = (store.config.collabCaptureDebounceSeconds || 5) * 1000;
+      stopSchemaChannel = await attachJsonChannelBridge(ydoc, yjson, 'schema', {
+        getLocal: () => store.editorMetadata,
+        setLocal: (v) => { store.editorMetadata = v; },
+        computePatch: computeMetaPatch,
+      }, localOrigin, debounceMs);
+      if (ydoc !== thisYdoc) return;
+
       await bindDocument(docName || 'Document Principal');
+      if (ydoc !== thisYdoc) return;
+
+      stopDataChannel = await attachJsonChannelBridge(ydoc, yjson, 'data', {
+        getLocal: () => store.excelJsonData,
+        setLocal: (v) => { store.excelJsonData = v; },
+        computePatch: computeDataPatch,
+      }, localOrigin, debounceMs);
       if (ydoc !== thisYdoc) return;
 
       publishAwarenessUser();
