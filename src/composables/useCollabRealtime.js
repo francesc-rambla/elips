@@ -126,6 +126,24 @@
  * així que cap d'ells confon un canvi aplicat per l'altre amb un bucle
  * infinit propi (verificat explícitament, veure
  * tests/collab_realtime.test.js, "dual transport").
+ *
+ * Fase 14: sol·licitud i transferència del ZIP sencer del projecte, pel
+ * mateix Y.Doc/sala (cap canal nou), per a qui s'uneix sense tenir-ne cap
+ * còpia local (`classifyProjectMismatch` retorna `'not-local'`) -- en lloc
+ * de tancar la connexió com als altres casos de desajust (Fase 11.1), es
+ * queda connectat sense vincular cap canal de document/esquema/dades
+ * (`sessionStatus === 'awaiting-project'`) i deixa que
+ * `requestAndImportProject()` ho demani a qualsevol altre participant ja
+ * connectat amb el projecte correcte (`attachProjectTransferResponder`,
+ * adjuntat automàticament per a tothom que es connecta normalment, no
+ * només "qui ha iniciat"). El ZIP viatja en trossos de 16 KiB
+ * (`chunkBytes`/`PROJECT_TRANSFER_CHUNK_SIZE`), cadascun en la seva pròpia
+ * transacció Yjs perquè es tradueixi en un missatge WebRTC separat (y-webrtc
+ * no fragmenta els missatges pel seu compte). Un cop importat
+ * (`importProjectZip`, el mateix callback que ja fa servir "Carrega des de
+ * carpeta"), `requestAndImportProject()` desconnecta netament -- qui l'ha
+ * cridada (App.vue) ha de tornar a iniciar la connexió normal amb les
+ * dades ja actualitzades del projecte acabat d'importar.
  */
 
 import { ref, watch, nextTick } from 'vue';
@@ -613,11 +631,31 @@ export async function attachJsonChannelBridge(ydoc, ymap, key, { getLocal, setLo
   };
 }
 
-export function useCollabRealtime() {
+/**
+ * `buildProjectZipBlob`/`importProjectZip` (Fase 14): callbacks injectats
+ * des d'App.vue -- mateix patró que `useCollabSync(collabFolder, () =>
+ * buildProjectZipBlob())` ja fa servir. Permeten respondre a una
+ * sol·licitud del ZIP del projecte (`attachProjectTransferResponder`) i
+ * importar-lo un cop rebut (`requestAndImportProject`) sense que aquest
+ * fitxer hagi de conèixer App.vue. Opcionals perquè cap altre ús
+ * d'aquesta funció (p. ex. tests existents que la criden sense arguments)
+ * es trenqui -- si no es passen, aquesta funcionalitat concreta
+ * simplement no està disponible (no respon a sol·licituds, i sol·licitar
+ * llança un error clar).
+ */
+export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
   const store = useWorkspaceStore();
 
-  const sessionStatus = ref('disconnected'); // 'disconnected' | 'connecting' | 'connected' | 'error'
+  const sessionStatus = ref('disconnected'); // 'disconnected' | 'connecting' | 'connected' | 'awaiting-project' | 'receiving-project' | 'error'
   const lastRealtimeError = ref(null);
+  // Nom del projecte de la sessió a la qual algú s'ha unit sense tenir-ne
+  // cap còpia local (Fase 14) -- només té sentit mentre `sessionStatus ===
+  // 'awaiting-project'`. CollabPanel.vue el mostra al botó de sol·licitud.
+  const pendingProjectName = ref('');
+  // Progrés de la recepció del ZIP del projecte (Fase 14) -- `null` quan no
+  // n'hi ha cap en curs, `{receivedChunks, totalChunks}` mentre
+  // `sessionStatus === 'receiving-project'`.
+  const transferProgress = ref(null);
   // La sala/contrasenya ACTUALS (no les que algú podria passar a
   // startRealtimeSession() la propera vegada) -- CollabPanel.vue les mostra
   // perquè qui ha iniciat la sessió les pugui compartir fora de banda amb
@@ -645,6 +683,7 @@ export function useCollabRealtime() {
   let stopLocalWatch = null;
   let stopSchemaChannel = null;
   let stopDataChannel = null;
+  let stopProjectTransferResponder = null;
   let awarenessChangeHandler = null;
   let boundDocName = null;
   // Marca les transaccions pròpies perquè l'observer de ytext les pugui
@@ -718,6 +757,10 @@ export function useCollabRealtime() {
       stopDataChannel();
       stopDataChannel = null;
     }
+    if (stopProjectTransferResponder) {
+      stopProjectTransferResponder();
+      stopProjectTransferResponder = null;
+    }
     if (provider) {
       if (awarenessChangeHandler) {
         provider.awareness.off('change', awarenessChangeHandler);
@@ -737,13 +780,15 @@ export function useCollabRealtime() {
     connectedPeers.value = [];
     currentRoomId.value = '';
     currentPassword.value = '';
+    pendingProjectName.value = '';
+    transferProgress.value = null;
   }
 
   async function startRealtimeSession({ roomId, password, signaling, mode, projectName, savedProjectNames, docName }) {
     if (!roomId || !password) {
       throw new Error("Calen un identificador de sala i una contrasenya per iniciar una sessió en viu.");
     }
-    if (sessionStatus.value === 'connected' || sessionStatus.value === 'connecting') {
+    if (sessionStatus.value === 'connected' || sessionStatus.value === 'connecting' || sessionStatus.value === 'awaiting-project') {
       stopRealtimeSession();
     }
     sessionStatus.value = 'connecting';
@@ -792,6 +837,13 @@ export function useCollabRealtime() {
         password,
       });
 
+      // Y.Map/Y.Array compartits per a la sol·licitud/transferència del ZIP
+      // del projecte (Fase 14) -- creats sempre, encara que aquest peer no
+      // acabi ni demanant ni responent mai res, perquè hi hagi d'haver
+      // alguna cosa a observar des del principi en tots dos costats.
+      const transferMap = ydoc.getMap('projectTransfer');
+      const transferChunks = ydoc.getArray('projectTransferChunks');
+
       // Qui s'uneix a una sessió existent comprova, abans de tocar res, que
       // la sala pertany al projecte que té obert -- si no, es llança un
       // error (mateix camí que qualsevol altre error de connexió, vegeu el
@@ -804,6 +856,18 @@ export function useCollabRealtime() {
       if (mode === 'join' && projectName) {
         const remoteProjectName = await waitForRemoteProjectName(ymeta, 15000);
         if (ydoc !== thisYdoc) return; // stopRealtimeSession() ha corregut mentrestant
+        const classification = classifyProjectMismatch(remoteProjectName, projectName, savedProjectNames);
+        if (classification === 'not-local') {
+          // Fase 14: en lloc de tancar la connexió com als altres dos casos
+          // de desajust, ens hi quedem connectats (sense vincular CAP canal
+          // de document/esquema/dades -- evita exactament el risc que la
+          // Fase 11.1 ja tancava: no toca store.* d'un projecte que no hi
+          // pertany) perquè l'usuari pugui sol·licitar el ZIP a qui ja hi
+          // sigui (`requestAndImportProject`).
+          pendingProjectName.value = remoteProjectName;
+          sessionStatus.value = 'awaiting-project';
+          return;
+        }
         const mismatchError = checkProjectMatch(remoteProjectName, projectName, savedProjectNames);
         if (mismatchError) throw new Error(mismatchError);
       }
@@ -847,6 +911,18 @@ export function useCollabRealtime() {
       }, localOrigin, debounceMs);
       if (ydoc !== thisYdoc) return;
 
+      // Fase 14: qualsevol participant ja connectat normalment (amb el
+      // projecte correcte) pot respondre si algú més s'hi uneix sense
+      // tenir-ne cap còpia local -- no només "qui ha iniciat" la sessió.
+      // No-op si no s'han injectat els callbacks (p. ex. en tests que
+      // criden useCollabRealtime() sense arguments).
+      if (buildProjectZipBlob) {
+        stopProjectTransferResponder = attachProjectTransferResponder(ydoc, transferMap, transferChunks, {
+          myUserId: getOrCreateUserId(),
+          buildProjectZipBlob,
+        });
+      }
+
       publishAwarenessUser();
       awarenessChangeHandler = () => updatePeerListFromAwareness();
       provider.awareness.on('change', awarenessChangeHandler);
@@ -881,6 +957,42 @@ export function useCollabRealtime() {
     sessionStatus.value = 'disconnected';
   }
 
+  // Cridada des de CollabPanel.vue (botó "Sol·licita el projecte ara")
+  // quan `sessionStatus === 'awaiting-project'` (Fase 14): demana el ZIP a
+  // qualsevol altre participant ja connectat amb el projecte correcte,
+  // l'importa amb el callback injectat, i desconnecta netament -- qui ha
+  // cridat aquesta funció (App.vue) ha de tornar a iniciar la connexió
+  // normal amb les dades ja actualitzades del projecte acabat d'importar
+  // (aquest fitxer no té accés als refs de projecte/document d'App.vue).
+  async function requestAndImportProject() {
+    if (sessionStatus.value !== 'awaiting-project' || !ydoc) {
+      throw new Error("No hi ha cap sol·licitud de projecte pendent.");
+    }
+    if (!buildProjectZipBlob || !importProjectZip) {
+      throw new Error("Aquesta funcionalitat no està disponible.");
+    }
+    sessionStatus.value = 'receiving-project';
+    transferProgress.value = { receivedChunks: 0, totalChunks: 0 };
+    try {
+      const { bytes, zipFileName } = await requestProjectTransfer(
+        ydoc, ydoc.getMap('projectTransfer'), ydoc.getArray('projectTransferChunks'),
+        {
+          myUserId: getOrCreateUserId(),
+          onProgress: (p) => { transferProgress.value = p; },
+        },
+      );
+      const file = new File([bytes], zipFileName, { type: 'application/zip' });
+      await importProjectZip(file);
+      teardown();
+      sessionStatus.value = 'disconnected';
+    } catch (err) {
+      teardown();
+      lastRealtimeError.value = err?.message || String(err);
+      sessionStatus.value = 'error';
+      throw err;
+    }
+  }
+
   return {
     sessionStatus,
     lastRealtimeError,
@@ -888,9 +1000,12 @@ export function useCollabRealtime() {
     currentPassword,
     currentDocName,
     currentSignalingServer,
+    pendingProjectName,
+    transferProgress,
     connectedPeers,
     startRealtimeSession,
     switchRealtimeDocument,
     stopRealtimeSession,
+    requestAndImportProject,
   };
 }

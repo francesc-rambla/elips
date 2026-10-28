@@ -145,7 +145,15 @@ watch(collabFolderStatus, (status) => {
 // compartida, no un reemplaçament -- totes dues poden estar connectades
 // alhora al mateix projecte. Exposada a window per a depuració/verificació,
 // mateix criteri que window.store a main.js.
-const collabRealtime = useCollabRealtime();
+// buildProjectZipBlob/importProjectZip s'injecten com a llambdes (no per
+// referència directa) perquè es defineixen més avall en aquest mateix
+// script setup -- cridar useCollabRealtime(buildProjectZipBlob, ...) aquí
+// mateix els avaluaria com a identificadors abans que el seu `const`
+// s'hagi inicialitzat (temporal dead zone). Dins d'una llambda, no
+// s'avaluen fins que es criden de debò, ja amb l'script sencer executat --
+// mateix idioma que `useCollabSync(collabFolder, () => buildProjectZipBlob())`
+// ja fa servir uns quants punts més avall.
+const collabRealtime = useCollabRealtime(() => buildProjectZipBlob(), (file) => importProjectZip(file));
 const {
   sessionStatus: collabRealtimeStatus,
   lastRealtimeError: collabRealtimeError,
@@ -153,12 +161,21 @@ const {
   currentPassword: collabRealtimePassword,
   currentDocName: collabRealtimeDocName,
   currentSignalingServer: collabRealtimeSignalingServer,
+  pendingProjectName: collabRealtimePendingProjectName,
+  transferProgress: collabRealtimeTransferProgress,
   connectedPeers: collabRealtimePeers,
   startRealtimeSession,
   switchRealtimeDocument,
   stopRealtimeSession,
+  requestAndImportProject,
 } = collabRealtime;
 window.collabRealtime = collabRealtime;
+
+// Desat per poder tornar a intentar la connexió, amb les mateixes
+// credencials, un cop `handleRequestProjectTransfer` hagi importat el
+// projecte que faltava (Fase 14) -- startRealtimeSession() ja no les
+// conserva en aquell cas, perquè no arriba a l'estat 'connected'.
+const lastRealtimeJoinAttempt = ref(null);
 
 const handleStartRealtimeSession = async () => {
   try {
@@ -176,6 +193,7 @@ const handleStartRealtimeSession = async () => {
 };
 
 const handleJoinRealtimeSession = async ({ roomId, password }) => {
+  lastRealtimeJoinAttempt.value = { roomId, password };
   try {
     await startRealtimeSession({
       roomId,
@@ -187,6 +205,26 @@ const handleJoinRealtimeSession = async ({ roomId, password }) => {
     });
   } catch (e) {
     alert(`Error en unir-se a la sessió en viu: ${e.message}`);
+  }
+};
+
+const handleRequestProjectTransfer = async () => {
+  try {
+    await requestAndImportProject();
+    // El projecte ja coincideix localment -- torna a connectar amb les
+    // mateixes credencials, ara amb les dades acabades d'actualitzar.
+    if (lastRealtimeJoinAttempt.value) {
+      await startRealtimeSession({
+        roomId: lastRealtimeJoinAttempt.value.roomId,
+        password: lastRealtimeJoinAttempt.value.password,
+        mode: 'join',
+        projectName: currentProjectName.value,
+        savedProjectNames: savedProjectsList.value,
+        docName: activeDocName.value,
+      });
+    }
+  } catch (e) {
+    alert(`Error en sol·licitar el projecte: ${e.message}`);
   }
 };
 
@@ -3347,6 +3385,8 @@ const generateDocuments = async () => {
       :realtime-doc-name="collabRealtimeDocName"
       :realtime-signaling-server="collabRealtimeSignalingServer"
       :realtime-peers="collabRealtimePeers"
+      :realtime-pending-project-name="collabRealtimePendingProjectName"
+      :realtime-transfer-progress="collabRealtimeTransferProgress"
       @close="isCollabPanelOpen = false"
       @connect="handleConnectCollabFolder"
       @disconnect="disconnectCollabFolder"
@@ -3355,6 +3395,7 @@ const generateDocuments = async () => {
       @start-realtime-session="handleStartRealtimeSession"
       @join-realtime-session="handleJoinRealtimeSession"
       @stop-realtime-session="stopRealtimeSession"
+      @request-project-transfer="handleRequestProjectTransfer"
     />
 
     <!-- Ultra-Compact Minimal Footer -->

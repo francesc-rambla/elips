@@ -42,11 +42,18 @@ const props = defineProps({
   realtimeDocName: { type: String, default: '' },
   realtimeSignalingServer: { type: String, default: '' },
   realtimePeers: { type: Array, default: () => [] },
+  // Fase 14: sol·licitud/transferència del ZIP quan s'és dins
+  // `realtimeStatus === 'awaiting-project'` (el nom del projecte de la
+  // sessió) o `'receiving-project'` (`{receivedChunks, totalChunks}`,
+  // `null` si encara no n'hi ha cap en curs).
+  realtimePendingProjectName: { type: String, default: '' },
+  realtimeTransferProgress: { type: Object, default: null },
 });
 
 const emit = defineEmits([
   'close', 'connect', 'disconnect', 'request-permission', 'update-display-name',
   'start-realtime-session', 'join-realtime-session', 'stop-realtime-session',
+  'request-project-transfer',
 ]);
 
 const nameInput = ref(props.displayName);
@@ -71,6 +78,8 @@ const realtimeStatusLabel = {
   connecting: 'Connectant...',
   connected: 'Connectat',
   error: 'Error de connexió',
+  'awaiting-project': 'Projecte no disponible',
+  'receiving-project': 'Rebent el projecte...',
 };
 
 const joinRoomIdInput = ref('');
@@ -225,6 +234,34 @@ const copyToClipboard = async (text) => {
           <div v-if="realtimeStatus === 'error' && realtimeError" style="font-size: 0.78rem; color: var(--color-danger, #dc2626);">
             {{ realtimeError }}
           </div>
+
+          <template v-if="realtimeStatus === 'awaiting-project'">
+            <p style="font-size: 0.82rem; color: var(--text-secondary); margin: 0;">
+              Aquesta sessió és del projecte <strong>"{{ realtimePendingProjectName }}"</strong>,
+              que no tens al teu entorn local.
+            </p>
+            <button
+              class="btn btn-primary"
+              style="width: auto; padding: 6px 14px; font-size: 0.8rem; align-self: flex-start;"
+              @click="emit('request-project-transfer')"
+            >
+              📥 Sol·licita el projecte ara
+            </button>
+            <p style="font-size: 0.72rem; color: var(--text-muted); margin: 0;">
+              Qualsevol altra persona ja connectada a aquesta sessió amb el projecte correcte
+              te l'enviarà sencer (xifrat igual que la resta de la sessió). Pot trigar uns
+              segons segons la mida del projecte i la connexió de qui te l'envia.
+            </p>
+          </template>
+
+          <template v-if="realtimeStatus === 'receiving-project'">
+            <p style="font-size: 0.82rem; color: var(--text-secondary); margin: 0;">
+              Rebent el projecte "{{ realtimePendingProjectName }}"...
+            </p>
+            <div v-if="realtimeTransferProgress && realtimeTransferProgress.totalChunks > 0" style="font-size: 0.78rem; color: var(--text-muted);">
+              {{ realtimeTransferProgress.receivedChunks }} / {{ realtimeTransferProgress.totalChunks }} trossos
+            </div>
+          </template>
 
           <template v-if="realtimeStatus === 'disconnected' || realtimeStatus === 'error'">
             <button
