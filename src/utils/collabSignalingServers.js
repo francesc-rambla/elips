@@ -25,15 +25,21 @@
  * circular entre tots dos (useCollabRealtime.js ja importa
  * useWorkspaceStore de stores/workspace.js).
  *
- * Només hi consten els que, a hores d'ara, tenen una possibilitat raonable
- * de funcionar -- altres servidors de demostració històrics de y-webrtc,
- * allotjats a Heroku, es van confirmar morts permanentment durant les
- * proves d'aquesta funcionalitat (Heroku va eliminar els dynos gratuïts el
- * 2022) i no s'hi inclouen per no fer perdre temps de sondeig. Com que cap
- * servidor gratuït de tercers té SLA, aquesta llista és només un punt de
- * partida -- l'usuari en pot afegir/treure des de la configuració.
+ * Només hi consta `signaling.yjs.dev`, l'únic servidor que el propi paquet
+ * y-webrtc documenta com a per defecte. Se n'han descartat explícitament
+ * dos altres, trobats durant les proves d'aquesta funcionalitat:
+ * - `wss://y-webrtc-eu.fly.dev` -- NO és cap dels servidors oficials de
+ *   y-webrtc (no apareix a la seva documentació), i en ús real ha respost
+ *   503 (sobrecarregat/adormit) -- una font menys fiable que l'oficial,
+ *   sense cap avantatge real sobre aquesta.
+ * - `wss://y-webrtc-signaling-eu/us.herokuapp.com` -- els altres servidors
+ *   de demostració històrics de y-webrtc, confirmats morts permanentment
+ *   (Heroku va eliminar els dynos gratuïts el 2022; ara retornen HTTP 404,
+ *   l'aplicació ja no existeix).
+ * Com que cap servidor gratuït de tercers té SLA, aquesta llista és només
+ * un punt de partida -- l'usuari en pot afegir/treure des de la
+ * configuració (p. ex. un servidor propi exposat amb Cloudflare Tunnel).
  */
 export const KNOWN_SIGNALING_SERVERS = [
-  { url: 'wss://y-webrtc-eu.fly.dev', label: 'y-webrtc EU (fly.dev, comunitat)' },
-  { url: 'wss://signaling.yjs.dev', label: 'signaling.yjs.dev (projecte Yjs, comunitat)' },
+  { url: 'wss://signaling.yjs.dev', label: 'signaling.yjs.dev (oficial de y-webrtc, comunitat)' },
 ];
