@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { reactive, watch, nextTick } from 'vue';
 import * as Y from 'yjs';
 import {
@@ -27,10 +27,16 @@ import {
   mapAwarenessStatesToPeers,
   waitForRemoteProjectName,
   checkProjectMatch,
+  classifyProjectMismatch,
   templateYTextName,
   normalizeSignalingServers,
   findWorkingSignalingServer,
   KNOWN_SIGNALING_SERVERS,
+  chunkBytes,
+  concatChunks,
+  attachProjectTransferResponder,
+  requestProjectTransfer,
+  PROJECT_TRANSFER_CHUNK_SIZE,
 } from '../src/composables/useCollabRealtime.js';
 import { computeDataPatch } from '../src/utils/dataPatch.js';
 
@@ -644,5 +650,157 @@ describe('KNOWN_SIGNALING_SERVERS', () => {
       expect(s.url).toMatch(/^wss?:\/\//);
       expect(typeof s.label).toBe('string');
     }
+  });
+});
+
+describe('classifyProjectMismatch (Fase 14: base de checkProjectMatch)', () => {
+  it('returns the same four classifications checkProjectMatch already relies on', () => {
+    expect(classifyProjectMismatch('Default', 'Default', ['Default'])).toBe('match');
+    expect(classifyProjectMismatch(null, 'Default', ['Default'])).toBe('no-remote-name');
+    expect(classifyProjectMismatch('Altre', 'Default', ['Default', 'Altre'])).toBe('saved-not-open');
+    expect(classifyProjectMismatch('Desconegut', 'Default', ['Default'])).toBe('not-local');
+  });
+});
+
+describe('chunkBytes / concatChunks (Fase 14: transferència del ZIP)', () => {
+  it('splits bytes into chunks of at most chunkSize and reconstructs them exactly', () => {
+    const bytes = new Uint8Array(100);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = i % 256;
+    const chunks = chunkBytes(bytes, 30);
+    expect(chunks.length).toBe(4); // 30+30+30+10
+    expect(chunks.map((c) => c.length)).toEqual([30, 30, 30, 10]);
+    expect(concatChunks(chunks)).toEqual(bytes);
+  });
+
+  it('handles empty input as zero chunks', () => {
+    expect(chunkBytes(new Uint8Array(0), 16384)).toEqual([]);
+    expect(concatChunks([])).toEqual(new Uint8Array(0));
+  });
+
+  it('produces independent copies, not views sharing the original buffer', () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const [chunk] = chunkBytes(bytes, 4);
+    bytes[0] = 99;
+    expect(chunk[0]).toBe(1); // no afectat per la mutació posterior de l'original
+  });
+});
+
+describe('attachProjectTransferResponder / requestProjectTransfer (Fase 14: sol·licitud i transferència del ZIP)', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  function makeFakeZipBytes(label, repeat = 2000) {
+    return new TextEncoder().encode(`ZIP-${label}-`.repeat(repeat));
+  }
+
+  function syncAll(docs) {
+    for (const a of docs) {
+      for (const b of docs) {
+        if (a !== b) Y.applyUpdate(a, Y.encodeStateAsUpdate(b));
+      }
+    }
+  }
+
+  async function pump(docs, ticks = 20, stepMs = 100) {
+    for (let i = 0; i < ticks; i++) {
+      syncAll(docs);
+      await vi.advanceTimersByTimeAsync(stepMs);
+      syncAll(docs);
+    }
+  }
+
+  it('transfers the project zip from the single peer that has it, reconstructing it byte-for-byte', async () => {
+    const requesterDoc = new Y.Doc();
+    const responderDoc = new Y.Doc();
+    const docs = [requesterDoc, responderDoc];
+
+    const zipBytes = makeFakeZipBytes('A');
+    const stopResponder = attachProjectTransferResponder(
+      responderDoc, responderDoc.getMap('projectTransfer'), responderDoc.getArray('projectTransferChunks'),
+      { myUserId: 'responder-1', buildProjectZipBlob: async () => new Blob([zipBytes]) },
+    );
+
+    const progressSamples = [];
+    const requestPromise = requestProjectTransfer(
+      requesterDoc, requesterDoc.getMap('projectTransfer'), requesterDoc.getArray('projectTransferChunks'),
+      { myUserId: 'requester-1', timeoutMs: 10000, onProgress: (p) => progressSamples.push(p) },
+    );
+
+    await pump(docs);
+
+    const result = await requestPromise;
+    expect(new Uint8Array(result.bytes)).toEqual(zipBytes);
+    expect(result.zipFileName).toBe('collab_project.zip');
+    expect(progressSamples.some((p) => p.totalChunks > 0)).toBe(true);
+    expect(progressSamples[progressSamples.length - 1].receivedChunks).toBe(progressSamples[progressSamples.length - 1].totalChunks);
+
+    stopResponder();
+  });
+
+  it('ignores its own request (a peer never responds to a request it posted itself)', async () => {
+    const soloDoc = new Y.Doc();
+    const stopResponder = attachProjectTransferResponder(
+      soloDoc, soloDoc.getMap('projectTransfer'), soloDoc.getArray('projectTransferChunks'),
+      { myUserId: 'same-user', buildProjectZipBlob: async () => new Blob([makeFakeZipBytes('X')]) },
+    );
+
+    const requestPromise = requestProjectTransfer(
+      soloDoc, soloDoc.getMap('projectTransfer'), soloDoc.getArray('projectTransferChunks'),
+      { myUserId: 'same-user', timeoutMs: 500 },
+    );
+    const assertion = expect(requestPromise).rejects.toThrow(/Ning./);
+    await vi.advanceTimersByTimeAsync(600);
+    await assertion;
+
+    stopResponder();
+  });
+
+  it('rejects with a clear error if nobody responds within the timeout', async () => {
+    const requesterDoc = new Y.Doc();
+    const requestPromise = requestProjectTransfer(
+      requesterDoc, requesterDoc.getMap('projectTransfer'), requesterDoc.getArray('projectTransferChunks'),
+      { myUserId: 'requester-1', timeoutMs: 300 },
+    );
+    const assertion = expect(requestPromise).rejects.toThrow(/Ning./);
+    await vi.advanceTimersByTimeAsync(400);
+    await assertion;
+  });
+
+  it('resolves to exactly one coherent zip even if two matching peers race to claim the same request', async () => {
+    const requesterDoc = new Y.Doc();
+    const responderADoc = new Y.Doc();
+    const responderBDoc = new Y.Doc();
+    const docs = [requesterDoc, responderADoc, responderBDoc];
+
+    const zipA = makeFakeZipBytes('A');
+    const zipB = makeFakeZipBytes('B');
+    const stopA = attachProjectTransferResponder(
+      responderADoc, responderADoc.getMap('projectTransfer'), responderADoc.getArray('projectTransferChunks'),
+      { myUserId: 'responder-A', buildProjectZipBlob: async () => new Blob([zipA]) },
+    );
+    const stopB = attachProjectTransferResponder(
+      responderBDoc, responderBDoc.getMap('projectTransfer'), responderBDoc.getArray('projectTransferChunks'),
+      { myUserId: 'responder-B', buildProjectZipBlob: async () => new Blob([zipB]) },
+    );
+
+    const requestPromise = requestProjectTransfer(
+      requesterDoc, requesterDoc.getMap('projectTransfer'), requesterDoc.getArray('projectTransferChunks'),
+      { myUserId: 'requester-1', timeoutMs: 10000 },
+    );
+
+    await pump(docs, 40, 50);
+
+    const result = await requestPromise;
+    const resultBytes = new Uint8Array(result.bytes);
+    const matchesA = resultBytes.length === zipA.length && resultBytes.every((b, i) => b === zipA[i]);
+    const matchesB = resultBytes.length === zipB.length && resultBytes.every((b, i) => b === zipB[i]);
+    expect(matchesA || matchesB).toBe(true); // exactament un dels dos, mai barrejats
+
+    stopA();
+    stopB();
+  });
+
+  it('exports a 16 KiB default chunk size', () => {
+    expect(PROJECT_TRANSFER_CHUNK_SIZE).toBe(16384);
   });
 });

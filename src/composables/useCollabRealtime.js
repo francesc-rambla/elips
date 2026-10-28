@@ -268,19 +268,211 @@ export function waitForRemoteProjectName(ymeta, timeoutMs) {
   });
 }
 
+/** Classifica si una sessió a la qual algú s'uneix coincideix amb el
+ * projecte que té obert localment -- `'match'` (tot correcte), `'no-remote-
+ * name'` (mai ha arribat el nom remot), `'saved-not-open'` (el té desat
+ * però no és el projecte obert) o `'not-local'` (no en té cap còpia).
+ * Extreta com a funció pura independent de `checkProjectMatch` (Fase 14,
+ * transferència del ZIP) perquè `startRealtimeSession` pugui reaccionar
+ * diferent al cas `'not-local'` -- oferir sol·licitar el projecte en lloc
+ * de limitar-se a avisar-ho -- sense que `checkProjectMatch` hagi de
+ * deixar de retornar el missatge de text que ja fan servir els tests. */
+export function classifyProjectMismatch(remoteProjectName, localProjectName, savedProjectNames) {
+  if (!remoteProjectName) return 'no-remote-name';
+  if (remoteProjectName === localProjectName) return 'match';
+  if ((savedProjectNames || []).includes(remoteProjectName)) return 'saved-not-open';
+  return 'not-local';
+}
+
 /** Decideix si una sessió a la qual algú s'uneix coincideix amb el projecte
- * que té obert localment, i si no, quin dels dos missatges d'error cal
+ * que té obert localment, i si no, quin dels tres missatges d'error cal
  * mostrar -- retorna `null` quan tot és correcte. Extreta com a funció pura
- * perquè els tres casos es puguin provar sense cap Y.Doc/WebrtcProvider. */
+ * perquè els quatre casos es puguin provar sense cap Y.Doc/WebrtcProvider.
+ * Embolcall prim sobre `classifyProjectMismatch` -- mateix contracte de
+ * cadena que abans, cap test existent es toca. */
 export function checkProjectMatch(remoteProjectName, localProjectName, savedProjectNames) {
-  if (!remoteProjectName) {
-    return "No s'ha pogut confirmar a quin projecte pertany aquesta sessió (pot ser un problema de connexió). Torna-ho a provar.";
+  switch (classifyProjectMismatch(remoteProjectName, localProjectName, savedProjectNames)) {
+    case 'match':
+      return null;
+    case 'no-remote-name':
+      return "No s'ha pogut confirmar a quin projecte pertany aquesta sessió (pot ser un problema de connexió). Torna-ho a provar.";
+    case 'saved-not-open':
+      return `Aquesta sessió és del projecte "${remoteProjectName}", que tens desat però no obert. Obre'l des de "Gestiona Projectes" i torna a connectar-t'hi.`;
+    default:
+      return `Aquesta sessió és del projecte "${remoteProjectName}", que no tens al teu entorn local. Demana a qui ha iniciat la sessió el fitxer del projecte (collab_project.zip) i importa'l (pestanya Pujar -> "Restableix o Importa Projecte Sencer") abans de connectar-t'hi.`;
   }
-  if (remoteProjectName === localProjectName) return null;
-  if ((savedProjectNames || []).includes(remoteProjectName)) {
-    return `Aquesta sessió és del projecte "${remoteProjectName}", que tens desat però no obert. Obre'l des de "Gestiona Projectes" i torna a connectar-t'hi.`;
+}
+
+/** Mida de cada tros binari de la transferència del ZIP del projecte
+ * (Fase 14) -- 16 KiB, la mida clàssicament segura per a un sol missatge
+ * de qualsevol implementació de canal de dades WebRTC (y-webrtc/simple-peer
+ * no fragmenten els missatges pel seu compte, vegeu el pla). */
+export const PROJECT_TRANSFER_CHUNK_SIZE = 16384;
+
+/** Parteix un `Uint8Array` en trossos de com a màxim `chunkSize` bytes
+ * (còpies independents, no vistes sobre el buffer original) -- cada tros
+ * s'envia en la seva pròpia transacció Yjs (`attachProjectTransferResponder`)
+ * perquè es tradueixi en un missatge WebRTC separat. */
+export function chunkBytes(bytes, chunkSize) {
+  const chunks = [];
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    chunks.push(bytes.slice(offset, offset + chunkSize));
   }
-  return `Aquesta sessió és del projecte "${remoteProjectName}", que no tens al teu entorn local. Demana a qui ha iniciat la sessió el fitxer del projecte (collab_project.zip) i importa'l (pestanya Pujar -> "Restableix o Importa Projecte Sencer") abans de connectar-t'hi.`;
+  return chunks;
+}
+
+/** Inversa de `chunkBytes`: reconstrueix un `Uint8Array` a partir dels
+ * trossos rebuts, en l'ordre en què s'ha donat l'array. */
+export function concatChunks(chunks) {
+  const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
+}
+
+/**
+ * Respon automàticament, des de QUALSEVOL participant ja connectat
+ * normalment (no només "qui ha iniciat" la sessió), a una sol·licitud del
+ * ZIP sencer del projecte (Fase 14) publicada per algú que s'hi ha unit
+ * sense tenir-ne cap còpia local. Protocol sobre `transferMap`
+ * (`ydoc.getMap('projectTransfer')`) i `chunksArray`
+ * (`ydoc.getArray('projectTransferChunks')`):
+ *
+ * - `request: {requestedBy, requestedAt}` -- publicat per qui el demana
+ *   (`requestProjectTransfer`).
+ * - `responder: {claimedBy, claimedAt}` -- qui respon el reclama, amb una
+ *   petita espera de gràcia abans (mateix idioma que la protecció de
+ *   sembra ja usada al canal `template`/`jsonChannels`, per reduir -- no
+ *   eliminar del tot -- que dos participants amb el projecte correcte
+ *   reclamin la mateixa sol·licitud alhora) i una segona comprovació just
+ *   abans de començar a enviar, per si la carrera l'ha perdut mentrestant.
+ * - `manifest: {totalChunks, totalBytes, zipFileName}` -- publicat just
+ *   abans dels trossos, perquè qui ho demana sàpiga quants n'espera.
+ *
+ * No cal `localOrigin`: aquesta funció només escriu dins el Y.Doc (mai
+ * `store.*` directament), no hi ha cap bucle local-remot a evitar aquí.
+ * Retorna una funció per desconnectar (atura l'observer; no toca el Y.Doc).
+ */
+export function attachProjectTransferResponder(ydoc, transferMap, chunksArray, { myUserId, buildProjectZipBlob, chunkSize = PROJECT_TRANSFER_CHUNK_SIZE, claimDelayMs } = {}) {
+  let stopped = false;
+  let handledRequestAt = null;
+
+  async function maybeRespond() {
+    if (stopped) return;
+    const request = transferMap.get('request');
+    if (!request || request.requestedBy === myUserId) return;
+    if (handledRequestAt === request.requestedAt) return; // ja gestionada (per mi)
+    if (transferMap.get('responder')) return; // algú altre ja se n'ocupa
+
+    handledRequestAt = request.requestedAt;
+    await new Promise((resolve) => setTimeout(resolve, claimDelayMs ?? (300 + Math.random() * 400)));
+    if (stopped) return;
+    // Potser algú altre ja ho ha reclamat durant l'espera, o la sol·licitud
+    // ha canviat (p. ex. s'ha tornat a demanar de nou).
+    if (transferMap.get('responder') || transferMap.get('request')?.requestedAt !== request.requestedAt) return;
+
+    ydoc.transact(() => {
+      transferMap.set('responder', { claimedBy: myUserId, claimedAt: Date.now() });
+    });
+
+    // Confirmació addicional que la pròpia reclamació ha "guanyat" -- si un
+    // altre responedor l'ha reclamat gairebé alhora, Yjs ja haurà resolt
+    // quin dels dos guanya pel seu rellotge intern en aquest punt.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (stopped) return;
+    const settled = transferMap.get('responder');
+    if (!settled || settled.claimedBy !== myUserId) return; // algú altre ha guanyat la carrera
+
+    const blob = await buildProjectZipBlob();
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const chunks = chunkBytes(bytes, chunkSize);
+
+    // Neteja qualsevol tros que un reclamant perdedor pugui haver arribat a
+    // enviar abans de perdre la carrera -- redueix (no elimina del tot) el
+    // risc de contingut barrejat en una doble reclamació.
+    ydoc.transact(() => { chunksArray.delete(0, chunksArray.length); });
+    ydoc.transact(() => {
+      transferMap.set('manifest', { totalChunks: chunks.length, totalBytes: bytes.length, zipFileName: 'collab_project.zip' });
+    });
+    for (const chunk of chunks) {
+      if (stopped) return;
+      ydoc.transact(() => { chunksArray.push([chunk]); });
+    }
+  }
+
+  const observer = () => { maybeRespond(); };
+  transferMap.observe(observer);
+  maybeRespond(); // per si la sol·licitud ja hi era en adjuntar-se
+
+  return () => {
+    stopped = true;
+    transferMap.unobserve(observer);
+  };
+}
+
+/**
+ * Demana el ZIP sencer del projecte a qualsevol altre participant ja
+ * connectat (Fase 14) -- publica la sol·licitud, espera el manifest i tots
+ * els trossos, i resol amb els bytes reconstruïts. Si el reclamant
+ * "guanyador" canvia a mig camí (doble reclamació), reinicia el seguiment
+ * contra el nou -- mateix esperit que la resta de proteccions de carrera
+ * d'aquesta funcionalitat. `onProgress({receivedChunks, totalChunks})` és
+ * opcional, perquè la interfície pugui mostrar una barra de progrés.
+ */
+export function requestProjectTransfer(ydoc, transferMap, chunksArray, { myUserId, timeoutMs = 60000, onProgress } = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let currentClaimant = null;
+
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      transferMap.unobserve(onTransferMapChange);
+      chunksArray.unobserve(onChunksChange);
+      fn();
+    };
+
+    function checkProgress() {
+      const responder = transferMap.get('responder');
+      const manifest = transferMap.get('manifest');
+      if (responder && responder.claimedBy !== currentClaimant) {
+        currentClaimant = responder.claimedBy; // el reclamant ha canviat -- segueix el nou
+      }
+      if (!manifest) {
+        if (onProgress) onProgress({ receivedChunks: 0, totalChunks: 0 });
+        return;
+      }
+      const received = Math.min(chunksArray.length, manifest.totalChunks);
+      if (onProgress) onProgress({ receivedChunks: received, totalChunks: manifest.totalChunks });
+      if (received >= manifest.totalChunks) {
+        const bytes = concatChunks(chunksArray.slice(0, manifest.totalChunks));
+        finish(() => resolve({ bytes, zipFileName: manifest.zipFileName }));
+      }
+    }
+
+    const onTransferMapChange = () => checkProgress();
+    const onChunksChange = () => checkProgress();
+    transferMap.observe(onTransferMapChange);
+    chunksArray.observe(onChunksChange);
+
+    const timer = setTimeout(() => {
+      finish(() => reject(new Error("Ningú ha respost a la sol·licitud del projecte a temps. Torna-ho a provar.")));
+    }, timeoutMs);
+
+    ydoc.transact(() => {
+      chunksArray.delete(0, chunksArray.length);
+      transferMap.delete('responder');
+      transferMap.delete('manifest');
+      transferMap.set('request', { requestedBy: myUserId, requestedAt: Date.now() });
+    });
+
+    checkProgress();
+  });
 }
 
 /** Converteix el mapa d'estats bruts de l'Awareness de Yjs (clientId ->
