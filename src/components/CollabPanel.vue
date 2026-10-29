@@ -17,7 +17,7 @@
 -->
 
 <script setup>
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 
 // Connect/disconnect a collaboration folder for the CURRENT project, its
 // permission lifecycle, the display name shown to other participants, and
@@ -82,15 +82,32 @@ const realtimeStatusLabel = {
   'receiving-project': 'Rebent el projecte...',
 };
 
-const joinRoomIdInput = ref('');
-const joinPasswordInput = ref('');
+const joinCodeInput = ref('');
 const isPasswordRevealed = ref(false);
 
+// Sala i contrasenya són dues cadenes independents (totes dues sense punts:
+// `roomId` és `elips-<uuid>`, `password` un altre uuid) -- ajuntar-les amb
+// un punt dona un únic "codi de sessió" que es pot copiar/enganxar d'un sol
+// cop, més fàcil de compartir que dos valors per separat.
+const sessionCode = computed(() => `${props.realtimeRoomId}.${props.realtimePassword}`);
+
+const parseSessionCode = (code) => {
+  const trimmed = code.trim();
+  const dotIdx = trimmed.indexOf('.');
+  if (dotIdx === -1) return null;
+  const roomId = trimmed.slice(0, dotIdx).trim();
+  const password = trimmed.slice(dotIdx + 1).trim();
+  if (!roomId || !password) return null;
+  return { roomId, password };
+};
+
+const parsedJoinCode = computed(() => parseSessionCode(joinCodeInput.value));
+
 const submitJoinRealtimeSession = () => {
-  if (!joinRoomIdInput.value.trim() || !joinPasswordInput.value.trim()) return;
-  emit('join-realtime-session', { roomId: joinRoomIdInput.value.trim(), password: joinPasswordInput.value.trim() });
-  joinRoomIdInput.value = '';
-  joinPasswordInput.value = '';
+  const parsed = parsedJoinCode.value;
+  if (!parsed) return;
+  emit('join-realtime-session', parsed);
+  joinCodeInput.value = '';
 };
 
 const copyToClipboard = async (text) => {
@@ -282,23 +299,16 @@ const copyToClipboard = async (text) => {
               </p>
               <input
                 type="text"
-                v-model="joinRoomIdInput"
+                v-model="joinCodeInput"
                 class="data-input"
-                placeholder="Identificador de sala"
-                style="font-size: 0.82rem; height: 30px; padding: 2px 8px; font-family: monospace;"
-              >
-              <input
-                type="text"
-                v-model="joinPasswordInput"
-                class="data-input"
-                placeholder="Contrasenya"
+                placeholder="Codi de sessió (sala.contrasenya)"
                 style="font-size: 0.82rem; height: 30px; padding: 2px 8px; font-family: monospace;"
                 @keyup.enter="submitJoinRealtimeSession"
               >
               <button
                 class="btn btn-secondary"
                 style="width: auto; padding: 5px 12px; font-size: 0.78rem; align-self: flex-start;"
-                :disabled="!joinRoomIdInput.trim() || !joinPasswordInput.trim()"
+                :disabled="!parsedJoinCode"
                 @click="submitJoinRealtimeSession"
               >
                 Uneix-te
@@ -309,18 +319,13 @@ const copyToClipboard = async (text) => {
           <template v-if="realtimeStatus === 'connected'">
             <div style="display: flex; flex-direction: column; gap: 6px;">
               <div style="display: flex; align-items: center; gap: 6px;">
-                <span style="font-size: 0.78rem; color: var(--text-secondary); flex-shrink: 0;">Sala:</span>
-                <code style="font-size: 0.78rem; background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; flex: 1; overflow-x: auto; white-space: nowrap;">{{ realtimeRoomId }}</code>
-                <button type="button" class="btn-icon-only" style="border: none; background: none; cursor: pointer;" title="Copia l'identificador de sala" @click="copyToClipboard(realtimeRoomId)">📋</button>
-              </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <span style="font-size: 0.78rem; color: var(--text-secondary); flex-shrink: 0;">Contrasenya:</span>
-                <code style="font-size: 0.78rem; background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; flex: 1; overflow-x: auto; white-space: nowrap;">{{ isPasswordRevealed ? realtimePassword : '••••••••••••' }}</code>
+                <span style="font-size: 0.78rem; color: var(--text-secondary); flex-shrink: 0;">Codi de sessió:</span>
+                <code style="font-size: 0.78rem; background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; flex: 1; overflow-x: auto; white-space: nowrap;">{{ isPasswordRevealed ? sessionCode : `${realtimeRoomId}.••••••••••••` }}</code>
                 <button type="button" class="btn-icon-only" style="border: none; background: none; cursor: pointer;" :title="isPasswordRevealed ? 'Amaga' : 'Mostra'" @click="isPasswordRevealed = !isPasswordRevealed">{{ isPasswordRevealed ? '🙈' : '👁️' }}</button>
-                <button type="button" class="btn-icon-only" style="border: none; background: none; cursor: pointer;" title="Copia la contrasenya" @click="copyToClipboard(realtimePassword)">📋</button>
+                <button type="button" class="btn-icon-only" style="border: none; background: none; cursor: pointer;" title="Copia el codi de sessió" @click="copyToClipboard(sessionCode)">📋</button>
               </div>
               <p style="font-size: 0.72rem; color: var(--text-muted); margin: 0;">
-                Comparteix aquests dos valors (p. ex. per xat) amb qui es vulgui unir -- no hi ha cap altra manera de distribuir-los.
+                Comparteix aquest codi (p. ex. per xat) amb qui es vulgui unir -- no hi ha cap altra manera de distribuir-lo.
               </p>
               <div style="font-size: 0.78rem; color: var(--text-secondary);">
                 Document sincronitzat ara: <strong>{{ realtimeDocName }}</strong>
