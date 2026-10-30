@@ -383,13 +383,23 @@ const createNewProject = async () => {
     return;
   }
 
+  // Una sessió en viu connectada té els canals de plantilla/esquema/dades
+  // vinculats a store.templateText/editorMetadata/excelJsonData -- deixar-la
+  // oberta en canviar de projecte enviaria el contingut del projecte NOU a
+  // la sala del projecte ANTERIOR tan bon punt es netegi/reompli l'store
+  // més avall. Només cal per a 'connected' (els altres estats encara no
+  // tenen cap canal vinculat, vegeu useCollabRealtime.js Fase 11.1/14).
+  if (collabRealtimeStatus.value === 'connected') {
+    stopRealtimeSession();
+  }
+
   pauseAutoRecording();
   if (window.__flushGlobalSave) window.__flushGlobalSave();
-  
+
   // Save current project and active doc state before switching
   saveCurrentProject();
   saveCurrentDocumentState(currentProjectName.value, activeDocName.value);
-  
+
   // Add to list
   const newList = [...savedProjectsList.value, cleanName];
   savedProjectsList.value = newList;
@@ -438,6 +448,12 @@ const loadProject = async (name) => {
   if (name === currentProjectName.value) {
     isProjectsModalOpen.value = false;
     return;
+  }
+
+  // Vegeu la mateixa nota a createNewProject -- una sessió en viu
+  // 'connected' és del projecte que deixem ara, no del que hi entra.
+  if (collabRealtimeStatus.value === 'connected') {
+    stopRealtimeSession();
   }
 
   pauseAutoRecording();
