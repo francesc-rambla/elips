@@ -228,6 +228,57 @@ const handleRequestProjectTransfer = async () => {
   }
 };
 
+// Fase 15 (vegeu el pla): en connectar amb èxit (iniciar, unir-se, o la
+// reconnexió automàtica de més avall), desa `{roomId, password}` per a
+// AQUEST projecte -- mateix patró de clau que la resta de dades per
+// projecte (`${name}:excelJsonData`). Un únic watcher cobreix els tres
+// camins (start/join/reconnexió automàtica) sense tocar cada punt de crida.
+watch(collabRealtimeStatus, (status) => {
+  if (status === 'connected' && collabRealtimeRoomId.value && collabRealtimePassword.value) {
+    localStorage.setItem(`${currentProjectName.value}:collabRealtimeSession`, JSON.stringify({
+      roomId: collabRealtimeRoomId.value,
+      password: collabRealtimePassword.value,
+    }));
+  }
+});
+
+// Reconnexió transparent a la sessió en viu prèvia d'un projecte en
+// reobrir-lo (Fase 15) -- decisió explícita de l'usuari: sense cap botó ni
+// confirmació. Les credencials vénen de la PRÒPIA localStorage (desades pel
+// watcher de dalt en connectar), mai d'un codi passat a mà per algú, per
+// això es fa servir mode:'start' -- salta l'espera/validació de nom de
+// projecte de la Fase 11.1 (ja sabem que hi pertanyem) i és idempotent si
+// la sala ja existeix. Els errors només es registren al log (mai `alert()`):
+// que no hi hagi ningú connectat, o que el servidor de senyalització falli,
+// no ha de ser una interrupció per a qui només ha obert un projecte.
+const tryAutoReconnectRealtime = async (name) => {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(`${name}:collabRealtimeSession`) || 'null');
+  } catch (_) { /* ignore */ }
+  if (!saved || !saved.roomId || !saved.password) return;
+  try {
+    await startRealtimeSession({
+      roomId: saved.roomId,
+      password: saved.password,
+      mode: 'start',
+      projectName: name,
+      docName: activeDocName.value,
+    });
+  } catch (e) {
+    store.addLog(`No s'ha pogut reconnectar automàticament a la sessió en viu: ${e.message}`, 'info');
+  }
+};
+
+// Desconnexió manual (botó de CollabPanel.vue) -- a diferència de canviar
+// de projecte, aquí cal OBLIDAR la credencial desada: si no, tornar a obrir
+// el mateix projecte la reconnectaria en contra de la voluntat explícita de
+// l'usuari.
+const handleStopRealtimeSession = () => {
+  stopRealtimeSession();
+  localStorage.removeItem(`${currentProjectName.value}:collabRealtimeSession`);
+};
+
 const handleConnectCollabFolder = async () => {
   try {
     await connectCollabFolder(buildProjectZipBlob);
@@ -560,6 +611,13 @@ const loadProject = async (name) => {
   if (historyData.value.length === 0) {
     createSnapshot('init', 'Punt de control inicial de la sessió');
   }
+
+  // Fase 15: reconnexió transparent a la sessió en viu prèvia d'aquest
+  // projecte, si n'hi havia cap -- vegeu el doc comment de
+  // tryAutoReconnectRealtime. S'ha de fer DESPRÉS que store.* ja tingui les
+  // dades del projecte nou (el bloc de dalt), ja que una connexió amb èxit
+  // adjunta de seguida els ponts de plantilla/esquema/dades.
+  await tryAutoReconnectRealtime(name);
 
   resumeAutoRecording();
   store.issues = [];
@@ -1399,6 +1457,11 @@ onMounted(async () => {
   // any -- silent unless the browser needs a fresh permission grant (see
   // useCollabFolder.js's reconnectFolder doc comment).
   await reconnectCollabFolder();
+
+  // Fase 15: reconnexió transparent a la sessió en viu prèvia d'aquest
+  // projecte, si n'hi havia cap -- vegeu el doc comment de
+  // tryAutoReconnectRealtime.
+  await tryAutoReconnectRealtime(pName);
 
   // Watchers for automatic change differential recording (debounced by autoSaveDebounceSeconds) and instant localStorage sync
   watch(() => store.templateText, () => {
@@ -3410,7 +3473,7 @@ const generateDocuments = async () => {
       @update-display-name="handleUpdateCollabDisplayName"
       @start-realtime-session="handleStartRealtimeSession"
       @join-realtime-session="handleJoinRealtimeSession"
-      @stop-realtime-session="stopRealtimeSession"
+      @stop-realtime-session="handleStopRealtimeSession"
       @request-project-transfer="handleRequestProjectTransfer"
     />
 
