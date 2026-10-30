@@ -144,6 +144,55 @@
  * carpeta"), `requestAndImportProject()` desconnecta netament -- qui l'ha
  * cridada (App.vue) ha de tornar a iniciar la connexió normal amb les
  * dades ja actualitzades del projecte acabat d'importar.
+ *
+ * Fase 15: reconnexió transparent -- vegeu App.vue (`tryAutoReconnectRealtime`),
+ * cap canvi en aquest fitxer més enllà de ser-hi cridat amb `mode: 'start'`
+ * (que ja salta tota l'espera/validació de la Fase 11.1).
+ *
+ * Fase 16: el `Y.Doc` passa de ser efímer (`new Y.Doc()` a cada
+ * `startRealtimeSession`, destruït a `teardown()`) a PERSISTENT per
+ * projecte (`useCollabDoc.js`, IndexedDB) -- viu mentre el projecte estigui
+ * obert en aquesta pestanya, estigui o no connectada cap sessió en viu.
+ * Això dona al canal `template` fusió CRDT real també ENTRE desconnexions
+ * (no només mentre dos peers són en línia alhora): les edicions fetes
+ * sense sessió activa ara es graven igualment com a operacions Y.Text
+ * reals, i es sincronitzen soles la propera vegada que hi hagi una
+ * connexió -- cap lògica de fusió nova, és el cas d'ús natural de Yjs.
+ *
+ * Per fer-ho possible, `teardown()` es divideix en dues operacions de
+ * granularitat diferent:
+ * - `disconnectNetwork()`: només xarxa (`provider`, Awareness, el
+ *   responedor de transferència de projecte) -- NO toca `ydoc` ni cap
+ *   pont de document (`stopLocalWatch`/`stopSchemaChannel`/`stopDataChannel`).
+ *   És la que fa servir `stopRealtimeSession()` (desconnexió manual o
+ *   intent de reconnexió fallit, Fase 15): el `Y.Doc` i el pont de
+ *   plantilla continuen vius i capturant edicions locals.
+ * - `teardownDoc()`/`closeRealtimeForProject()`: tanca TOT, incloent-hi el
+ *   `Y.Doc` (amb un darrer flush a IndexedDB abans de destruir-lo, vegeu
+ *   `closeProjectDoc`, `useCollabDoc.js`) -- només quan el PROJECTE mateix
+ *   canvia o es tanca (cridat des d'App.vue en `loadProject`/
+ *   `createNewProject`, substituint l'antiga crida condicional a
+ *   `stopRealtimeSession()`: ara cal cridar-ho SEMPRE en canviar de
+ *   projecte, no només quan `sessionStatus === 'connected'`, perquè un
+ *   `Y.Doc` pot estar capturant en silenci encara que l'estat mostri
+ *   `'disconnected'`).
+ *
+ * `resumeOfflineCapture(projectName, docName)` (nova, exposada) permet
+ * capturar edicions de plantilla SENSE cap connexió de xarxa -- cridada
+ * des d'App.vue en obrir un projecte (abans que `tryAutoReconnectRealtime`
+ * intenti connectar-hi). Comprova primer, sense carregar `yjs`
+ * (`hasPersistedProjectDoc`), si aquest projecte ha fet servir la sessió
+ * en viu alguna vegada -- si no, és un no-op complet (cap cost per a qui
+ * no fa servir aquesta funcionalitat, preservant l'import diferit de `yjs`
+ * de la Fase 10).
+ *
+ * El seguiment de concurrència `if (ydoc !== thisYdoc) return` (detectar
+ * que `stopRealtimeSession()` ha corregut durant una espera asíncrona) ja
+ * no funciona amb un `ydoc` reutilitzat entre sessions -- se substitueix
+ * per un comptador `sessionToken` incrementat a cada `stopRealtimeSession`/
+ * `closeRealtimeForProject`, capturat com `myToken` a l'inici de cada
+ * operació asíncrona i comprovat (`sessionToken !== myToken`) després de
+ * cada `await`.
  */
 
 import { ref, watch, nextTick } from 'vue';
@@ -151,6 +200,7 @@ import { useWorkspaceStore } from '../stores/workspace';
 import { getOrCreateUserId, getDisplayNameOrFallback } from './useCollabIdentity';
 import { KNOWN_SIGNALING_SERVERS } from '../utils/collabSignalingServers';
 import { computeDataPatch, computeMetaPatch } from '../utils/dataPatch';
+import { getOrCreateProjectDoc, closeProjectDoc, hasPersistedProjectDoc } from './useCollabDoc';
 
 export { KNOWN_SIGNALING_SERVERS };
 
@@ -686,6 +736,18 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
   let stopProjectTransferResponder = null;
   let awarenessChangeHandler = null;
   let boundDocName = null;
+  // Nom del projecte al qual pertany el `ydoc` actualment carregat (Fase
+  // 16) -- `null` si no n'hi ha cap. Permet detectar, de manera defensiva,
+  // si algú ha intentat connectar/capturar per a un projecte diferent del
+  // que ja té el doc carregat sense haver-lo tancat abans.
+  let currentProjectNameForDoc = null;
+  // Incrementat a cada stopRealtimeSession()/closeRealtimeForProject()
+  // (Fase 16) -- substitueix el vell seguiment `ydoc !== thisYdoc` (ja no
+  // funciona amb un ydoc reutilitzat entre sessions): cada operació
+  // asíncrona en captura el valor com `myToken` a l'inici i comprova
+  // `sessionToken !== myToken` després de cada `await` per detectar que
+  // una desconnexió/tancament ha corregut mentrestant.
+  let sessionToken = 0;
   // Marca les transaccions pròpies perquè l'observer de ytext les pugui
   // distingir de canvis arribats d'altres participants (mateix propòsit que
   // la bandera isApplyingRemote del motor de useCollabSync.js, però aquí
@@ -710,12 +772,20 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
   // del document `docName` dins el Y.Doc/sala actual -- cridada tant en
   // connectar (per al document actiu d'aquell moment) com cada cop que
   // l'usuari canvia de document localment sense desconnectar la sessió
-  // (switchRealtimeDocument). Assumeix que qui crida ja ha carregat el
+  // (switchRealtimeDocument), com des de resumeOfflineCapture() (Fase 16,
+  // sense cap connexió de xarxa). Assumeix que qui crida ja ha carregat el
   // contingut de `docName` a store.templateText abans de cridar-la (mateix
   // ordre que App.vue's switchActiveDocument ja segueix amb
-  // loadDocumentConfig).
-  async function bindDocument(docName) {
-    const thisYdoc = ydoc;
+  // loadDocumentConfig). Idempotent: si ja estava vinculat a aquest mateix
+  // document (p. ex. resumeOfflineCapture ja ho havia fet abans que
+  // startRealtimeSession s'hi reconnectés), no fa res -- evita desmuntar i
+  // tornar a muntar el pont a cada connexió/reconnexió sense cap motiu.
+  async function bindDocument(docName, { preferLocal = false } = {}) {
+    if (boundDocName === docName && stopLocalWatch) {
+      currentDocName.value = docName;
+      return;
+    }
+    const myToken = sessionToken;
     if (stopLocalWatch) {
       stopLocalWatch();
       stopLocalWatch = null;
@@ -726,37 +796,45 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
         if (ytext.length === 0) ytext.insert(0, store.templateText);
       }, localOrigin);
     } else if (ytext.toString() !== store.templateText) {
-      // El contingut remot d'aquest document ja hi era (sincronitzat abans
-      // de vincular-s'hi -- vist en viu durant la verificació d'aquesta
-      // mateixa funcionalitat, en connexions locals molt ràpides) ABANS
-      // d'existir cap observer que hi reaccioni: attachTemplateBridge només
-      // reacciona a canvis FUTURS del Y.Text, no al seu contingut ja
-      // present en adjuntar-se. Cal aplicar-lo ara, amb el mateix idioma
-      // que faria l'observer.
-      store.collabApplyingRemoteTemplate = true;
-      store.templateText = ytext.toString();
-      await nextTick();
-      store.collabApplyingRemoteTemplate = false;
+      if (preferLocal) {
+        // resumeOfflineCapture() (Fase 16): no hi ha cap connexió de xarxa
+        // activa en aquest punt, així que un desajust aquí NOMÉS pot venir
+        // del propi retard del debounce de persistència (useCollabDoc.js,
+        // getOrCreateProjectDoc) respecte a l'última edició local (que SÍ
+        // ja és a store.templateText, desada de seguida i sense debounce
+        // per la via ordinària de localStorage) -- mai d'un peer remot, que
+        // encara no existeix. Cal fer avançar `ytext` amb el contingut
+        // local (com a operacions Yjs reals, via applyStringDiffToYText,
+        // no un reemplaçament sencer), no al revés: si ho féssim al revés
+        // (com fa la branca de sota per a una connexió de xarxa real),
+        // l'edició local més recent es perdria en obrir el projecte.
+        ydoc.transact(() => {
+          applyStringDiffToYText(ytext, ytext.toString(), store.templateText || '');
+        }, localOrigin);
+      } else {
+        // El contingut remot d'aquest document ja hi era (sincronitzat abans
+        // de vincular-s'hi -- vist en viu durant la verificació d'aquesta
+        // mateixa funcionalitat, en connexions locals molt ràpides) ABANS
+        // d'existir cap observer que hi reaccioni: attachTemplateBridge només
+        // reacciona a canvis FUTURS del Y.Text, no al seu contingut ja
+        // present en adjuntar-se. Cal aplicar-lo ara, amb el mateix idioma
+        // que faria l'observer.
+        store.collabApplyingRemoteTemplate = true;
+        store.templateText = ytext.toString();
+        await nextTick();
+        store.collabApplyingRemoteTemplate = false;
+      }
     }
-    if (ydoc !== thisYdoc) return; // stopRealtimeSession() ha corregut durant el nextTick
+    if (sessionToken !== myToken) return; // una desconnexió/tancament ha corregut durant el nextTick
     stopLocalWatch = attachTemplateBridge(ydoc, ytext, store, localOrigin);
     boundDocName = docName;
     currentDocName.value = docName;
   }
 
-  function teardown() {
-    if (stopLocalWatch) {
-      stopLocalWatch();
-      stopLocalWatch = null;
-    }
-    if (stopSchemaChannel) {
-      stopSchemaChannel();
-      stopSchemaChannel = null;
-    }
-    if (stopDataChannel) {
-      stopDataChannel();
-      stopDataChannel = null;
-    }
+  // Només xarxa -- NO toca ydoc ni cap pont de document (Fase 16: han de
+  // sobreviure a una simple desconnexió, vegeu el doc comment de dalt del
+  // fitxer). Segura de cridar encara que no hi hagi cap connexió activa.
+  function disconnectNetwork() {
     if (stopProjectTransferResponder) {
       stopProjectTransferResponder();
       stopProjectTransferResponder = null;
@@ -769,19 +847,39 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
       provider.destroy();
       provider = null;
     }
-    if (ydoc) {
-      ydoc.destroy();
-      ydoc = null;
-    }
-    ytext = null;
-    boundDocName = null;
-    currentDocName.value = '';
     currentSignalingServer.value = '';
     connectedPeers.value = [];
     currentRoomId.value = '';
     currentPassword.value = '';
     pendingProjectName.value = '';
     transferProgress.value = null;
+  }
+
+  // Tanca els ponts de document i allibera el Y.Doc persistent d'aquest
+  // projecte (Fase 16, amb un darrer flush a IndexedDB -- closeProjectDoc,
+  // useCollabDoc.js). NOMÉS en canviar/tancar de projecte
+  // (closeRealtimeForProject) -- mai en una simple desconnexió de xarxa.
+  async function teardownDoc() {
+    if (stopLocalWatch) {
+      stopLocalWatch();
+      stopLocalWatch = null;
+    }
+    if (stopSchemaChannel) {
+      stopSchemaChannel();
+      stopSchemaChannel = null;
+    }
+    if (stopDataChannel) {
+      stopDataChannel();
+      stopDataChannel = null;
+    }
+    if (currentProjectNameForDoc) {
+      await closeProjectDoc(currentProjectNameForDoc);
+    }
+    ydoc = null;
+    ytext = null;
+    boundDocName = null;
+    currentDocName.value = '';
+    currentProjectNameForDoc = null;
   }
 
   async function startRealtimeSession({ roomId, password, signaling, mode, projectName, savedProjectNames, docName }) {
@@ -791,6 +889,10 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
     if (sessionStatus.value === 'connected' || sessionStatus.value === 'connecting' || sessionStatus.value === 'awaiting-project') {
       stopRealtimeSession();
     }
+    // Capturat DESPRÉS de l'stopRealtimeSession() de dalt (que ja incrementa
+    // sessionToken ell mateix) -- així sempre queda amb el valor més fresc,
+    // encara que aquesta crida arribi just després d'una altra en curs.
+    const myToken = ++sessionToken;
     sessionStatus.value = 'connecting';
     lastRealtimeError.value = null;
     currentSignalingServer.value = '';
@@ -799,6 +901,7 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
         import('yjs'),
         import('y-webrtc'),
       ]);
+      if (sessionToken !== myToken) return;
 
       // Comprova QUIN servidor de senyalització de la llista configurada
       // respon de debò ABANS de crear cap provider -- detecta directament
@@ -815,11 +918,25 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
       if (!workingServer) {
         throw new Error("No s'ha pogut connectar a cap servidor de senyalització de la llista configurada (Configuració -> Sessió en viu). Comprova la connexió o afegeix-ne un altre.");
       }
+      if (sessionToken !== myToken) return;
       currentSignalingServer.value = workingServer;
 
-      ydoc = new Y.Doc();
+      // Fase 16: el Y.Doc és persistent PER PROJECTE (useCollabDoc.js), no
+      // efímer per sessió -- es reutilitza si ja estava carregat (p. ex.
+      // per resumeOfflineCapture, o una connexió anterior en aquesta
+      // mateixa pestanya) en lloc de llençar-lo en desconnectar. Si ja hi
+      // havia un doc carregat per a un ALTRE projecte sense tancar (no
+      // hauria de passar si App.vue sempre crida closeRealtimeForProject()
+      // en canviar de projecte, però es protegeix igualment), es tanca
+      // primer.
+      if (currentProjectNameForDoc && projectName && currentProjectNameForDoc !== projectName) {
+        await teardownDoc();
+        if (sessionToken !== myToken) return;
+      }
+      ydoc = projectName ? await getOrCreateProjectDoc(Y, projectName) : new Y.Doc();
+      if (projectName) currentProjectNameForDoc = projectName;
+      if (sessionToken !== myToken) return;
       const ymeta = ydoc.getMap('meta');
-      const thisYdoc = ydoc; // per detectar un stopRealtimeSession() concurrent durant l'espera de més avall
 
       // Qui inicia la sessió publica el nom del seu projecte de seguida
       // (operació local, no cal esperar el provider) perquè qui s'hi uneixi
@@ -840,9 +957,17 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
       // Y.Map/Y.Array compartits per a la sol·licitud/transferència del ZIP
       // del projecte (Fase 14) -- creats sempre, encara que aquest peer no
       // acabi ni demanant ni responent mai res, perquè hi hagi d'haver
-      // alguna cosa a observar des del principi en tots dos costats.
+      // alguna cosa a observar des del principi en tots dos costats. Es
+      // buiden a cada sessió NOVA (Fase 16: amb un Y.Doc persistent, un
+      // estat de transferència d'una sessió molt anterior ja no té sentit
+      // -- requestProjectTransfer ja els buida igualment abans de sembrar
+      // una sol·licitud nova, això és només per higiene general).
       const transferMap = ydoc.getMap('projectTransfer');
       const transferChunks = ydoc.getArray('projectTransferChunks');
+      ydoc.transact(() => {
+        transferMap.clear();
+        transferChunks.delete(0, transferChunks.length);
+      }, localOrigin);
 
       // Qui s'uneix a una sessió existent comprova, abans de tocar res, que
       // la sala pertany al projecte que té obert -- si no, es llança un
@@ -855,7 +980,7 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
       // segons més que un simple handshake WebSocket.
       if (mode === 'join' && projectName) {
         const remoteProjectName = await waitForRemoteProjectName(ymeta, 15000);
-        if (ydoc !== thisYdoc) return; // stopRealtimeSession() ha corregut mentrestant
+        if (sessionToken !== myToken) return; // stopRealtimeSession()/closeRealtimeForProject() ha corregut mentrestant
         const classification = classifyProjectMismatch(remoteProjectName, projectName, savedProjectNames);
         if (classification === 'not-local') {
           // Fase 14: en lloc de tancar la connexió com als altres dos casos
@@ -883,7 +1008,7 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
       // aquí (connexió inicial) -- un canvi de document posterior
       // (switchRealtimeDocument) ja parteix d'una sessió sincronitzada.
       await new Promise((resolve) => setTimeout(resolve, 300 + Math.random() * 400));
-      if (ydoc !== thisYdoc) return; // stopRealtimeSession() ha corregut mentrestant
+      if (sessionToken !== myToken) return;
 
       // Canals `schema`/`data` (Fases 12/13): abast de PROJECTE, no de
       // document -- s'adjunten un únic cop aquí, no es revinculen en
@@ -899,17 +1024,17 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
         setLocal: (v) => { store.editorMetadata = v; },
         computePatch: computeMetaPatch,
       }, localOrigin, debounceMs);
-      if (ydoc !== thisYdoc) return;
+      if (sessionToken !== myToken) return;
 
       await bindDocument(docName || 'Document Principal');
-      if (ydoc !== thisYdoc) return;
+      if (sessionToken !== myToken) return;
 
       stopDataChannel = await attachJsonChannelBridge(ydoc, yjson, 'data', {
         getLocal: () => store.excelJsonData,
         setLocal: (v) => { store.excelJsonData = v; },
         computePatch: computeDataPatch,
       }, localOrigin, debounceMs);
-      if (ydoc !== thisYdoc) return;
+      if (sessionToken !== myToken) return;
 
       // Fase 14: qualsevol participant ja connectat normalment (amb el
       // projecte correcte) pot respondre si algú més s'hi uneix sense
@@ -932,7 +1057,12 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
       currentPassword.value = password;
       sessionStatus.value = 'connected';
     } catch (err) {
-      teardown();
+      // Fase 16: només desconnecta la xarxa -- el Y.Doc (i el pont de
+      // plantilla, si ja s'havia arribat a vincular) ha de sobreviure a un
+      // intent de connexió/reconnexió fallit, perquè les edicions locals
+      // fetes mentrestant no es perdin (vegeu el doc comment de dalt del
+      // fitxer).
+      disconnectNetwork();
       lastRealtimeError.value = err?.message || String(err);
       sessionStatus.value = 'error';
       throw err;
@@ -940,21 +1070,76 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
   }
 
   // Cridada des d'App.vue's switchActiveDocument quan l'usuari canvia de
-  // document localment AMB la sessió en viu oberta -- NO desconnecta ni
-  // reconnecta (mateix WebrtcProvider/sala), només revincula el pont al
-  // Y.Text del nou document i actualitza la pròpia Awareness perquè la
-  // resta vegi en quin document s'ha passat a treballar. No-op si no hi ha
-  // sessió activa o si ja és el document vinculat (evita treball doble si
-  // es crida per error dues vegades amb el mateix valor).
+  // document localment -- connectat o no (Fase 16: n'hi ha prou que hi
+  // hagi un Y.Doc carregat per a aquest projecte, ja sigui perquè hi ha una
+  // sessió en viu activa o perquè només s'està capturant en silenci,
+  // resumeOfflineCapture). NO desconnecta ni reconnecta la xarxa (mateix
+  // WebrtcProvider/sala si n'hi ha), només revincula el pont al Y.Text del
+  // nou document i, si hi ha una sessió en viu, actualitza la pròpia
+  // Awareness perquè la resta vegi en quin document s'ha passat a
+  // treballar. No-op si no hi ha cap doc carregat o si ja és el document
+  // vinculat (evita treball doble si es crida per error dues vegades amb
+  // el mateix valor).
   async function switchRealtimeDocument(docName) {
-    if (sessionStatus.value !== 'connected' || !ydoc || !docName || docName === boundDocName) return;
-    await bindDocument(docName);
-    publishAwarenessUser();
+    if (!ydoc || !docName || docName === boundDocName) return;
+    // Sense provider (encara desconnectat, només capturant en silenci), un
+    // desajust ytext/store només pot venir del propi retard del debounce de
+    // persistència -- mateix raonament que resumeOfflineCapture().
+    await bindDocument(docName, { preferLocal: !provider });
+    if (provider) publishAwarenessUser();
   }
 
+  // Desconnexió manual (o un intent de reconnexió fallit, vegeu el catch de
+  // startRealtimeSession) -- NOMÉS xarxa (Fase 16): el Y.Doc i el pont de
+  // plantilla sobreviuen, perquè les edicions locals fetes sense sessió
+  // activa no es perdin i es puguin sincronitzar la propera vegada.
   function stopRealtimeSession() {
-    teardown();
+    sessionToken++;
+    disconnectNetwork();
     sessionStatus.value = 'disconnected';
+  }
+
+  // Tanca TOT per a aquest projecte -- xarxa + el Y.Doc persistent (Fase
+  // 16, amb el seu darrer flush a IndexedDB). Cridada des d'App.vue EN
+  // CANVIAR/TANCAR DE PROJECTE (loadProject/createNewProject), de manera
+  // INCONDICIONAL (no només quan sessionStatus === 'connected': un Y.Doc
+  // pot estar capturant en silenci encara que la xarxa estigui
+  // desconnectada) -- substitueix l'antiga crida condicional a
+  // stopRealtimeSession() en aquests dos punts.
+  async function closeRealtimeForProject() {
+    sessionToken++;
+    disconnectNetwork();
+    await teardownDoc();
+    sessionStatus.value = 'disconnected';
+  }
+
+  // Capturar edicions de plantilla SENSE cap connexió de xarxa (Fase 16) --
+  // cridada des d'App.vue en obrir un projecte, abans que
+  // tryAutoReconnectRealtime (Fase 15) intenti connectar-hi. Comprova
+  // primer, SENSE carregar yjs (hasPersistedProjectDoc), si aquest projecte
+  // ha fet servir la sessió en viu alguna vegada -- si no, és un no-op
+  // complet (cap cost per a qui no fa servir mai aquesta funcionalitat,
+  // preservant l'import diferit de yjs de la Fase 10). Si una connexió de
+  // debò s'inicia després (startRealtimeSession), reutilitza el mateix doc
+  // i detecta que el document ja està vinculat (bindDocument és idempotent)
+  // -- no hi ha cap feina duplicada ni cap interrupció del bucle de captura.
+  async function resumeOfflineCapture(projectName, docName) {
+    if (!projectName || !docName) return;
+    if (sessionStatus.value !== 'disconnected') return; // ja hi ha una sessió en marxa
+    if (currentProjectNameForDoc === projectName && boundDocName === docName) return; // ja capturant
+    const has = await hasPersistedProjectDoc(projectName);
+    if (!has) return;
+    const myToken = sessionToken;
+    const [Y] = await Promise.all([import('yjs')]);
+    if (sessionToken !== myToken) return;
+    if (currentProjectNameForDoc && currentProjectNameForDoc !== projectName) {
+      await teardownDoc();
+      if (sessionToken !== myToken) return;
+    }
+    ydoc = await getOrCreateProjectDoc(Y, projectName);
+    if (sessionToken !== myToken) return;
+    currentProjectNameForDoc = projectName;
+    await bindDocument(docName, { preferLocal: true });
   }
 
   // Cridada des de CollabPanel.vue (botó "Sol·licita el projecte ara")
@@ -983,10 +1168,15 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
       );
       const file = new File([bytes], zipFileName, { type: 'application/zip' });
       await importProjectZip(file);
-      teardown();
-      sessionStatus.value = 'disconnected';
+      // El projecte actiu canvia (importProjectZip reassigna
+      // currentProjectName.value a App.vue) -- el doc que teníem carregat
+      // (per al projecte "equivocat" original, el que encara no teníem)
+      // queda orfe: tanca'l del tot (Fase 16). Qui ha cridat aquesta
+      // funció tornarà a connectar amb el projecte correcte, que carregarà
+      // el seu propi doc persistent de zero.
+      await closeRealtimeForProject();
     } catch (err) {
-      teardown();
+      disconnectNetwork();
       lastRealtimeError.value = err?.message || String(err);
       sessionStatus.value = 'error';
       throw err;
@@ -1006,6 +1196,8 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
     startRealtimeSession,
     switchRealtimeDocument,
     stopRealtimeSession,
+    closeRealtimeForProject,
+    resumeOfflineCapture,
     requestAndImportProject,
   };
 }

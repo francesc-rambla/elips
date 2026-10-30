@@ -167,6 +167,8 @@ const {
   startRealtimeSession,
   switchRealtimeDocument,
   stopRealtimeSession,
+  closeRealtimeForProject,
+  resumeOfflineCapture,
   requestAndImportProject,
 } = collabRealtime;
 window.collabRealtime = collabRealtime;
@@ -434,15 +436,15 @@ const createNewProject = async () => {
     return;
   }
 
-  // Una sessió en viu connectada té els canals de plantilla/esquema/dades
-  // vinculats a store.templateText/editorMetadata/excelJsonData -- deixar-la
-  // oberta en canviar de projecte enviaria el contingut del projecte NOU a
-  // la sala del projecte ANTERIOR tan bon punt es netegi/reompli l'store
-  // més avall. Només cal per a 'connected' (els altres estats encara no
-  // tenen cap canal vinculat, vegeu useCollabRealtime.js Fase 11.1/14).
-  if (collabRealtimeStatus.value === 'connected') {
-    stopRealtimeSession();
-  }
+  // Una sessió en viu (connectada o només capturant en silenci, Fase 16)
+  // té els canals de plantilla/esquema/dades vinculats a
+  // store.templateText/editorMetadata/excelJsonData -- deixar-los oberts en
+  // canviar de projecte enviaria el contingut del projecte NOU a la sala/
+  // doc del projecte ANTERIOR tan bon punt es netegi/reompli l'store més
+  // avall. Incondicional (no només quan sessionStatus === 'connected'): des
+  // de la Fase 16, un Y.Doc persistent pot estar capturant edicions locals
+  // encara que la xarxa estigui desconnectada.
+  await closeRealtimeForProject();
 
   pauseAutoRecording();
   if (window.__flushGlobalSave) window.__flushGlobalSave();
@@ -501,11 +503,10 @@ const loadProject = async (name) => {
     return;
   }
 
-  // Vegeu la mateixa nota a createNewProject -- una sessió en viu
-  // 'connected' és del projecte que deixem ara, no del que hi entra.
-  if (collabRealtimeStatus.value === 'connected') {
-    stopRealtimeSession();
-  }
+  // Vegeu la mateixa nota a createNewProject -- el doc/sessió en viu
+  // (connectada o només capturant en silenci, Fase 16) és del projecte que
+  // deixem ara, no del que hi entra.
+  await closeRealtimeForProject();
 
   pauseAutoRecording();
   if (window.__flushGlobalSave) window.__flushGlobalSave();
@@ -612,11 +613,14 @@ const loadProject = async (name) => {
     createSnapshot('init', 'Punt de control inicial de la sessió');
   }
 
-  // Fase 15: reconnexió transparent a la sessió en viu prèvia d'aquest
-  // projecte, si n'hi havia cap -- vegeu el doc comment de
-  // tryAutoReconnectRealtime. S'ha de fer DESPRÉS que store.* ja tingui les
-  // dades del projecte nou (el bloc de dalt), ja que una connexió amb èxit
-  // adjunta de seguida els ponts de plantilla/esquema/dades.
+  // Fase 16: reprèn la captura d'edicions de plantilla encara que no hi
+  // hagi cap sessió en viu activa (no-op si aquest projecte mai ha fet
+  // servir la sessió en viu -- cap cost). Fase 15: reconnexió transparent a
+  // la sessió en viu prèvia d'aquest projecte, si n'hi havia cap. Totes
+  // dues DESPRÉS que store.* ja tingui les dades del projecte nou (el bloc
+  // de dalt), ja que adjunten de seguida els ponts de plantilla/esquema/
+  // dades.
+  await resumeOfflineCapture(name, aDoc);
   await tryAutoReconnectRealtime(name);
 
   resumeAutoRecording();
@@ -1458,9 +1462,11 @@ onMounted(async () => {
   // useCollabFolder.js's reconnectFolder doc comment).
   await reconnectCollabFolder();
 
-  // Fase 15: reconnexió transparent a la sessió en viu prèvia d'aquest
-  // projecte, si n'hi havia cap -- vegeu el doc comment de
-  // tryAutoReconnectRealtime.
+  // Fase 16: reprèn la captura d'edicions de plantilla encara que no hi
+  // hagi cap sessió en viu activa (no-op si aquest projecte mai ha fet
+  // servir la sessió en viu). Fase 15: reconnexió transparent a la sessió
+  // en viu prèvia d'aquest projecte, si n'hi havia cap.
+  await resumeOfflineCapture(pName, aDoc);
   await tryAutoReconnectRealtime(pName);
 
   // Watchers for automatic change differential recording (debounced by autoSaveDebounceSeconds) and instant localStorage sync
