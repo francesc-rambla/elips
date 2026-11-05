@@ -20,6 +20,7 @@
 import { useWorkspaceStore } from '../stores/workspace';
 import NestedDataNode from './NestedDataNode.vue';
 import MarkdownField from './MarkdownField.vue';
+import RemoteEditingBadge from './RemoteEditingBadge.vue';
 
 // Extracted from NestedDataNode.vue's own "INTERMEDIATE LEVEL" accordion
 // body (the field-grid for one row's primitive fields, plus its recursive
@@ -89,7 +90,7 @@ const store = useWorkspaceStore();
         </div>
 
         <!-- Input Controls -->
-        <div style="display: flex; gap: 4px; align-items: center; width: 100%; flex-grow: 1;">
+        <div style="display: flex; gap: 4px; align-items: center; width: 100%; flex-grow: 1; position: relative;">
           <!-- Calculated Field (Non-editable) -- the isCalculated flag wins
                over whatever the field's own nominal type is (a calculated
                field can be typed Number/Percentage/Text/... and should
@@ -172,8 +173,6 @@ const store = useWorkspaceStore();
             v-model="item[entry.key]"
             class="data-input"
             style="flex-grow: 1; height: 32px; text-align: right;"
-            :style="helpers.remoteEditingStyle(helpers.getItemPath(idx, entry.key))"
-            :title="helpers.remoteEditingTitle(helpers.getItemPath(idx, entry.key))"
             @focus="emit('editing-path-change', helpers.getItemPath(idx, entry.key))"
             @blur="emit('editing-path-change', null)"
           >
@@ -189,8 +188,6 @@ const store = useWorkspaceStore();
               @input="helpers.updatePercentageValue(item, entry.key, $event.target.value)"
               class="data-input"
               style="flex-grow: 1; height: 32px; text-align: right; padding-right: 24px;"
-              :style="helpers.remoteEditingStyle(helpers.getItemPath(idx, entry.key))"
-              :title="helpers.remoteEditingTitle(helpers.getItemPath(idx, entry.key))"
               @focus="emit('editing-path-change', helpers.getItemPath(idx, entry.key))"
               @blur="emit('editing-path-change', null)"
               placeholder="0"
@@ -208,8 +205,6 @@ const store = useWorkspaceStore();
               v-model="item[entry.key]"
               class="data-input"
               style="flex-grow: 1; height: 32px; text-align: right;"
-              :style="helpers.remoteEditingStyle(helpers.getItemPath(idx, entry.key))"
-              :title="helpers.remoteEditingTitle(helpers.getItemPath(idx, entry.key))"
               @focus="emit('editing-path-change', helpers.getItemPath(idx, entry.key))"
               @blur="emit('editing-path-change', null)"
             >
@@ -238,8 +233,6 @@ const store = useWorkspaceStore();
             v-model="item[entry.key]"
             class="data-input"
             style="flex-grow: 1; min-height: 32px;"
-            :style="helpers.remoteEditingStyle(helpers.getItemPath(idx, entry.key))"
-            :title="helpers.remoteEditingTitle(helpers.getItemPath(idx, entry.key))"
             @focus="emit('editing-path-change', helpers.getItemPath(idx, entry.key))"
             @blur="emit('editing-path-change', null)"
           />
@@ -254,6 +247,7 @@ const store = useWorkspaceStore();
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
           </button>
+          <RemoteEditingBadge :editors="helpers.remoteEditorsFor(helpers.getItemPath(idx, entry.key))" />
         </div>
       </div>
     </div>

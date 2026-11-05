@@ -25,6 +25,7 @@ import { builtinFunctions, useFormulaAutocomplete } from '../composables/useForm
 import { findElementMetadata, isFieldCalculated, fieldLabel, groupLabel, isInternalMetadataKey, saveGroupConfig as saveGroupConfigShared, getGroupViewMode, getVisibleColumns } from '../composables/useGroupMetadata';
 import NestedDataNode from './NestedDataNode.vue';
 import MarkdownField from './MarkdownField.vue';
+import RemoteEditingBadge from './RemoteEditingBadge.vue';
 import katex from 'katex';
 import { latexSymbols } from './latexSymbols';
 
@@ -54,16 +55,9 @@ let isEvaluating = false;
 let evalDebounceTimer = null;
 
 // Fase 21: qui (de remoteEditingPaths) té enfocat exactament aquest camí
-// ara mateix -- mateix criteri que NestedDataNode.vue.
+// ara mateix -- mateix criteri que NestedDataNode.vue. Consumit per
+// <RemoteEditingBadge> (la bombolla amb les inicials).
 const remoteEditorsFor = (path) => (props.remoteEditingPaths || []).filter((e) => e.path === path);
-const remoteEditingStyle = (path) => {
-  const editors = remoteEditorsFor(path);
-  return editors.length > 0 ? { outline: `2px solid ${editors[0].color}`, outlineOffset: '1px' } : {};
-};
-const remoteEditingTitle = (path) => {
-  const editors = remoteEditorsFor(path);
-  return editors.length > 0 ? `En edició per: ${editors.map((e) => e.displayName).join(', ')}` : undefined;
-};
 
 // Reprograma un timer per recalcular fórmules i desar mentre l'usuari escriu, evitant recàlculs a cada tecla
 const onCellInput = () => {
@@ -1816,7 +1810,7 @@ onMounted(() => {
                   </div>
 
                   <!-- Input Controls -->
-                  <div style="display: flex; gap: 4px; align-items: stretch; width: 100%; flex-grow: 1;">
+                  <div style="display: flex; gap: 4px; align-items: stretch; width: 100%; flex-grow: 1; position: relative;">
                     <!-- Calculated Field (Non-editable, Read-only with lock badge and type-specific formatting) -->
                     <div 
                       v-if="isCalculatedField(name, item.key)" 
@@ -1916,8 +1910,6 @@ onMounted(() => {
                       @change="onCellBlur"
                       class="data-input"
                       style="flex-grow: 1; height: 28px; text-align: right;"
-                      :style="remoteEditingStyle(name + '.' + item.key)"
-                      :title="remoteEditingTitle(name + '.' + item.key)"
                     >
 
                     <!-- Percentage Type -->
@@ -1934,8 +1926,6 @@ onMounted(() => {
                         @change="onCellBlur"
                         class="data-input"
                         style="flex-grow: 1; height: 28px; text-align: right; padding-right: 24px;"
-                        :style="remoteEditingStyle(name + '.' + item.key)"
-                        :title="remoteEditingTitle(name + '.' + item.key)"
                         placeholder="0"
                       >
                       <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.8rem; color: var(--text-muted); pointer-events: none;">%</span>
@@ -1955,8 +1945,6 @@ onMounted(() => {
                         @change="onCellBlur"
                         class="data-input"
                         style="flex-grow: 1; height: 28px; text-align: right;"
-                        :style="remoteEditingStyle(name + '.' + item.key)"
-                        :title="remoteEditingTitle(name + '.' + item.key)"
                       >
                       <span style="font-weight: 600; font-size: 0.8rem; color: var(--text-muted); flex-shrink: 0;">{{ getElementMetadata(name, item.key)?.currencySymbol || '€' }}</span>
                     </div>
@@ -1993,8 +1981,6 @@ onMounted(() => {
                       @blur="onCellBlur(); emit('editing-path-change', null)"
                       class="data-input"
                       style="flex-grow: 1; min-height: 28px;"
-                      :style="remoteEditingStyle(name + '.' + item.key)"
-                      :title="remoteEditingTitle(name + '.' + item.key)"
                     />
                     <button
                       v-if="getElementType(name, item.key) === 'Text'"
@@ -2005,11 +1991,12 @@ onMounted(() => {
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                     </button>
+                    <RemoteEditingBadge :editors="remoteEditorsFor(name + '.' + item.key)" />
                   </div>
                 </div>
               </div>
             </div>
-            
+
             <div style="margin-top: 10px; margin-bottom: 6px; display: flex; gap: 8px;">
               <button 
                 class="btn btn-secondary" 

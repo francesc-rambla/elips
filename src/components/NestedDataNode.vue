@@ -29,6 +29,7 @@ import GroupConfigModal from './GroupConfigModal.vue';
 import TemplateEditor from './TemplateEditor.vue';
 import NestedItemForm from './NestedItemForm.vue';
 import MarkdownField from './MarkdownField.vue';
+import RemoteEditingBadge from './RemoteEditingBadge.vue';
 
 const props = defineProps({
   parentObj: {
@@ -1417,15 +1418,8 @@ const getItemPath = (idx, fieldKey) => {
 // Fase 21: qui (de remoteEditingPaths) té enfocat exactament aquest camí
 // ara mateix -- normalment 0 o 1 persona, però no s'assumeix (dos usuaris
 // podrien, per error o coincidència, enfocar el mateix camp a la vegada).
+// Consumit per <RemoteEditingBadge> (la bombolla amb les inicials).
 const remoteEditorsFor = (path) => (props.remoteEditingPaths || []).filter((e) => e.path === path);
-const remoteEditingStyle = (path) => {
-  const editors = remoteEditorsFor(path);
-  return editors.length > 0 ? { outline: `2px solid ${editors[0].color}`, outlineOffset: '1px' } : {};
-};
-const remoteEditingTitle = (path) => {
-  const editors = remoteEditorsFor(path);
-  return editors.length > 0 ? `En edició per: ${editors.map((e) => e.displayName).join(', ')}` : undefined;
-};
 
 // Bundled once for NestedItemForm.vue (see its own doc comment) -- these
 // functions stay defined here (this component's own leaf table needs
@@ -1446,8 +1440,7 @@ const itemFormHelpers = {
   updatePercentageValue,
   formatCurrencyDisplay,
   unwrapFkValue,
-  remoteEditingStyle,
-  remoteEditingTitle
+  remoteEditorsFor
 };
 </script>
 
@@ -1619,7 +1612,7 @@ const itemFormHelpers = {
           <tbody>
             <tr v-for="(row, rIdx) in visibleItems" :key="rIdx" :id="'data-row-' + fullPath + '-' + rIdx">
               <td v-for="h in getLeafTableHeaders" :key="h" style="padding: 4px 6px; border-bottom: 1px solid var(--border-color);">
-                <div style="display: flex; gap: 4px; align-items: stretch; width: 100%;">
+                <div style="display: flex; gap: 4px; align-items: stretch; width: 100%; position: relative;">
                   <!-- Calculated Field (Non-editable, Read-only with lock badge and type-specific formatting) -->
                   <div 
                     v-if="isCalculatedField(h)" 
@@ -1698,8 +1691,6 @@ const itemFormHelpers = {
                     v-model="row[h]"
                     class="data-input"
                     style="flex-grow: 1; height: 28px; text-align: right;"
-                    :style="remoteEditingStyle(getItemPath(rIdx, h))"
-                    :title="remoteEditingTitle(getItemPath(rIdx, h))"
                     @focus="emit('editing-path-change', getItemPath(rIdx, h))"
                     @blur="emit('editing-path-change', null)"
                   >
@@ -1715,8 +1706,6 @@ const itemFormHelpers = {
                       @input="updatePercentageValue(row, h, $event.target.value)"
                       class="data-input"
                       style="flex-grow: 1; height: 28px; text-align: right; padding-right: 24px;"
-                      :style="remoteEditingStyle(getItemPath(rIdx, h))"
-                      :title="remoteEditingTitle(getItemPath(rIdx, h))"
                       @focus="emit('editing-path-change', getItemPath(rIdx, h))"
                       @blur="emit('editing-path-change', null)"
                       placeholder="0"
@@ -1734,8 +1723,6 @@ const itemFormHelpers = {
                       v-model="row[h]"
                       class="data-input"
                       style="flex-grow: 1; height: 28px; text-align: right;"
-                      :style="remoteEditingStyle(getItemPath(rIdx, h))"
-                      :title="remoteEditingTitle(getItemPath(rIdx, h))"
                       @focus="emit('editing-path-change', getItemPath(rIdx, h))"
                       @blur="emit('editing-path-change', null)"
                     >
@@ -1764,13 +1751,11 @@ const itemFormHelpers = {
                     v-model="row[h]"
                     class="data-input"
                     style="flex-grow: 1; min-height: 28px;"
-                    :style="remoteEditingStyle(getItemPath(rIdx, h))"
-                    :title="remoteEditingTitle(getItemPath(rIdx, h))"
                     @focus="emit('editing-path-change', getItemPath(rIdx, h))"
                     @blur="emit('editing-path-change', null)"
                   />
 
-                  <button 
+                  <button
                     v-if="getElementType(h) === 'Text'"
                     type="button"
                     class="btn-icon-only"
@@ -1780,6 +1765,7 @@ const itemFormHelpers = {
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                   </button>
+                  <RemoteEditingBadge :editors="remoteEditorsFor(getItemPath(rIdx, h))" />
                 </div>
               </td>
               <td style="padding: 4px 6px; border-bottom: 1px solid var(--border-color); text-align: center;">
