@@ -18,6 +18,7 @@
 
 <script setup>
 import { ref, watch, computed } from 'vue';
+import { encodeSessionCode, decodeSessionCode } from '../composables/useCollabRealtime';
 
 // Connect/disconnect a collaboration folder for the CURRENT project, its
 // permission lifecycle, the display name shown to other participants, and
@@ -85,23 +86,18 @@ const realtimeStatusLabel = {
 const joinCodeInput = ref('');
 const isPasswordRevealed = ref(false);
 
-// Sala i contrasenya són dues cadenes independents (totes dues sense punts:
-// `roomId` és `elips-<uuid>`, `password` un altre uuid) -- ajuntar-les amb
-// un punt dona un únic "codi de sessió" que es pot copiar/enganxar d'un sol
-// cop, més fàcil de compartir que dos valors per separat.
-const sessionCode = computed(() => `${props.realtimeRoomId}.${props.realtimePassword}`);
+// Sala, contrasenya i (Fase 18) el servidor de senyalització que s'hi ha
+// fet servir, tots junts en un únic "codi de sessió" que es pot copiar/
+// enganxar d'un sol cop -- qui s'hi uneix no ha de configurar cap servidor
+// de senyalització per separat, ja hi viatja incrustat (encodeSessionCode,
+// useCollabRealtime.js).
+const sessionCode = computed(() => encodeSessionCode({
+  roomId: props.realtimeRoomId,
+  password: props.realtimePassword,
+  signaling: props.realtimeSignalingServer,
+}));
 
-const parseSessionCode = (code) => {
-  const trimmed = code.trim();
-  const dotIdx = trimmed.indexOf('.');
-  if (dotIdx === -1) return null;
-  const roomId = trimmed.slice(0, dotIdx).trim();
-  const password = trimmed.slice(dotIdx + 1).trim();
-  if (!roomId || !password) return null;
-  return { roomId, password };
-};
-
-const parsedJoinCode = computed(() => parseSessionCode(joinCodeInput.value));
+const parsedJoinCode = computed(() => decodeSessionCode(joinCodeInput.value));
 
 const submitJoinRealtimeSession = () => {
   const parsed = parsedJoinCode.value;
@@ -325,7 +321,7 @@ const copyToClipboard = async (text) => {
                 <button type="button" class="btn-icon-only" style="border: none; background: none; cursor: pointer;" title="Copia el codi de sessió" @click="copyToClipboard(sessionCode)">📋</button>
               </div>
               <p style="font-size: 0.72rem; color: var(--text-muted); margin: 0;">
-                Comparteix aquest codi (p. ex. per xat) amb qui es vulgui unir -- no hi ha cap altra manera de distribuir-lo.
+                Comparteix aquest codi (p. ex. per xat) amb qui es vulgui unir -- ja inclou el servidor de senyalització, no cal que en configuri cap.
               </p>
               <div style="font-size: 0.78rem; color: var(--text-secondary);">
                 Document sincronitzat ara: <strong>{{ realtimeDocName }}</strong>

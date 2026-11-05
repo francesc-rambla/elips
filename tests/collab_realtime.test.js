@@ -24,6 +24,8 @@ import {
   attachTemplateBridge,
   attachJsonChannelBridge,
   generateSessionCredentials,
+  encodeSessionCode,
+  decodeSessionCode,
   mapAwarenessStatesToPeers,
   waitForRemoteProjectName,
   checkProjectMatch,
@@ -96,6 +98,36 @@ describe('generateSessionCredentials', () => {
     expect(a.password).toBeTruthy();
     expect(a.roomId).not.toBe(b.roomId);
     expect(a.password).not.toBe(b.password);
+  });
+});
+
+describe('encodeSessionCode / decodeSessionCode (Fase 18: el codi de sessió inclou el servidor de senyalització)', () => {
+  it('round-trips roomId/password/signaling exactly, including dots, colons and a port', () => {
+    const creds = generateSessionCredentials();
+    const signaling = 'wss://signaling.example.com:4444/path';
+    const code = encodeSessionCode({ ...creds, signaling });
+    expect(decodeSessionCode(code)).toEqual({ ...creds, signaling });
+  });
+
+  it('omits the third segment (and signaling comes back undefined) when no signaling server is given', () => {
+    const creds = generateSessionCredentials();
+    const code = encodeSessionCode(creds);
+    expect(code).toBe(`${creds.roomId}.${creds.password}`);
+    expect(decodeSessionCode(code)).toEqual({ ...creds, signaling: undefined });
+  });
+
+  it('decodes an old-style two-segment code (no signaling) without any migration', () => {
+    expect(decodeSessionCode('elips-abc.pw123')).toEqual({ roomId: 'elips-abc', password: 'pw123', signaling: undefined });
+  });
+
+  it('returns null for empty, whitespace-only, or single-segment input', () => {
+    expect(decodeSessionCode('')).toBeNull();
+    expect(decodeSessionCode('   ')).toBeNull();
+    expect(decodeSessionCode('onlyoneword')).toBeNull();
+  });
+
+  it('trims surrounding whitespace (e.g. pasted from chat)', () => {
+    expect(decodeSessionCode('  elips-abc.pw123  ')).toEqual({ roomId: 'elips-abc', password: 'pw123', signaling: undefined });
   });
 });
 

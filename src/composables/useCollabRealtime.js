@@ -213,6 +213,55 @@ export function generateSessionCredentials() {
   };
 }
 
+/** Base64url (sense `=` de farciment) -- mai conté punts ni barres, a
+ * diferència del base64 estàndard, perquè es pugui ficar com a tercer
+ * segment d'un "codi de sessió" (`encodeSessionCode`) separat per punts
+ * sense ambigüitat en partir la cadena. */
+function toBase64Url(str) {
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function fromBase64Url(str) {
+  try {
+    let b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    return atob(b64);
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Codi de sessió (Fase 18): `roomId.password`, amb el servidor de
+ * senyalització que s'ha fet servir per connectar-se opcionalment afegit
+ * com a tercer segment (codificat en base64url perquè `wss://...` -- amb
+ * punts i dos punts -- no trenqui el format) perquè compartir una sola
+ * cadena (p. ex. per xat) ja sigui suficient per començar a col·laborar,
+ * sense que qui s'hi uneix hagi de configurar cap servidor de senyalització
+ * per separat. `roomId`/`password` són sempre UUIDs sense punts
+ * (`generateSessionCredentials`), així que `code.split('.')` mai en dona
+ * més de 3 segments. Sense `signaling`, el format és idèntic a l'anterior
+ * (2 segments) -- compatible sense cap migració. */
+export function encodeSessionCode({ roomId, password, signaling }) {
+  const base = `${roomId}.${password}`;
+  return signaling ? `${base}.${toBase64Url(signaling)}` : base;
+}
+
+/** Invers d'encodeSessionCode -- retorna `null` si el codi no té almenys
+ * els dos primers segments (sala i contrasenya) o si el tercer segment
+ * (servidor de senyalització) hi és però no es pot decodificar. Un codi
+ * "a l'antiga" (2 segments) hi és compatible: retorna `signaling:
+ * undefined`, i qui ho consumeixi cau al seu propi mecanisme de tria de
+ * servidor (Fase 11.3) com fins ara. */
+export function decodeSessionCode(code) {
+  const trimmed = (code || '').trim();
+  if (!trimmed) return null;
+  const [roomId, password, encodedSignaling] = trimmed.split('.');
+  if (!roomId || !password) return null;
+  if (!encodedSignaling) return { roomId, password, signaling: undefined };
+  const signaling = fromBase64Url(encodedSignaling);
+  if (signaling === null) return null;
+  return { roomId, password, signaling };
+}
+
 /** Converteix un reemplaçament sencer de cadena (oldStr -> newStr) en el
  * mínim parell esborra/insereix posicional que Y.Text necessita, per
  * aprofitar la fusió caràcter a caràcter en lloc de substituir tot el text

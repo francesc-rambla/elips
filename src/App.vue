@@ -25,7 +25,7 @@ import { saveBinaryFile, getBinaryFile, deleteBinaryFile, deleteDbItem } from '.
 import { useVersionHistory } from './composables/useVersionHistory';
 import { useCollabFolder } from './composables/useCollabFolder';
 import { useCollabSync } from './composables/useCollabSync';
-import { useCollabRealtime, generateSessionCredentials } from './composables/useCollabRealtime';
+import { useCollabRealtime, generateSessionCredentials, normalizeSignalingServers } from './composables/useCollabRealtime';
 import { getDisplayNameOrFallback, setDisplayName as setCollabDisplayName } from './composables/useCollabIdentity';
 
 // Components
@@ -179,6 +179,20 @@ window.collabRealtime = collabRealtime;
 // conserva en aquell cas, perquè no arriba a l'estat 'connected'.
 const lastRealtimeJoinAttempt = ref(null);
 
+// Fase 18 (vegeu el pla): quan el codi de sessió porta incrustat el
+// servidor de senyalització que s'hi ha fet servir, es prova primer (camí
+// ràpid -- normalment l'únic pas) i, si falla, es cau EN SILENCI (sense
+// `confirm()`, a diferència del mecanisme de preferit de la Fase 11.3: aquí
+// és un valor d'un sol ús, no una preferència persistent de l'usuari) a la
+// pròpia llista configurada. Sense `preferredUrl`, retorna `undefined`
+// perquè `startRealtimeSession` faci servir el seu propi valor per defecte
+// (`store.config.collabSignalingServers`) sense cap canvi de comportament.
+const signalingListWithPreferred = (preferredUrl) => {
+  if (!preferredUrl) return undefined;
+  const ownUrls = normalizeSignalingServers(store.config.collabSignalingServers).map((s) => s.url);
+  return [preferredUrl, ...ownUrls.filter((u) => u !== preferredUrl)];
+};
+
 const handleStartRealtimeSession = async () => {
   try {
     const { roomId, password } = generateSessionCredentials();
@@ -194,12 +208,13 @@ const handleStartRealtimeSession = async () => {
   }
 };
 
-const handleJoinRealtimeSession = async ({ roomId, password }) => {
-  lastRealtimeJoinAttempt.value = { roomId, password };
+const handleJoinRealtimeSession = async ({ roomId, password, signaling }) => {
+  lastRealtimeJoinAttempt.value = { roomId, password, signaling };
   try {
     await startRealtimeSession({
       roomId,
       password,
+      signaling: signalingListWithPreferred(signaling),
       mode: 'join',
       projectName: currentProjectName.value,
       savedProjectNames: savedProjectsList.value,
@@ -219,6 +234,7 @@ const handleRequestProjectTransfer = async () => {
       await startRealtimeSession({
         roomId: lastRealtimeJoinAttempt.value.roomId,
         password: lastRealtimeJoinAttempt.value.password,
+        signaling: signalingListWithPreferred(lastRealtimeJoinAttempt.value.signaling),
         mode: 'join',
         projectName: currentProjectName.value,
         savedProjectNames: savedProjectsList.value,
@@ -240,6 +256,10 @@ watch(collabRealtimeStatus, (status) => {
     localStorage.setItem(`${currentProjectName.value}:collabRealtimeSession`, JSON.stringify({
       roomId: collabRealtimeRoomId.value,
       password: collabRealtimePassword.value,
+      // Fase 18: desa també quin servidor de senyalització ha funcionat --
+      // la propera reconnexió automàtica el prova primer (camí ràpid),
+      // sense haver de tornar a provar tota la llista configurada.
+      signaling: collabRealtimeSignalingServer.value || undefined,
     }));
   }
 });
@@ -263,6 +283,7 @@ const tryAutoReconnectRealtime = async (name) => {
     await startRealtimeSession({
       roomId: saved.roomId,
       password: saved.password,
+      signaling: signalingListWithPreferred(saved.signaling),
       mode: 'start',
       projectName: name,
       docName: activeDocName.value,
