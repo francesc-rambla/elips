@@ -718,13 +718,23 @@ const isCellModalOpen = ref(false);
 const activeCellInfo = ref(null);
 const cellTextValue = ref('');
 
-const openCellEditor = (item, fieldKey) => {
+const openCellEditor = (item, fieldKey, idx) => {
   if (getElementType(fieldKey) !== 'Text') {
     return;
   }
-  activeCellInfo.value = { item, fieldKey };
+  activeCellInfo.value = { item, fieldKey, path: idx !== undefined ? getItemPath(idx, fieldKey) : null };
   cellTextValue.value = String(item[fieldKey] || '');
   isCellModalOpen.value = true;
+  emit('editing-path-change', activeCellInfo.value.path);
+};
+
+// Tanca l'editor de cel·la (desant o no) -- sempre allibera la marca
+// d'edició en viu (Fase 21): mentre l'editor visual estigui obert, el camp
+// es considera "en edició" encara que el focus no sigui sobre l'input
+// original (@blur d'aquest ja s'ha disparat en obrir el modal).
+const closeCellEditor = () => {
+  isCellModalOpen.value = false;
+  emit('editing-path-change', null);
 };
 
 const saveCellEditor = () => {
@@ -732,7 +742,7 @@ const saveCellEditor = () => {
     const { item, fieldKey } = activeCellInfo.value;
     item[fieldKey] = cellTextValue.value;
   }
-  isCellModalOpen.value = false;
+  closeCellEditor();
   store.addLog("Camp actualitzat correctament.", "success");
 };
 
@@ -768,7 +778,7 @@ const handleNestedKeydown = (e) => {
   if (isCellModalOpen.value) {
     if (e.key === 'Escape') {
       e.preventDefault();
-      isCellModalOpen.value = false;
+      closeCellEditor();
     } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       saveCellEditor();
@@ -1761,7 +1771,7 @@ const itemFormHelpers = {
                     class="btn-icon-only"
                     style="height: 28px; width: 28px; min-width: 28px; font-size: 0.8rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--bg-tertiary);"
                     title="Edició complexa en Markdown + Jinja2"
-                    @click="openCellEditor(row, h)"
+                    @click="openCellEditor(row, h, rIdx)"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                   </button>
@@ -2017,7 +2027,7 @@ const itemFormHelpers = {
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
             <span>Editor Visual de Cel·la (Markdown + Jinja2): <code>{{ activeCellInfo?.fieldKey }}</code></span>
           </h3>
-          <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="isCellModalOpen = false">&times;</button>
+          <button type="button" class="btn-icon-only" style="border:none; background:none; font-size:1.5rem; cursor: pointer;" @click="closeCellEditor">&times;</button>
         </div>
         
         <div class="modal-body" style="flex-grow: 1; padding: 0.5rem; overflow: hidden; display: flex; flex-direction: column;">
@@ -2025,7 +2035,7 @@ const itemFormHelpers = {
         </div>
         
         <div class="modal-footer" style="margin-top: auto; border-top: 1px solid var(--border-color); padding-top: 0.75rem; display: flex; justify-content: flex-end; gap: 8px;">
-          <button type="button" class="btn btn-secondary" style="width: auto;" @click="isCellModalOpen = false">Cancel·lar</button>
+          <button type="button" class="btn btn-secondary" style="width: auto;" @click="closeCellEditor">Cancel·lar</button>
           <button type="button" class="btn btn-primary" style="width: auto;" @click="saveCellEditor">Aplicar Canvis</button>
         </div>
       </div>

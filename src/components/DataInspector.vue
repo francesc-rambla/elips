@@ -551,6 +551,10 @@ const openCellEditor = (sheet, keyOrIdx, col, isKv) => {
   cellTextValue.value = String(val || '');
   cellTextValueAtOpen.value = cellTextValue.value;
   isCellModalOpen.value = true;
+  // Fase 21 (refinament): l'editor visual compta com "en edició" d'aquesta
+  // cel·la encara que el focus ja no sigui sobre l'input original (el seu
+  // propi @blur ja s'ha disparat en obrir el modal).
+  emit('editing-path-change', isKv ? `${sheet}.${keyOrIdx}` : `${sheet}.${keyOrIdx}.${col}`);
 };
 
 // Desa el text editat al modal de cel·la de tornada a la dada corresponent (KV o tabular) i tanca el modal
@@ -562,6 +566,7 @@ const saveCellEditor = () => {
     store.excelJsonData[sheet][keyOrIdx][col] = cellTextValue.value;
   }
   isCellModalOpen.value = false;
+  emit('editing-path-change', null);
   store.addLog("Cel·la actualitzada correctament.", "success");
 };
 
@@ -574,6 +579,7 @@ const closeCellEditor = () => {
     return;
   }
   isCellModalOpen.value = false;
+  emit('editing-path-change', null);
 };
 
 // Gestiona dreceres de teclat (Escape/Enter) per a tots els modals propis d'aquest component, segons quin estigui obert
