@@ -170,6 +170,7 @@ const {
   closeRealtimeForProject,
   resumeOfflineCapture,
   requestAndImportProject,
+  setLocalCursor,
 } = collabRealtime;
 window.collabRealtime = collabRealtime;
 
@@ -321,6 +322,19 @@ const collabActivityTitle = computed(() => {
     ? `🔗 Col·laboració -- ${parts.join('; ')}`
     : '🔗 Col·laboració via carpeta compartida o sessió en viu';
 });
+
+// Fase 20: participants de la sessió en viu, filtrats al que
+// TemplateEditor.vue necessita per renderitzar-hi cursors remots --
+// exclou-me a mi mateix i qualsevol company que ara mateix sigui a un
+// ALTRE document d'aquest mateix projecte (Fase 11.2).
+const templateCollabPeers = computed(() => {
+  if (collabRealtimeStatus.value !== 'connected') return [];
+  return collabRealtimePeers.value.filter((p) => !p.isSelf && p.docName === activeDocName.value);
+});
+
+const handleUpdateTemplateCursor = (cursor) => {
+  setLocalCursor(activeDocName.value, cursor);
+};
 
 const handleConnectCollabFolder = async () => {
   try {
@@ -3178,7 +3192,7 @@ const generateDocuments = async () => {
 
           <!-- Tab: Template Editor -->
           <div class="tab-content" :class="{ active: store.activeTab === 'template' }" style="overflow: hidden; height: 100%; min-height: 0;">
-            <TemplateEditor @generate="generateDocuments" />
+            <TemplateEditor @generate="generateDocuments" :collab-peers="templateCollabPeers" @update-cursor="handleUpdateTemplateCursor" />
           </div>
 
           <!-- Tab: Document Previews -->

@@ -139,8 +139,8 @@ describe('mapAwarenessStatesToPeers (Fase 11: participants des de l\'Awareness d
     ]);
     const peers = mapAwarenessStatesToPeers(states, 2);
     expect(peers).toEqual([
-      { userId: 'u1', displayName: 'Anna', isSelf: false },
-      { userId: 'u2', displayName: 'Bernat', isSelf: true },
+      { userId: 'u1', displayName: 'Anna', isSelf: false, docName: undefined, cursor: null, editingPath: null },
+      { userId: 'u2', displayName: 'Bernat', isSelf: true, docName: undefined, cursor: null, editingPath: null },
     ]);
   });
 
@@ -150,13 +150,13 @@ describe('mapAwarenessStatesToPeers (Fase 11: participants des de l\'Awareness d
       [2, { user: { userId: 'u2', displayName: 'Bernat' } }],
     ]);
     const peers = mapAwarenessStatesToPeers(states, 1);
-    expect(peers).toEqual([{ userId: 'u2', displayName: 'Bernat', isSelf: false }]);
+    expect(peers).toEqual([{ userId: 'u2', displayName: 'Bernat', isSelf: false, docName: undefined, cursor: null, editingPath: null }]);
   });
 
   it('falls back to a generic label and the raw clientId when userId/displayName are missing', () => {
     const states = new Map([[42, { user: {} }]]);
     const peers = mapAwarenessStatesToPeers(states, 1);
-    expect(peers).toEqual([{ userId: '42', displayName: 'Algú', isSelf: false }]);
+    expect(peers).toEqual([{ userId: '42', displayName: 'Algú', isSelf: false, docName: undefined, cursor: null, editingPath: null }]);
   });
 
   it('returns an empty list for an empty states map', () => {
@@ -166,7 +166,13 @@ describe('mapAwarenessStatesToPeers (Fase 11: participants des de l\'Awareness d
   it('includes docName (Fase 11.2) when a peer has published which document it is on', () => {
     const states = new Map([[1, { user: { userId: 'u1', displayName: 'Anna', docName: 'Memòria justificativa' } }]]);
     const peers = mapAwarenessStatesToPeers(states, 2);
-    expect(peers).toEqual([{ userId: 'u1', displayName: 'Anna', isSelf: false, docName: 'Memòria justificativa' }]);
+    expect(peers).toEqual([{ userId: 'u1', displayName: 'Anna', isSelf: false, docName: 'Memòria justificativa', cursor: null, editingPath: null }]);
+  });
+
+  it('includes cursor (Fase 20) and editingPath (Fase 21) when a peer has published them', () => {
+    const states = new Map([[1, { user: { userId: 'u1', displayName: 'Anna', docName: 'Document Principal', cursor: { anchor: 3, head: 7 }, editingPath: 'Lots.0.import_lot' } }]]);
+    const peers = mapAwarenessStatesToPeers(states, 2);
+    expect(peers).toEqual([{ userId: 'u1', displayName: 'Anna', isSelf: false, docName: 'Document Principal', cursor: { anchor: 3, head: 7 }, editingPath: 'Lots.0.import_lot' }]);
   });
 });
 

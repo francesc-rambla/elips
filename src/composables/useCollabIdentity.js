@@ -64,3 +64,20 @@ export function getDisplayNameOrFallback() {
   if (name) return name;
   return `Usuari ${getOrCreateUserId().slice(0, 4)}`;
 }
+
+/** Color estable per persona (Fase 20/21), derivat determinísticament del
+ * seu `userId` -- mai canvia entre sessions, mai col·lisiona amb ningú per
+ * atzar d'ordre de connexió (a diferència d'assignar colors d'una paleta
+ * fixa per ordre d'arribada). Saturació/lluminositat fixes, pensades per
+ * ser llegibles tant en tema clar com fosc; només el to varia per usuari.
+ * Reutilitzat pel cursor remot a l'editor de plantilla, la marca de cel·la
+ * en edició a l'inspector de dades, i la llista de participants. */
+export function getUserColor(userId) {
+  const str = String(userId || '');
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  }
+  const hue = hash % 360;
+  return `hsl(${hue}, 65%, 45%)`;
+}

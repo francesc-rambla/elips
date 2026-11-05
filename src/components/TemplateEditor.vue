@@ -24,6 +24,7 @@ import { useLoopContext } from '../composables/useLoopContext';
 import { useMarkdownJinjaCompiler, htmlToMarkdown, splitTableLine, alignFromDivider, friendlyTotalLabel, TRANSPOSED_TABLE_RE, DYNAMIC_TABLE_RE, ICON_LOOP, ICON_IF, ICON_MACRO, ICON_SET, ICON_COLLAPSE, ICON_INLINE_TOGGLE, ICON_TRASH, ICON_EDIT } from '../composables/useMarkdownJinjaCompiler';
 import { useWasmEngines } from '../composables/useWasmEngines';
 import { useEditHistory } from '../composables/useEditHistory';
+import { getUserColor } from '../composables/useCollabIdentity';
 import { EditorState as CmEditorState, StateField as CmStateField, StateEffect as CmStateEffect } from '@codemirror/state';
 import { EditorView as CmEditorView, keymap as CmKeymap, lineNumbers as CmLineNumbers, Decoration as CmDecoration, ViewPlugin as CmViewPlugin, WidgetType as CmWidgetType, placeholder as cmPlaceholder } from '@codemirror/view';
 import { defaultKeymap as cmDefaultKeymap } from '@codemirror/commands';
@@ -37,10 +38,15 @@ import BlockModal from './template-editor/BlockModal.vue';
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
-  isCellMode: { type: Boolean, default: false }
+  isCellMode: { type: Boolean, default: false },
+  // Fase 20 (vegeu el pla): participants ja filtrats per App.vue a
+  // "connectats a la sessió en viu, en AQUEST document, que no sóc jo" --
+  // aquest component només els renderitza, no decideix qui hi pertany.
+  // {userId, displayName, cursor: {anchor, head} | null, ...}.
+  collabPeers: { type: Array, default: () => [] },
 });
 
-const emit = defineEmits(['update:modelValue', 'generate']);
+const emit = defineEmits(['update:modelValue', 'generate', 'update-cursor']);
 
 const store = useWorkspaceStore();
 const { previewExpression, validateTemplateSyntax } = useWasmEngines();
@@ -2282,6 +2288,80 @@ const yamlMetadataField = CmStateField.define({
   provide: (f) => CmEditorView.decorations.from(f),
 });
 
+// Fase 20 (vegeu el pla): cursors/seleccions remots d'altres participants
+// de la sessió en viu (Yjs Awareness, useCollabRealtime.js). Mateix patró
+// exacte que jinjaTagMatchPlugin (StateField + ViewPlugin que en construeix
+// les decoracions), però la llista ve de FORA de CodeMirror (un `watch()`
+// sobre el prop `collabPeers`, més avall) -- per fer-hi arribar dades
+// externes calen un StateEffect per "injectar-les" en despatxar una
+// transacció i un StateField que les guardi, mateix idioma que
+// toggleJinjaExpandEffect/jinjaExpandedField ja fan servir per a l'estat
+// d'expansió dels blocs macro/set.
+const setRemoteCursorsEffect = CmStateEffect.define();
+const remoteCursorsField = CmStateField.define({
+  create() { return []; },
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setRemoteCursorsEffect)) value = effect.value;
+    }
+    if (tr.docChanged && value.length > 0) {
+      // Mateix raonament que jinjaExpandedField: una edició local entre dues
+      // actualitzacions d'Awareness no ha de desplaçar les posicions ja
+      // conegudes fora de lloc.
+      value = value.map((c) => ({
+        ...c,
+        anchor: tr.changes.mapPos(c.anchor, -1),
+        head: tr.changes.mapPos(c.head, -1),
+      }));
+    }
+    return value;
+  },
+});
+
+class RemoteCursorWidget extends CmWidgetType {
+  constructor(displayName, color) {
+    super();
+    this.displayName = displayName;
+    this.color = color;
+  }
+  eq(other) { return other.displayName === this.displayName && other.color === this.color; }
+  toDOM() {
+    const wrap = document.createElement('span');
+    wrap.className = 'elips-remote-cursor';
+    wrap.style.cssText = `position:relative;display:inline-block;width:0;height:1.2em;vertical-align:text-bottom;border-left:2px solid ${this.color};`;
+    const tag = document.createElement('span');
+    tag.textContent = this.displayName;
+    tag.style.cssText = `position:absolute;top:-1.3em;left:-2px;white-space:nowrap;font-size:0.65rem;line-height:1.2;padding:0 3px;border-radius:2px 2px 2px 0;color:#fff;background:${this.color};pointer-events:none;`;
+    wrap.appendChild(tag);
+    return wrap;
+  }
+  ignoreEvent() { return true; }
+}
+
+function buildRemoteCursorDecorations(view) {
+  const cursors = view.state.field(remoteCursorsField, false) || [];
+  if (cursors.length === 0) return CmDecoration.none;
+  const docLen = view.state.doc.length;
+  const ranges = cursors
+    .map((c) => CmDecoration.widget({ widget: new RemoteCursorWidget(c.displayName, c.color), side: 1 })
+      .range(Math.max(0, Math.min(docLen, c.head))))
+    .sort((a, b) => a.from - b.from);
+  return CmDecoration.set(ranges);
+}
+
+const remoteCursorPlugin = CmViewPlugin.fromClass(class {
+  constructor(view) {
+    this.decorations = buildRemoteCursorDecorations(view);
+  }
+  update(update) {
+    if (update.docChanged || update.transactions.some((tr) => tr.effects.some((e) => e.is(setRemoteCursorsEffect)))) {
+      this.decorations = buildRemoteCursorDecorations(update.view);
+    }
+  }
+}, {
+  decorations: (v) => v.decorations,
+});
+
 // defaultKeymap ships plain editing (cursor movement, delete, indent...);
 // Ctrl+Z/Y are deliberately NOT bound here -- undoEdit/redoEdit (below) is
 // the single shared history across both tabs, wired directly in
@@ -2307,6 +2387,10 @@ const createCmView = (containerEl, extraExtensions, placeholderText, showLineNum
     extensions: [
       ...(showLineNumbers ? [CmLineNumbers()] : []),
       CmEditorView.lineWrapping,
+      // Fase 20: en TOTS DOS tabs -- Codi i Visual -- perquè canviar de tab
+      // no amagui mai el cursor d'un company que ja s'hi veia.
+      remoteCursorsField,
+      remoteCursorPlugin,
       ...extraExtensions,
       cmPlaceholder(placeholderText),
       CmKeymap.of(CM_SAFE_KEYMAP),
@@ -2316,6 +2400,12 @@ const createCmView = (containerEl, extraExtensions, placeholderText, showLineNum
           if (editorText.value !== newText) editorText.value = newText;
         }
         if (update.docChanged || update.selectionSet) updateActiveLoopContext();
+        // Fase 20: només publica la pròpia posició des del tab VISIBLE --
+        // mai des del que s'ha deixat de mirar -- i amb un petit debounce
+        // perquè escriure/moure el cursor no inundi l'Awareness.
+        if (update.selectionSet && update.view === activeCmView()) {
+          scheduleCursorPublish(update.state.selection.main);
+        }
       }),
       CmEditorView.theme({
         '&': { height: '100%', fontSize: '0.85rem' },
@@ -2326,6 +2416,7 @@ const createCmView = (containerEl, extraExtensions, placeholderText, showLineNum
   });
   const view = new CmEditorView({ state, parent: containerEl });
   view.scrollDOM.addEventListener('scroll', saveScrollState);
+  dispatchRemoteCursorsTo(view); // la llista ja podia ser no buida abans que aquest tab s'obrís per primer cop
   return view;
 };
 
@@ -2360,6 +2451,36 @@ const createVisualCodeMirrorView = () => {
 // is live.
 const activeShim = () => (activeEditorTab.value === 'code' ? textareaRef.value : visualTextareaRef.value);
 const activeCmView = () => (activeEditorTab.value === 'code' ? codeMirrorView : visualCodeMirrorView);
+
+// Fase 20: publica la pròpia posició de cursor/selecció (useCollabRealtime.js,
+// via App.vue) amb un petit debounce -- escriure o moure el cursor sense
+// aturar-se no ha d'inundar l'Awareness de Yjs amb un missatge per tecla.
+let cursorPublishTimer = null;
+const scheduleCursorPublish = (range) => {
+  clearTimeout(cursorPublishTimer);
+  cursorPublishTimer = setTimeout(() => {
+    emit('update-cursor', { anchor: range.anchor, head: range.head });
+  }, 200);
+};
+
+// Tradueix els participants rebuts (ja filtrats per App.vue: en aquest
+// document, no jo mateix) a la forma que remoteCursorsField espera, i els
+// despatxa a una vista concreta -- cridat tant des del watch() de sota
+// (les dues vistes que ja existeixin) com just en crear-ne una de nova
+// (createCmView), perquè una vista que s'obre per primer cop no comenci
+// buida si els altres companys ja hi eren.
+const dispatchRemoteCursorsTo = (view) => {
+  if (!view) return;
+  const list = (props.collabPeers || [])
+    .filter((p) => p.cursor)
+    .map((p) => ({ anchor: p.cursor.anchor, head: p.cursor.head, displayName: p.displayName, color: getUserColor(p.userId) }));
+  view.dispatch({ effects: setRemoteCursorsEffect.of(list) });
+};
+
+watch(() => props.collabPeers, () => {
+  dispatchRemoteCursorsTo(codeMirrorView);
+  dispatchRemoteCursorsTo(visualCodeMirrorView);
+}, { deep: true });
 
 // Applies an editorText change that originated OUTSIDE a given CodeMirror
 // view (an edit made in the OTHER tab, an undo/redo snapshot, a
@@ -3949,6 +4070,7 @@ onUnmounted(() => {
   visualCodeMirrorView?.destroy();
   visualCodeMirrorView = null;
   clearTimeout(remoteTemplateMergeBannerTimer);
+  clearTimeout(cursorPublishTimer);
 });
 </script>
 

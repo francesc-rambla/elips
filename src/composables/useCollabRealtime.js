@@ -598,7 +598,12 @@ export function requestProjectTransfer(ydoc, transferMap, chunksArray, { myUserI
  * provar directament, sense necessitat d'un WebrtcProvider real
  * (`statesMap` pot ser qualsevol `Map`, no cal que vingui de Yjs). `docName`
  * (Fase 11.2) és opcional -- no tots els estats l'han de portar -- i indica
- * en quin document d'aquest projecte és aquell participant ara mateix. */
+ * en quin document d'aquest projecte és aquell participant ara mateix.
+ * `cursor` (Fase 20, `{anchor, head}`, decalatges de caràcter dins
+ * `store.templateText` del document indicat per `docName`) i `editingPath`
+ * (Fase 21, el camí JSON del camp del model de dades que té enfocat ara
+ * mateix, o `null`) també són opcionals -- additius, cap consumidor
+ * existent d'aquesta funció es trenca per no conèixer-los. */
 export function mapAwarenessStatesToPeers(statesMap, selfClientId) {
   const peers = [];
   statesMap.forEach((state, clientId) => {
@@ -609,6 +614,8 @@ export function mapAwarenessStatesToPeers(statesMap, selfClientId) {
       displayName: user.displayName || 'Algú',
       isSelf: clientId === selfClientId,
       docName: user.docName,
+      cursor: user.cursor || null,
+      editingPath: user.editingPath || null,
     });
   });
   return peers;
@@ -1024,13 +1031,44 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
     connectedPeers.value = mapAwarenessStatesToPeers(provider.awareness.getStates(), provider.awareness.clientID);
   }
 
+  // Valors propis que viatgen amb l'Awareness però que NO tenen el seu
+  // propi ref reactiu exposat (a diferència de currentDocName, etc.) --
+  // seguiment intern senzill perquè publishAwarenessUser() sempre pugui
+  // republicar l'objecte 'user' SENCER (setLocalStateField('user', ...) el
+  // reemplaça tot, no el combina) sense que setLocalCursor() hagi
+  // d'esborrar sense voler el que hagi deixat setLocalEditingPath(), o
+  // viceversa (Fases 20/21).
+  let localCursor = null;
+  let localEditingPath = null;
+
   function publishAwarenessUser() {
     if (!provider) return;
     provider.awareness.setLocalStateField('user', {
       userId: getOrCreateUserId(),
       displayName: getDisplayNameOrFallback(),
       docName: currentDocName.value,
+      cursor: localCursor,
+      editingPath: localEditingPath,
     });
+  }
+
+  // Fase 20: publica la posició del cursor/selecció pròpia dins el document
+  // `docName` -- no-op si `docName` ja no és el document actiu (p. ex. un
+  // esdeveniment de selecció arribat tard d'un editor que s'acaba de deixar
+  // de mirar, Fase 11.2) o si no hi ha sessió de xarxa activa.
+  function setLocalCursor(docName, cursor) {
+    if (!provider || docName !== currentDocName.value) return;
+    localCursor = cursor;
+    publishAwarenessUser();
+  }
+
+  // Fase 21: publica (o esborra, amb `null`) el camí JSON del camp del
+  // model de dades que l'usuari té enfocat ara mateix -- abast de PROJECTE,
+  // no de document (com els canals `schema`/`data`).
+  function setLocalEditingPath(path) {
+    if (!provider) return;
+    localEditingPath = path;
+    publishAwarenessUser();
   }
 
   // (Re)vincula el pont de plantilla (attachTemplateBridge) al Y.Text propi
@@ -1118,6 +1156,10 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
     currentPassword.value = '';
     pendingProjectName.value = '';
     transferProgress.value = null;
+    // Fase 20/21: cap sentit a republicar un cursor/camí d'edició d'una
+    // sessió de xarxa que ja no existeix en reconnectar.
+    localCursor = null;
+    localEditingPath = null;
   }
 
   // Tanca els ponts de document i allibera el Y.Doc persistent d'aquest
@@ -1372,6 +1414,10 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
     // desajust ytext/store només pot venir del propi retard del debounce de
     // persistència -- mateix raonament que resumeOfflineCapture().
     await bindDocument(docName, { preferLocal: !provider });
+    // Fase 20: el cursor publicat era del document que acabem de deixar --
+    // ja no té sentit (ni, amb el filtre per docName de qui el consumeix,
+    // es mostraria mai) fins que l'usuari torni a moure'l en el document nou.
+    localCursor = null;
     if (provider) publishAwarenessUser();
   }
 
@@ -1485,5 +1531,7 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
     closeRealtimeForProject,
     resumeOfflineCapture,
     requestAndImportProject,
+    setLocalCursor,
+    setLocalEditingPath,
   };
 }
