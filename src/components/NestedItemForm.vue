@@ -46,8 +46,15 @@ const props = defineProps({
   childKeys: { type: Array, default: () => [] },
   childSchemas: { type: Object, default: () => ({}) },
   nestingDepth: { type: Number, default: 0 },
-  helpers: { type: Object, required: true }
+  helpers: { type: Object, required: true },
+  // Fase 21 (vegeu el pla) -- rebut com a dada pròpia (no només via
+  // `helpers`, que només porta funcions) perquè aquest component el pugui
+  // reenviar tal qual al seu propi <NestedDataNode> fill (secció "Child
+  // Hierarchies" més avall).
+  remoteEditingPaths: { type: Array, default: () => [] }
 });
+
+const emit = defineEmits(['editing-path-change']);
 
 const store = useWorkspaceStore();
 </script>
@@ -165,6 +172,10 @@ const store = useWorkspaceStore();
             v-model="item[entry.key]"
             class="data-input"
             style="flex-grow: 1; height: 32px; text-align: right;"
+            :style="helpers.remoteEditingStyle(helpers.getItemPath(idx, entry.key))"
+            :title="helpers.remoteEditingTitle(helpers.getItemPath(idx, entry.key))"
+            @focus="emit('editing-path-change', helpers.getItemPath(idx, entry.key))"
+            @blur="emit('editing-path-change', null)"
           >
 
           <!-- Percentage Type -->
@@ -178,6 +189,10 @@ const store = useWorkspaceStore();
               @input="helpers.updatePercentageValue(item, entry.key, $event.target.value)"
               class="data-input"
               style="flex-grow: 1; height: 32px; text-align: right; padding-right: 24px;"
+              :style="helpers.remoteEditingStyle(helpers.getItemPath(idx, entry.key))"
+              :title="helpers.remoteEditingTitle(helpers.getItemPath(idx, entry.key))"
+              @focus="emit('editing-path-change', helpers.getItemPath(idx, entry.key))"
+              @blur="emit('editing-path-change', null)"
               placeholder="0"
             >
             <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.82rem; color: var(--text-muted); pointer-events: none;">%</span>
@@ -193,6 +208,10 @@ const store = useWorkspaceStore();
               v-model="item[entry.key]"
               class="data-input"
               style="flex-grow: 1; height: 32px; text-align: right;"
+              :style="helpers.remoteEditingStyle(helpers.getItemPath(idx, entry.key))"
+              :title="helpers.remoteEditingTitle(helpers.getItemPath(idx, entry.key))"
+              @focus="emit('editing-path-change', helpers.getItemPath(idx, entry.key))"
+              @blur="emit('editing-path-change', null)"
             >
             <span style="font-weight: 600; font-size: 0.82rem; color: var(--text-muted); flex-shrink: 0;">{{ helpers.getElementMetadata(entry.key)?.currencySymbol || '€' }}</span>
           </div>
@@ -219,6 +238,10 @@ const store = useWorkspaceStore();
             v-model="item[entry.key]"
             class="data-input"
             style="flex-grow: 1; min-height: 32px;"
+            :style="helpers.remoteEditingStyle(helpers.getItemPath(idx, entry.key))"
+            :title="helpers.remoteEditingTitle(helpers.getItemPath(idx, entry.key))"
+            @focus="emit('editing-path-change', helpers.getItemPath(idx, entry.key))"
+            @blur="emit('editing-path-change', null)"
           />
 
           <button
@@ -249,6 +272,8 @@ const store = useWorkspaceStore();
       :schema="childSchemas[cKey] || { fields: [], children: {} }"
       :parentPath="fullPath"
       :nestingDepth="nestingDepth + 1"
+      :remote-editing-paths="remoteEditingPaths"
+      @editing-path-change="(p) => emit('editing-path-change', p)"
     />
   </template>
 </template>

@@ -29,7 +29,7 @@ import { marked } from 'marked';
 const props = defineProps({
   modelValue: { type: [String, Number], default: '' }
 });
-const emit = defineEmits(['update:modelValue', 'blur']);
+const emit = defineEmits(['update:modelValue', 'blur', 'focus']);
 
 const isEditing = ref(false);
 const textareaRef = ref(null);
@@ -38,8 +38,14 @@ const rawText = computed(() => props.modelValue != null ? String(props.modelValu
 
 const renderedHtml = computed(() => rawText.value.trim() ? marked.parse(rawText.value) : '');
 
-const enterEdit = () => {
+const enterEdit = (event) => {
   isEditing.value = true;
+  // Emès explícitament (Fase 21, vegeu el pla) -- el `focus` natiu del DOM
+  // no es propaga (a diferència de `focusin`), així que un `@focus` escoltat
+  // des de fora d'aquest component (al `<div>` de previsualització) mai
+  // arribaria a disparar-se sol; `blur` ja es feia emetre explícitament
+  // (exitEdit) pel mateix motiu.
+  emit('focus', event);
   nextTick(() => textareaRef.value?.focus());
 };
 

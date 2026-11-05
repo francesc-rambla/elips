@@ -26,7 +26,7 @@ import { useVersionHistory } from './composables/useVersionHistory';
 import { useCollabFolder } from './composables/useCollabFolder';
 import { useCollabSync } from './composables/useCollabSync';
 import { useCollabRealtime, generateSessionCredentials, normalizeSignalingServers } from './composables/useCollabRealtime';
-import { getDisplayNameOrFallback, setDisplayName as setCollabDisplayName } from './composables/useCollabIdentity';
+import { getDisplayNameOrFallback, setDisplayName as setCollabDisplayName, getUserColor } from './composables/useCollabIdentity';
 
 // Components
 import FileCard from './components/FileCard.vue';
@@ -171,6 +171,7 @@ const {
   resumeOfflineCapture,
   requestAndImportProject,
   setLocalCursor,
+  setLocalEditingPath,
 } = collabRealtime;
 window.collabRealtime = collabRealtime;
 
@@ -334,6 +335,21 @@ const templateCollabPeers = computed(() => {
 
 const handleUpdateTemplateCursor = (cursor) => {
   setLocalCursor(activeDocName.value, cursor);
+};
+
+// Fase 21: participants de la sessió en viu que tenen enfocat ara mateix
+// algun camp del model de dades -- abast de PROJECTE (com els canals
+// schema/data), no de document, per això no es filtra per activeDocName
+// com templateCollabPeers.
+const dataRemoteEditingPaths = computed(() => {
+  if (collabRealtimeStatus.value !== 'connected') return [];
+  return collabRealtimePeers.value
+    .filter((p) => !p.isSelf && p.editingPath)
+    .map((p) => ({ path: p.editingPath, displayName: p.displayName, color: getUserColor(p.userId) }));
+});
+
+const handleEditingPathChange = (path) => {
+  setLocalEditingPath(path);
 };
 
 const handleConnectCollabFolder = async () => {
@@ -3187,7 +3203,7 @@ const generateDocuments = async () => {
 
           <!-- Tab: Data Inspector -->
           <div class="tab-content" :class="{ active: store.activeTab === 'data' }" style="overflow-y: auto; height: 100%; min-height: 0; padding-right: 6px;">
-            <DataInspector />
+            <DataInspector :remote-editing-paths="dataRemoteEditingPaths" @editing-path-change="handleEditingPathChange" />
           </div>
 
           <!-- Tab: Template Editor -->

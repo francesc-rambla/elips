@@ -60,8 +60,19 @@ const props = defineProps({
   nestingDepth: {
     type: Number,
     default: 0
+  },
+  // Fase 21 (vegeu el pla): participants ja filtrats per App.vue -- qui, a
+  // la sessió en viu, té enfocat ara mateix un camp d'aquest model de
+  // dades -- {path, displayName, color}. Passat tal qual a cada
+  // <NestedDataNode>/<NestedItemForm> fill (via itemFormHelpers), mai
+  // filtrat de nou aquí: el match és sempre per camí JSON exacte.
+  remoteEditingPaths: {
+    type: Array,
+    default: () => []
   }
 });
+
+const emit = defineEmits(['editing-path-change']);
 
 const store = useWorkspaceStore();
 const { evaluateComputedFields, saveExcelData, analyzeMirrorPattern, applyMirrorColumn } = useWasmEngines();
@@ -1403,6 +1414,19 @@ const getItemPath = (idx, fieldKey) => {
   return fieldKey !== '' ? `${fullPath.value}.${idx}.${fieldKey}` : `${fullPath.value}.${idx}`;
 };
 
+// Fase 21: qui (de remoteEditingPaths) té enfocat exactament aquest camí
+// ara mateix -- normalment 0 o 1 persona, però no s'assumeix (dos usuaris
+// podrien, per error o coincidència, enfocar el mateix camp a la vegada).
+const remoteEditorsFor = (path) => (props.remoteEditingPaths || []).filter((e) => e.path === path);
+const remoteEditingStyle = (path) => {
+  const editors = remoteEditorsFor(path);
+  return editors.length > 0 ? { outline: `2px solid ${editors[0].color}`, outlineOffset: '1px' } : {};
+};
+const remoteEditingTitle = (path) => {
+  const editors = remoteEditorsFor(path);
+  return editors.length > 0 ? `En edició per: ${editors.map((e) => e.displayName).join(', ')}` : undefined;
+};
+
 // Bundled once for NestedItemForm.vue (see its own doc comment) -- these
 // functions stay defined here (this component's own leaf table needs
 // several of them too) and are simply passed down by reference.
@@ -1421,7 +1445,9 @@ const itemFormHelpers = {
   formatPercentageDisplay,
   updatePercentageValue,
   formatCurrencyDisplay,
-  unwrapFkValue
+  unwrapFkValue,
+  remoteEditingStyle,
+  remoteEditingTitle
 };
 </script>
 
@@ -1663,7 +1689,7 @@ const itemFormHelpers = {
                   >
 
                   <!-- Number Type -->
-                  <input 
+                  <input
                     v-else-if="getElementType(h) === 'Number'"
                     :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
                     :data-path="getItemPath(rIdx, h)"
@@ -1672,11 +1698,15 @@ const itemFormHelpers = {
                     v-model="row[h]"
                     class="data-input"
                     style="flex-grow: 1; height: 28px; text-align: right;"
+                    :style="remoteEditingStyle(getItemPath(rIdx, h))"
+                    :title="remoteEditingTitle(getItemPath(rIdx, h))"
+                    @focus="emit('editing-path-change', getItemPath(rIdx, h))"
+                    @blur="emit('editing-path-change', null)"
                   >
 
                   <!-- Percentage Type -->
                   <div v-else-if="getElementType(h) === 'Percentage'" style="display: flex; align-items: center; flex-grow: 1; position: relative;">
-                    <input 
+                    <input
                       :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
                       :data-path="getItemPath(rIdx, h)"
                       type="text"
@@ -1685,6 +1715,10 @@ const itemFormHelpers = {
                       @input="updatePercentageValue(row, h, $event.target.value)"
                       class="data-input"
                       style="flex-grow: 1; height: 28px; text-align: right; padding-right: 24px;"
+                      :style="remoteEditingStyle(getItemPath(rIdx, h))"
+                      :title="remoteEditingTitle(getItemPath(rIdx, h))"
+                      @focus="emit('editing-path-change', getItemPath(rIdx, h))"
+                      @blur="emit('editing-path-change', null)"
                       placeholder="0"
                     >
                     <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.78rem; color: var(--text-muted); pointer-events: none;">%</span>
@@ -1700,12 +1734,16 @@ const itemFormHelpers = {
                       v-model="row[h]"
                       class="data-input"
                       style="flex-grow: 1; height: 28px; text-align: right;"
+                      :style="remoteEditingStyle(getItemPath(rIdx, h))"
+                      :title="remoteEditingTitle(getItemPath(rIdx, h))"
+                      @focus="emit('editing-path-change', getItemPath(rIdx, h))"
+                      @blur="emit('editing-path-change', null)"
                     >
                     <span style="font-weight: 600; font-size: 0.78rem; color: var(--text-muted); flex-shrink: 0;">{{ getElementMetadata(h)?.currencySymbol || '€' }}</span>
                   </div>
 
                   <!-- Boolean Type -->
-                  <select 
+                  <select
                     v-else-if="getElementType(h) === 'Boolean'"
                     :id="'data-field-' + fullPath + '-' + rIdx + '-' + h"
                     :data-path="getItemPath(rIdx, h)"
@@ -1726,6 +1764,10 @@ const itemFormHelpers = {
                     v-model="row[h]"
                     class="data-input"
                     style="flex-grow: 1; min-height: 28px;"
+                    :style="remoteEditingStyle(getItemPath(rIdx, h))"
+                    :title="remoteEditingTitle(getItemPath(rIdx, h))"
+                    @focus="emit('editing-path-change', getItemPath(rIdx, h))"
+                    @blur="emit('editing-path-change', null)"
                   />
 
                   <button 
@@ -1922,6 +1964,8 @@ const itemFormHelpers = {
             :child-schemas="childSchemas"
             :nesting-depth="nestingDepth"
             :helpers="itemFormHelpers"
+            :remote-editing-paths="remoteEditingPaths"
+            @editing-path-change="(p) => emit('editing-path-change', p)"
           />
         </div>
       </div>
@@ -1947,6 +1991,8 @@ const itemFormHelpers = {
           :child-schemas="childSchemas"
           :nesting-depth="nestingDepth"
           :helpers="itemFormHelpers"
+          :remote-editing-paths="remoteEditingPaths"
+          @editing-path-change="(p) => emit('editing-path-change', p)"
         />
       </div>
       <div class="modal-footer" style="flex-shrink: 0; display: flex; justify-content: flex-end; border-top: 1px solid var(--border-color); padding-top: 0.5rem;">

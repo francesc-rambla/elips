@@ -30,6 +30,15 @@ import { latexSymbols } from './latexSymbols';
 
 import { runGlobalAutoAdjust } from '../main';
 
+// Fase 21 (vegeu el pla): participants de la sessió en viu, ja filtrats
+// per App.vue, que tenen enfocat ara mateix un camp d'aquest model de
+// dades -- {path, displayName, color}. Reenviat tal qual a cada
+// <NestedDataNode> fill.
+const props = defineProps({
+  remoteEditingPaths: { type: Array, default: () => [] }
+});
+const emit = defineEmits(['editing-path-change']);
+
 const store = useWorkspaceStore();
 const { saveExcelData, evaluateComputedFields, analyzeMirrorPattern, applyMirrorColumn } = useWasmEngines();
 const showJsonView = ref(false);
@@ -43,6 +52,18 @@ const selectedCompactSheet = ref('');
 
 let isEvaluating = false;
 let evalDebounceTimer = null;
+
+// Fase 21: qui (de remoteEditingPaths) té enfocat exactament aquest camí
+// ara mateix -- mateix criteri que NestedDataNode.vue.
+const remoteEditorsFor = (path) => (props.remoteEditingPaths || []).filter((e) => e.path === path);
+const remoteEditingStyle = (path) => {
+  const editors = remoteEditorsFor(path);
+  return editors.length > 0 ? { outline: `2px solid ${editors[0].color}`, outlineOffset: '1px' } : {};
+};
+const remoteEditingTitle = (path) => {
+  const editors = remoteEditorsFor(path);
+  return editors.length > 0 ? `En edició per: ${editors.map((e) => e.displayName).join(', ')}` : undefined;
+};
 
 // Reprograma un timer per recalcular fórmules i desar mentre l'usuari escriu, evitant recàlculs a cada tecla
 const onCellInput = () => {
@@ -1759,6 +1780,8 @@ onMounted(() => {
               :parentObj="store.excelJsonData"
               :arrayKey="name"
               :parentPath="''"
+              :remote-editing-paths="remoteEditingPaths"
+              @editing-path-change="(p) => emit('editing-path-change', p)"
             />
           </template>
           
@@ -1880,7 +1903,7 @@ onMounted(() => {
                     </select>
                     
                     <!-- Number Type -->
-                    <input 
+                    <input
                       v-else-if="getElementType(name, item.key) === 'Number'"
                       :id="'data-field-' + name + '-' + item.key"
                       :data-path="name + '.' + item.key"
@@ -1888,25 +1911,31 @@ onMounted(() => {
                       step="any"
                       v-model="store.excelJsonData[name][item.key]"
                       @input="onCellInput"
-                      @blur="onCellBlur"
+                      @focus="emit('editing-path-change', name + '.' + item.key)"
+                      @blur="onCellBlur(); emit('editing-path-change', null)"
                       @change="onCellBlur"
                       class="data-input"
                       style="flex-grow: 1; height: 28px; text-align: right;"
+                      :style="remoteEditingStyle(name + '.' + item.key)"
+                      :title="remoteEditingTitle(name + '.' + item.key)"
                     >
 
                     <!-- Percentage Type -->
                     <div v-else-if="getElementType(name, item.key) === 'Percentage'" style="display: flex; align-items: center; flex-grow: 1; position: relative;">
-                      <input 
+                      <input
                         :id="'data-field-' + name + '-' + item.key"
                         :data-path="name + '.' + item.key"
                         type="text"
                         inputmode="decimal"
                         :value="formatPercentageDisplay(store.excelJsonData[name][item.key])"
                         @input="updatePercentageValue(store.excelJsonData[name], item.key, $event.target.value); onCellInput();"
-                        @blur="onCellBlur"
+                        @focus="emit('editing-path-change', name + '.' + item.key)"
+                        @blur="onCellBlur(); emit('editing-path-change', null)"
                         @change="onCellBlur"
                         class="data-input"
                         style="flex-grow: 1; height: 28px; text-align: right; padding-right: 24px;"
+                        :style="remoteEditingStyle(name + '.' + item.key)"
+                        :title="remoteEditingTitle(name + '.' + item.key)"
                         placeholder="0"
                       >
                       <span style="position: absolute; right: 8px; font-weight: bold; font-size: 0.8rem; color: var(--text-muted); pointer-events: none;">%</span>
@@ -1921,10 +1950,13 @@ onMounted(() => {
                         step="any"
                         v-model="store.excelJsonData[name][item.key]"
                         @input="onCellInput"
-                        @blur="onCellBlur"
+                        @focus="emit('editing-path-change', name + '.' + item.key)"
+                        @blur="onCellBlur(); emit('editing-path-change', null)"
                         @change="onCellBlur"
                         class="data-input"
                         style="flex-grow: 1; height: 28px; text-align: right;"
+                        :style="remoteEditingStyle(name + '.' + item.key)"
+                        :title="remoteEditingTitle(name + '.' + item.key)"
                       >
                       <span style="font-weight: 600; font-size: 0.8rem; color: var(--text-muted); flex-shrink: 0;">{{ getElementMetadata(name, item.key)?.currencySymbol || '€' }}</span>
                     </div>
@@ -1957,9 +1989,12 @@ onMounted(() => {
                       :data-path="name + '.' + item.key"
                       v-model="store.excelJsonData[name][item.key]"
                       @update:model-value="onCellInput"
-                      @blur="onCellBlur"
+                      @focus="emit('editing-path-change', name + '.' + item.key)"
+                      @blur="onCellBlur(); emit('editing-path-change', null)"
                       class="data-input"
                       style="flex-grow: 1; min-height: 28px;"
+                      :style="remoteEditingStyle(name + '.' + item.key)"
+                      :title="remoteEditingTitle(name + '.' + item.key)"
                     />
                     <button
                       v-if="getElementType(name, item.key) === 'Text'"
@@ -1989,11 +2024,13 @@ onMounted(() => {
             
             <!-- Integrated Hierarchical Nested Sub-Tables -->
             <template v-for="(subSchema, subKey) in getTopLevelChildSchemas(name, sheetData)" :key="subKey">
-              <NestedDataNode 
+              <NestedDataNode
                 :parentObj="sheetData"
                 :arrayKey="subKey"
                 :schema="subSchema"
                 :parentPath="name"
+                :remote-editing-paths="remoteEditingPaths"
+                @editing-path-change="(p) => emit('editing-path-change', p)"
               />
             </template>
           </template>
