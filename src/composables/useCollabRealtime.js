@@ -199,7 +199,7 @@ import { ref, watch, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace';
 import { getOrCreateUserId, getDisplayNameOrFallback } from './useCollabIdentity';
 import { KNOWN_SIGNALING_SERVERS } from '../utils/collabSignalingServers';
-import { computeDataPatch, computeMetaPatch } from '../utils/dataPatch';
+import { computeDataPatch, computeMetaPatch, applyDataPatch } from '../utils/dataPatch';
 import { getOrCreateProjectDoc, closeProjectDoc, hasPersistedProjectDoc } from './useCollabDoc';
 
 export { KNOWN_SIGNALING_SERVERS };
@@ -681,6 +681,222 @@ export async function attachJsonChannelBridge(ydoc, ymap, key, { getLocal, setLo
   };
 }
 
+/** Repeteix, en ordre, una sèrie d'entrades `{patch}` sobre `baseline` --
+ * `applyDataPatch` (`src/utils/dataPatch.js`) aplicat seqüencialment,
+ * exactament la mateixa fórmula `baseline + tots els pedaços, des de zero`
+ * que `useCollabSync.js` ja fa servir per al transport de carpeta. */
+function replayDeltaEntries(baseline, entries) {
+  let state = baseline;
+  for (const entry of entries) {
+    state = applyDataPatch(state, entry.patch);
+  }
+  return state;
+}
+
+/** El `Y.Array` de pedaços d'un usuari concret per a un canal (`schema`/
+ * `data`) -- un per userId, mai compartit entre usuaris (mateix invariant
+ * "un sol escriptor per fitxer" que `collab_deltas_<userId>.jsonl` a
+ * useCollabFolder.js, aquí com a tipus Yjs en lloc de fitxer). */
+function getUserDeltaArray(ydoc, key, userId) {
+  return ydoc.getArray(`deltaLog:${key}:${userId}`);
+}
+
+/** Reconstrueix l'estat fusionat d'un canal a partir de la base coneguda i
+ * els pedaços de TOTS els usuaris registrats (`usersArray`) -- sempre des
+ * de zero, ordenats per `(ts, userId)`, mai incrementalment: evita bugs
+ * d'ordre quan dos usuaris toquen el mateix camí en finestres pròximes
+ * (mateix criteri que `pollCycle()` a `useCollabSync.js`). */
+function reconstructDeltaLogState(ydoc, ymap, key, baselineKey, baselineDefault, usersArray) {
+  const baseline = ymap.get(baselineKey) ?? baselineDefault;
+  const entries = [];
+  for (const userId of usersArray.toArray()) {
+    getUserDeltaArray(ydoc, key, userId).toArray().forEach((entry) => entries.push({ ...entry, userId }));
+  }
+  entries.sort((a, b) => (a.ts - b.ts) || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));
+  return replayDeltaEntries(baseline, entries);
+}
+
+/**
+ * Fase 17 del pla: fusió real multi-usuari (no última-escriptura-guanya
+ * sobre tot el valor com `attachJsonChannelBridge`) per als canals `schema`/
+ * `data` -- substitueix aquella funció per a tots dos. Reutilitza
+ * `computeMetaPatch`/`computeDataPatch`/`applyDataPatch`
+ * (`src/utils/dataPatch.js`) i el mateix model de "base + registre de
+ * pedaços per usuari, reconstruït sempre des de zero" que `useCollabSync.js`
+ * ja fa servir per al transport de carpeta -- aquí el registre viu dins el
+ * mateix `Y.Doc` PERSISTENT per projecte (Fase 16, no un efímer per sessió),
+ * així que és durador (sobreviu desconnexions i recàrregues) i es
+ * transporta sol via Yjs/WebRTC quan hi ha sessió (cap sondeig temporitzat
+ * com useCollabSync.js: els `Y.Array` ja avisen via `observe()`).
+ *
+ * Això permet reconciliar N col·laboradors que han evolucionat el document
+ * per separat SENSE haver coincidit mai tots alhora en línia: cadascun
+ * publica, en connectar's'hi (sol o acompanyat -- la reconnexió
+ * transparent de la Fase 15 ja ho intenta sempre en obrir el projecte),
+ * qualsevol diferència local encara no capturada des de la seva pròpia
+ * última publicació (`captureOwnPendingChange`, comparat contra l'estat que
+ * ELL MATEIX havia publicat -- mai contra la instantània merged de
+ * tothom, perquè això capturaria correctament qualsevol edició acumulada
+ * encara que hagi passat temps, recàrregues de pàgina, o desconnexions
+ * pel mig). Límit honest (igual que el transport de carpeta): si dos
+ * col·laboradors MAI arriben a coincidir en una sessió comuna (ni
+ * directament ni a través d'un tercer que hagi estat amb tots dos), els
+ * seus pedaços no es poden intercanviar només per aquesta via -- la
+ * carpeta OneDrive compartida (Fases 1-9), duradora per construcció,
+ * segueix sent la garantia per a aquest cas.
+ *
+ * `baselineDefault` ({} per a `data`, [] per a `schema`) és el valor base
+ * quan encara no hi ha cap `${key}:deltaBaseline` desat (primer ús).
+ * `myUserId` identifica el propi registre de pedaços (`getOrCreateUserId()`,
+ * `useCollabIdentity.js`, reutilitzat tal qual). Com que aquest pont
+ * sobreviu a una desconnexió de xarxa (Fase 16: no es desmunta a
+ * `disconnectNetwork()`, només a `teardownDoc()`), les edicions locals
+ * fetes sense cap sessió activa (però amb el projecte encara obert en
+ * aquesta pestanya) també es capturen -- mateix benefici que el canal
+ * `template`.
+ */
+/** Checkpoint per defecte (`localStorage` real) per a la reconciliació
+ * inicial d'attachDeltaLogChannel -- injectable (mateix idioma que
+ * `findWorkingSignalingServer`/`useCollabDoc.js`) perquè es pugui provar
+ * sense dependre que l'entorn de proves tingui `localStorage` real. */
+function defaultGetCheckpoint(storageKey) {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    return raw === null ? undefined : JSON.parse(raw);
+  } catch (_) {
+    return undefined;
+  }
+}
+function defaultSetCheckpoint(storageKey, value) {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(value));
+  } catch (_) {
+    /* quota superada o localStorage no disponible -- no crític */
+  }
+}
+
+export async function attachDeltaLogChannel(ydoc, ymap, key, { getLocal, setLocal, computePatch, baselineDefault }, localOrigin, { myUserId, debounceMs = 1500, projectName, getCheckpoint = defaultGetCheckpoint, setCheckpoint = defaultSetCheckpoint } = {}) {
+  const baselineKey = `${key}:deltaBaseline`;
+  const usersArray = ydoc.getArray(`deltaLogUsers:${key}`);
+  const myArray = getUserDeltaArray(ydoc, key, myUserId);
+
+  if (!usersArray.toArray().includes(myUserId)) {
+    ydoc.transact(() => { usersArray.push([myUserId]); }, localOrigin);
+  }
+
+  let applyingRemote = false;
+  let debounceTimer = null;
+  let lastKnownMerged;
+
+  function reconstruct() {
+    return reconstructDeltaLogState(ydoc, ymap, key, baselineKey, baselineDefault, usersArray);
+  }
+
+  // L'únic checkpoint LOCAL (mai sincronitzat) de quin era l'últim estat
+  // fusionat que AQUEST peer concret sap del cert que ja havia quedat
+  // reconciliat amb el grup -- necessari per no confondre, en una
+  // reconnexió, "un camp que jo he editat de debò" amb "un camp que algú
+  // més ha canviat mentre jo era desconnectat i que el meu propi estat
+  // local encara no reflecteix" (vegeu la reconciliació inicial més avall).
+  // Sense `projectName` (p. ex. tests que no l'passen), és un no-op
+  // complet -- cap persistència, cap comportament nou.
+  const lastSeenStorageKey = projectName ? `collabLastSeenMerged:${projectName}:${key}` : null;
+  function loadLastSeenMerged() {
+    return lastSeenStorageKey ? getCheckpoint(lastSeenStorageKey) : undefined;
+  }
+  function saveLastSeenMerged(value) {
+    if (lastSeenStorageKey) setCheckpoint(lastSeenStorageKey, value);
+  }
+
+  function recomputeAndApply() {
+    if (applyingRemote) return;
+    const merged = reconstruct();
+    if (computePatch(getLocal(), merged)) {
+      applyingRemote = true;
+      setLocal(merged);
+      nextTick(() => { applyingRemote = false; });
+    }
+    lastKnownMerged = merged;
+    saveLastSeenMerged(merged);
+  }
+
+  // Reconciliació inicial: calcula primer l'estat fusionat de TOTHOM
+  // conegut fins ara (`merged`) -- però el pedaç PROPI pendent de publicar
+  // es calcula contra l'últim checkpoint LOCAL conegut
+  // (`loadLastSeenMerged()`), no contra `merged` directament. Si no n'hi ha
+  // cap (primera vegada EN ABSOLUT que aquest peer fa servir la sessió en
+  // viu d'aquest projecte), `merged` és l'única referència disponible. La
+  // diferència importa: calcular-ho sempre contra `merged` confondria "un
+  // camp que algú més ha canviat mentre jo era desconnectat" amb "un canvi
+  // meu" -- i el publicaria com a pedaç propi, revertint-lo en repetir-se
+  // (detectat en viu, Fase 17). Calcular-ho contra el checkpoint LOCAL
+  // (que només reflecteix l'estat tal com JO el vaig deixar) aïlla
+  // correctament NOMÉS les edicions genuïnament noves fetes des d'aleshores.
+  let merged = reconstruct();
+  const priorSeenMerged = loadLastSeenMerged();
+  const captureReference = priorSeenMerged !== undefined ? priorSeenMerged : merged;
+  const initialPatch = computePatch(captureReference, getLocal());
+  if (initialPatch) {
+    ydoc.transact(() => { myArray.push([{ ts: Date.now(), patch: initialPatch }]); }, localOrigin);
+    merged = reconstruct(); // inclou ara el pedaç acabat de publicar
+  }
+  if (computePatch(getLocal(), merged)) {
+    applyingRemote = true;
+    setLocal(merged);
+    await nextTick();
+    applyingRemote = false;
+  }
+  lastKnownMerged = merged;
+  saveLastSeenMerged(merged);
+
+  const observedUsers = new Map(); // userId -> {array, observer}, per poder-los desmuntar tots a stop()
+  function observeUser(userId) {
+    if (observedUsers.has(userId)) return;
+    const array = getUserDeltaArray(ydoc, key, userId);
+    const observer = (event) => {
+      if (event.transaction.origin === localOrigin) return;
+      recomputeAndApply();
+    };
+    array.observe(observer);
+    observedUsers.set(userId, { array, observer });
+  }
+  usersArray.toArray().forEach(observeUser);
+  const usersObserver = (event) => {
+    usersArray.toArray().forEach(observeUser); // nous usuaris descoberts (fins i tot si l'ha afegit un altre peer)
+    if (event.transaction.origin === localOrigin) return;
+    recomputeAndApply();
+  };
+  usersArray.observe(usersObserver);
+  const baselineObserver = (event) => {
+    if (event.transaction.origin === localOrigin) return;
+    if (event.changes.keys.has(baselineKey)) recomputeAndApply();
+  };
+  ymap.observe(baselineObserver);
+
+  const stopWatch = watch(getLocal, () => {
+    if (applyingRemote) return; // és el nostre propi merge remot acabat d'aplicar
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      const patch = computePatch(lastKnownMerged, getLocal());
+      if (!patch) return;
+      ydoc.transact(() => { myArray.push([{ ts: Date.now(), patch }]); }, localOrigin);
+      lastKnownMerged = getLocal();
+      saveLastSeenMerged(lastKnownMerged);
+    }, debounceMs);
+  }, { deep: true });
+
+  return () => {
+    clearTimeout(debounceTimer);
+    stopWatch();
+    usersArray.unobserve(usersObserver);
+    ymap.unobserve(baselineObserver);
+    for (const { array, observer } of observedUsers.values()) {
+      array.unobserve(observer);
+    }
+    observedUsers.clear();
+  };
+}
+
 /**
  * `buildProjectZipBlob`/`importProjectZip` (Fase 14): callbacks injectats
  * des d'App.vue -- mateix patró que `useCollabSync(collabFolder, () =>
@@ -1010,30 +1226,51 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
       await new Promise((resolve) => setTimeout(resolve, 300 + Math.random() * 400));
       if (sessionToken !== myToken) return;
 
-      // Canals `schema`/`data` (Fases 12/13): abast de PROJECTE, no de
-      // document -- s'adjunten un únic cop aquí, no es revinculen en
-      // canviar de document (a diferència del canal `template`). Mateix
-      // ordre que useCollabSync.js aplica al seu cicle de sondeig: esquema
-      // -> plantilla -> dades, perquè quan el canal de dades dispara
-      // evaluateComputedFields (via DataInspector.vue), l'esquema local ja
-      // reflecteix l'últim estat remot.
+      // Canals `schema`/`data` (Fase 17: registre de deltes persistent,
+      // fusió real multi-usuari -- vegeu attachDeltaLogChannel) -- abast de
+      // PROJECTE, no de document: s'adjunten un únic cop aquí, no es
+      // revinculen en canviar de document (a diferència del canal
+      // `template`). Mateix ordre que useCollabSync.js aplica al seu cicle
+      // de sondeig: esquema -> plantilla -> dades, perquè quan el canal de
+      // dades dispara evaluateComputedFields (via DataInspector.vue),
+      // l'esquema local ja reflecteix l'últim estat remot. Com que aquests
+      // dos ponts sobreviuen a una desconnexió de xarxa (Fase 16: no es
+      // desmunten a disconnectNetwork(), només a teardownDoc()), NOMÉS
+      // s'adjunten si encara no ho estaven -- idempotent, mateix criteri
+      // que bindDocument() per al canal `template`. No només evita dos
+      // ponts actius alhora sobre el mateix Y.Doc en una reconnexió dins la
+      // mateixa pestanya: reutilitzar el pont ja adjuntat és el que manté
+      // correcte el seu propi `lastKnownMerged` (l'últim estat que aquest
+      // peer sap que ja ha quedat reconciliat amb el grup) -- tornar a
+      // adjuntar-lo de zero en cada reconnexió li faria recalcular la
+      // reconciliació inicial sense aquesta referència, cosa que podria
+      // publicar com a "canvi propi" un camp que en realitat només estava
+      // desactualitzat localment (p. ex. un camp que algú més ha canviat
+      // mentre aquest peer era desconnectat), revertint-lo.
       const yjson = ydoc.getMap('jsonChannels');
       const debounceMs = (store.config.collabCaptureDebounceSeconds || 5) * 1000;
-      stopSchemaChannel = await attachJsonChannelBridge(ydoc, yjson, 'schema', {
-        getLocal: () => store.editorMetadata,
-        setLocal: (v) => { store.editorMetadata = v; },
-        computePatch: computeMetaPatch,
-      }, localOrigin, debounceMs);
+      const myUserId = getOrCreateUserId();
+      if (!stopSchemaChannel) {
+        stopSchemaChannel = await attachDeltaLogChannel(ydoc, yjson, 'schema', {
+          getLocal: () => store.editorMetadata,
+          setLocal: (v) => { store.editorMetadata = v; },
+          computePatch: computeMetaPatch,
+          baselineDefault: [],
+        }, localOrigin, { myUserId, debounceMs, projectName });
+      }
       if (sessionToken !== myToken) return;
 
       await bindDocument(docName || 'Document Principal');
       if (sessionToken !== myToken) return;
 
-      stopDataChannel = await attachJsonChannelBridge(ydoc, yjson, 'data', {
-        getLocal: () => store.excelJsonData,
-        setLocal: (v) => { store.excelJsonData = v; },
-        computePatch: computeDataPatch,
-      }, localOrigin, debounceMs);
+      if (!stopDataChannel) {
+        stopDataChannel = await attachDeltaLogChannel(ydoc, yjson, 'data', {
+          getLocal: () => store.excelJsonData,
+          setLocal: (v) => { store.excelJsonData = v; },
+          computePatch: computeDataPatch,
+          baselineDefault: {},
+        }, localOrigin, { myUserId, debounceMs, projectName });
+      }
       if (sessionToken !== myToken) return;
 
       // Fase 14: qualsevol participant ja connectat normalment (amb el

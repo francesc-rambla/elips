@@ -37,6 +37,7 @@ import {
   attachProjectTransferResponder,
   requestProjectTransfer,
   PROJECT_TRANSFER_CHUNK_SIZE,
+  attachDeltaLogChannel,
 } from '../src/composables/useCollabRealtime.js';
 import { computeDataPatch } from '../src/utils/dataPatch.js';
 
@@ -802,5 +803,218 @@ describe('attachProjectTransferResponder / requestProjectTransfer (Fase 14: sol�
 
   it('exports a 16 KiB default chunk size', () => {
     expect(PROJECT_TRANSFER_CHUNK_SIZE).toBe(16384);
+  });
+});
+
+describe('attachDeltaLogChannel (Fase 17: registre de deltes persistent, fusió real multi-usuari per a schema/data)', () => {
+  async function makeDeltaPeer(initialValue, userId, { debounceMs = 15 } = {}) {
+    const store = reactive({ value: initialValue });
+    const ydoc = new Y.Doc();
+    const ymap = ydoc.getMap('jsonChannels');
+    const localOrigin = Symbol(`local-${userId}`);
+    const stop = await attachDeltaLogChannel(ydoc, ymap, 'data', {
+      getLocal: () => store.value,
+      setLocal: (v) => { store.value = v; },
+      computePatch: computeDataPatch,
+      baselineDefault: {},
+    }, localOrigin, { myUserId: userId, debounceMs });
+    return { store, ydoc, ymap, stop };
+  }
+
+  it('merges three peers who never all synced at the same time, regardless of pairing order', async () => {
+    const a = await makeDeltaPeer({ x: 1 }, 'alice');
+    const b = await makeDeltaPeer({ y: 2 }, 'bob');
+    const c = await makeDeltaPeer({ z: 3 }, 'carol');
+
+    // A i B es troben (C no hi és).
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+    expect(a.store.value).toEqual({ x: 1, y: 2 });
+    expect(b.store.value).toEqual({ x: 1, y: 2 });
+    expect(c.store.value).toEqual({ z: 3 }); // encara aïllada
+
+    // Després, B i C es troben (A ja no hi és).
+    syncDocs(b.ydoc, c.ydoc);
+    await nextTick();
+    expect(b.store.value).toEqual({ x: 1, y: 2, z: 3 });
+    expect(c.store.value).toEqual({ x: 1, y: 2, z: 3 });
+
+    // Finalment, A i B es tornen a trobar -- A rep transitivament la feina de C.
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+    expect(a.store.value).toEqual({ x: 1, y: 2, z: 3 });
+
+    a.stop(); b.stop(); c.stop();
+  });
+
+  it('a conflicting edit on the same path resolves deterministically by timestamp, not by peer order', async () => {
+    const a = await makeDeltaPeer({ shared: 'base' }, 'alice');
+    const b = await makeDeltaPeer({ shared: 'base' }, 'bob');
+    syncDocs(a.ydoc, b.ydoc);
+
+    a.store.value = { shared: 'de alice' };
+    await new Promise((r) => setTimeout(r, 25));
+    await new Promise((r) => setTimeout(r, 5));
+    b.store.value = { shared: 'de bob (més tard)' };
+    await new Promise((r) => setTimeout(r, 25));
+
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+    // Bob ha escrit DESPRÉS (timestamp més alt) -- guanya, als dos costats.
+    expect(a.store.value).toEqual({ shared: 'de bob (més tard)' });
+    expect(b.store.value).toEqual({ shared: 'de bob (més tard)' });
+
+    a.stop(); b.stop();
+  });
+
+  it('captures a pending local change made while fully detached (no bridge attached) on the next attach', async () => {
+    const a = await makeDeltaPeer({ n: 1 }, 'alice');
+    a.stop();
+    a.store.value = { n: 2 }; // edició local sense cap pont adjuntat (p. ex. desconnectat)
+
+    // Reconnexió: un nou pont adjuntat sobre el MATEIX Y.Doc (mateix criteri
+    // que useCollabRealtime.js reutilitza el Y.Doc persistent, Fase 16).
+    const localOrigin2 = Symbol('local-alice-2');
+    const stop2 = await attachDeltaLogChannel(a.ydoc, a.ymap, 'data', {
+      getLocal: () => a.store.value,
+      setLocal: (v) => { a.store.value = v; },
+      computePatch: computeDataPatch,
+      baselineDefault: {},
+    }, localOrigin2, { myUserId: 'alice', debounceMs: 15 });
+
+    const b = await makeDeltaPeer({}, 'bob');
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+    expect(b.store.value).toEqual({ n: 2 }); // el canvi fet offline s'ha publicat i sincronitzat
+
+    stop2(); b.stop();
+  });
+
+  it('does not keep generating outgoing changes once all peers have converged (no feedback loop)', async () => {
+    const a = await makeDeltaPeer({ n: 1 }, 'alice');
+    const b = await makeDeltaPeer({ n: 1 }, 'bob');
+    syncDocs(a.ydoc, b.ydoc);
+
+    a.store.value = { n: 2 };
+    await new Promise((r) => setTimeout(r, 25));
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+    expect(b.store.value).toEqual({ n: 2 });
+
+    const stateBefore = Y.encodeStateAsUpdate(a.ydoc);
+    await new Promise((r) => setTimeout(r, 25));
+    syncDocs(a.ydoc, b.ydoc);
+    const stateAfter = Y.encodeStateAsUpdate(a.ydoc);
+    expect(stateAfter).toEqual(stateBefore);
+
+    a.stop(); b.stop();
+  });
+
+  it('a first-ever attach that had already diverged offline can revert a field it never touched (known, accepted limit -- same "última escriptura guanya per camp" risk as the folder transport)', async () => {
+    // Trobat en viu (B en aquest test NO ha fet servir mai la sessió en
+    // viu abans -- p. ex. ha estat editant una còpia obtinguda per un
+    // altre camí, com la carpeta compartida, i ara s'hi connecta per
+    // primera vegada): com que B no té cap checkpoint local previ
+    // (loadLastSeenMerged() no hi té res desat, és la seva primera
+    // vegada), el pedaç inicial propi es calcula contra l'estat fusionat
+    // ACTUAL -- si el contingut local de B ja no coincideix amb aquest en
+    // un camp que B mai ha tocat (només desactualitzat), es publica
+    // igualment com si fos un canvi propi, i -- si el seu pedaç ordena
+    // DESPRÉS pel rellotge -- reverteix aquell camp. És el mateix risc ja
+    // acceptat al pla per a conflictes genuïns ("Resolució de conflictes =
+    // última escriptura guanya per camp, amb avís visible") -- aquí
+    // ampliat al cas doblement rar de "primera connexió EN VIU + ja
+    // divergit per una altra via". El test següent demostra que, per a
+    // QUALSEVOL peer que JA ha fet servir la sessió en viu abans (el cas
+    // real i habitual -- reconnectar-se després d'un temps desconnectat o
+    // d'una recàrrega de pàgina), el checkpoint local (`projectName`) evita
+    // aquest problema del tot.
+    const a = await makeDeltaPeer({ x: 1, y: 'base' }, 'alice');
+    a.store.value = { x: 1, y: 'de alice' };
+    await new Promise((r) => setTimeout(r, 25));
+
+    const bStore = reactive({ value: { x: 1, y: 'base', z: 'de bob' } });
+    const bYdoc = new Y.Doc();
+    syncDocs(a.ydoc, bYdoc);
+    const bYmap = bYdoc.getMap('jsonChannels');
+    const bStop = await attachDeltaLogChannel(bYdoc, bYmap, 'data', {
+      getLocal: () => bStore.value,
+      setLocal: (v) => { bStore.value = v; },
+      computePatch: computeDataPatch,
+      baselineDefault: {},
+    }, Symbol('local-bob'), { myUserId: 'bob', debounceMs: 15 }); // sense projectName -- cap checkpoint
+
+    syncDocs(a.ydoc, bYdoc);
+    await nextTick();
+
+    // `y` es reverteix (el límit documentat); `z` (l'edició pròpia de B) i
+    // `x` (mai tocat per cap dels dos) sobreviuen correctament.
+    expect(a.store.value).toEqual({ x: 1, y: 'base', z: 'de bob' });
+    expect(bStore.value).toEqual({ x: 1, y: 'base', z: 'de bob' });
+
+    a.stop(); bStop();
+  });
+
+  it('a peer who HAS used the live session before (has a local checkpoint) does not revert a field it never touched when reconnecting after a gap', async () => {
+    // Checkpoint injectat (Map en memòria) -- DURADOR entre les dues
+    // crides d'attachDeltaLogChannel de B (simula localStorage sobrevivint
+    // a una desconnexió/recàrrega real), sense dependre que l'entorn de
+    // proves tingui `localStorage` real (mateix idioma injectable que
+    // useCollabDoc.test.js fa amb IndexedDB).
+    const checkpointStore = new Map();
+    const getCheckpoint = (k) => checkpointStore.get(k);
+    const setCheckpoint = (k, v) => checkpointStore.set(k, v);
+    const projectName = 'TestProject';
+
+    const a = await makeDeltaPeer({ x: 1, y: 'base' }, 'alice');
+    a.store.value = { x: 1, y: 'de alice' };
+    await new Promise((r) => setTimeout(r, 25));
+
+    // B ja havia fet servir aquest canal abans (per això passa
+    // `projectName`+checkpoint): la primera vegada no diverteix de res,
+    // només adopta la base compartida.
+    const bStore = reactive({ value: { x: 1, y: 'base' } });
+    const bYdoc = new Y.Doc();
+    const bYmap = bYdoc.getMap('jsonChannels');
+    let bStop = await attachDeltaLogChannel(bYdoc, bYmap, 'data', {
+      getLocal: () => bStore.value,
+      setLocal: (v) => { bStore.value = v; },
+      computePatch: computeDataPatch,
+      baselineDefault: {},
+    }, Symbol('local-bob-1'), { myUserId: 'bob', debounceMs: 15, projectName, getCheckpoint, setCheckpoint });
+    syncDocs(a.ydoc, bYdoc); // B adopta { x:1, y:'base' } -- res nou encara
+    await nextTick();
+    bStop(); // simula una desconnexió/recàrrega -- el checkpoint (al Map injectat) sobreviu
+
+    // B edita LOCALMENT un camp propi (z) mentre A, en paral·lel, edita `y`
+    // -- exactament el mateix escenari que el test anterior, però ara B JA
+    // tenia un checkpoint local de la Fase anterior.
+    bStore.value = { ...bStore.value, z: 'de bob' };
+    a.store.value = { x: 1, y: 'de alice' };
+    await new Promise((r) => setTimeout(r, 25));
+
+    // A's edit arriba al Y.Doc de B ABANS que el seu pont es torni a
+    // adjuntar (a diferència del test anterior) -- aquí és precisament on
+    // el checkpoint demostra que marca la diferència: sense ell, la
+    // reconciliació inicial confondria el `y` ja sincronitzat amb un canvi
+    // propi de B i el revertiria.
+    syncDocs(a.ydoc, bYdoc);
+    bStop = await attachDeltaLogChannel(bYdoc, bYmap, 'data', {
+      getLocal: () => bStore.value,
+      setLocal: (v) => { bStore.value = v; },
+      computePatch: computeDataPatch,
+      baselineDefault: {},
+    }, Symbol('local-bob-2'), { myUserId: 'bob', debounceMs: 15, projectName, getCheckpoint, setCheckpoint });
+    await nextTick();
+
+    // Gràcies al checkpoint, el pedaç propi de B només inclou `z` -- `y`
+    // (editat per A mentre B era "desconnectat") NO es reverteix.
+    expect(bStore.value).toEqual({ x: 1, y: 'de alice', z: 'de bob' });
+
+    syncDocs(a.ydoc, bYdoc);
+    await nextTick();
+    expect(a.store.value).toEqual({ x: 1, y: 'de alice', z: 'de bob' });
+
+    a.stop(); bStop();
   });
 });
