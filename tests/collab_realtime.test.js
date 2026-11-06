@@ -17,11 +17,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { reactive, watch, nextTick } from 'vue';
+import { reactive, ref, watch, nextTick } from 'vue';
 import * as Y from 'yjs';
 import {
   applyStringDiffToYText,
   attachTemplateBridge,
+  attachTextBridge,
   attachJsonChannelBridge,
   generateSessionCredentials,
   encodeSessionCode,
@@ -31,6 +32,7 @@ import {
   checkProjectMatch,
   classifyProjectMismatch,
   templateYTextName,
+  cellYTextName,
   normalizeSignalingServers,
   findWorkingSignalingServer,
   KNOWN_SIGNALING_SERVERS,
@@ -139,8 +141,8 @@ describe('mapAwarenessStatesToPeers (Fase 11: participants des de l\'Awareness d
     ]);
     const peers = mapAwarenessStatesToPeers(states, 2);
     expect(peers).toEqual([
-      { userId: 'u1', displayName: 'Anna', isSelf: false, docName: undefined, cursor: null, editingPath: null },
-      { userId: 'u2', displayName: 'Bernat', isSelf: true, docName: undefined, cursor: null, editingPath: null },
+      { userId: 'u1', displayName: 'Anna', isSelf: false, docName: undefined, cursor: null, editingPath: null, cellCursor: null },
+      { userId: 'u2', displayName: 'Bernat', isSelf: true, docName: undefined, cursor: null, editingPath: null, cellCursor: null },
     ]);
   });
 
@@ -150,13 +152,13 @@ describe('mapAwarenessStatesToPeers (Fase 11: participants des de l\'Awareness d
       [2, { user: { userId: 'u2', displayName: 'Bernat' } }],
     ]);
     const peers = mapAwarenessStatesToPeers(states, 1);
-    expect(peers).toEqual([{ userId: 'u2', displayName: 'Bernat', isSelf: false, docName: undefined, cursor: null, editingPath: null }]);
+    expect(peers).toEqual([{ userId: 'u2', displayName: 'Bernat', isSelf: false, docName: undefined, cursor: null, editingPath: null, cellCursor: null }]);
   });
 
   it('falls back to a generic label and the raw clientId when userId/displayName are missing', () => {
     const states = new Map([[42, { user: {} }]]);
     const peers = mapAwarenessStatesToPeers(states, 1);
-    expect(peers).toEqual([{ userId: '42', displayName: 'Algú', isSelf: false, docName: undefined, cursor: null, editingPath: null }]);
+    expect(peers).toEqual([{ userId: '42', displayName: 'Algú', isSelf: false, docName: undefined, cursor: null, editingPath: null, cellCursor: null }]);
   });
 
   it('returns an empty list for an empty states map', () => {
@@ -166,13 +168,13 @@ describe('mapAwarenessStatesToPeers (Fase 11: participants des de l\'Awareness d
   it('includes docName (Fase 11.2) when a peer has published which document it is on', () => {
     const states = new Map([[1, { user: { userId: 'u1', displayName: 'Anna', docName: 'Memòria justificativa' } }]]);
     const peers = mapAwarenessStatesToPeers(states, 2);
-    expect(peers).toEqual([{ userId: 'u1', displayName: 'Anna', isSelf: false, docName: 'Memòria justificativa', cursor: null, editingPath: null }]);
+    expect(peers).toEqual([{ userId: 'u1', displayName: 'Anna', isSelf: false, docName: 'Memòria justificativa', cursor: null, editingPath: null, cellCursor: null }]);
   });
 
   it('includes cursor (Fase 20) and editingPath (Fase 21) when a peer has published them', () => {
     const states = new Map([[1, { user: { userId: 'u1', displayName: 'Anna', docName: 'Document Principal', cursor: { anchor: 3, head: 7 }, editingPath: 'Lots.0.import_lot' } }]]);
     const peers = mapAwarenessStatesToPeers(states, 2);
-    expect(peers).toEqual([{ userId: 'u1', displayName: 'Anna', isSelf: false, docName: 'Document Principal', cursor: { anchor: 3, head: 7 }, editingPath: 'Lots.0.import_lot' }]);
+    expect(peers).toEqual([{ userId: 'u1', displayName: 'Anna', isSelf: false, docName: 'Document Principal', cursor: { anchor: 3, head: 7 }, editingPath: 'Lots.0.import_lot', cellCursor: null }]);
   });
 });
 
@@ -387,6 +389,133 @@ describe('attachTemplateBridge (Fase 10: canal de plantilla en temps real via Y.
     await nextTick();
     // No observer left on peer A -- store.templateText must stay untouched.
     expect(a.store.templateText).toBe('changed locally after stop');
+  });
+});
+
+describe('cellYTextName (Fase 23: un Y.Text per cel·la, abast de projecte)', () => {
+  it('derives a distinct, deterministic name per camí de cel·la', () => {
+    expect(cellYTextName('General.nom_responsable')).toBe('cell:General.nom_responsable');
+    expect(cellYTextName('Lots.0.descripcio')).not.toBe(cellYTextName('Lots.1.descripcio'));
+  });
+});
+
+/** Mateix esperit que makePeer()/seedBaseline() més amunt, però contra
+ * attachTextBridge directament (la funció generalitzada, Fase 23) i un
+ * `ref` local en lloc de `store.templateText` -- simula l'editor visual
+ * d'UNA cel·la a cada "peer", sense passar per bindCellText (que necessita
+ * un `provider`/`ydoc` de sessió reals, com bindDocument -- cap dels dos té
+ * test directe en aquest fitxer, validats en viu via Puppeteer). */
+function makeCellTextPeer(initialText) {
+  const localText = ref(initialText);
+  const applyingRemote = ref(false);
+  const ydoc = new Y.Doc();
+  const ytext = ydoc.getText('cell:test');
+  const localOrigin = Symbol('local');
+  const stop = attachTextBridge(ydoc, ytext, {
+    getLocal: () => localText.value,
+    setLocal: (v) => { localText.value = v; },
+    getApplyingRemote: () => applyingRemote.value,
+    setApplyingRemote: (v) => { applyingRemote.value = v; },
+  }, localOrigin);
+  return { localText, ydoc, ytext, stop, isApplyingRemote: () => applyingRemote.value };
+}
+
+function seedCellBaseline(peers) {
+  const [first, ...rest] = peers;
+  if (first.localText.value) {
+    first.ydoc.transact(() => {
+      first.ytext.insert(0, first.localText.value);
+    });
+  }
+  for (const other of rest) {
+    syncDocs(first.ydoc, other.ydoc);
+    other.localText.value = other.ytext.toString();
+  }
+}
+
+describe('attachTextBridge (Fase 23: generalització del pont de text -- reutilitzat per l\'editor visual de cel·la)', () => {
+  it('propagates a local edit from one peer to the other', async () => {
+    const a = makeCellTextPeer('Hola');
+    const b = makeCellTextPeer('Hola');
+    seedCellBaseline([a, b]);
+
+    a.localText.value = 'Hola món';
+    await nextTick();
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+
+    expect(b.localText.value).toBe('Hola món');
+  });
+
+  it('toggles setApplyingRemote around a remote merge', async () => {
+    const a = makeCellTextPeer('X');
+    const b = makeCellTextPeer('X');
+    seedCellBaseline([a, b]);
+
+    const transitions = [];
+    watch(() => b.isApplyingRemote(), (v) => transitions.push(v), { flush: 'sync' });
+
+    a.localText.value = 'XY';
+    await nextTick();
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+
+    expect(transitions).toEqual([true, false]);
+  });
+
+  it('merges concurrent edits at different positions (character-level merge, not whole-text last-write-wins)', async () => {
+    const a = makeCellTextPeer('abc def');
+    const b = makeCellTextPeer('abc def');
+    seedCellBaseline([a, b]);
+
+    a.localText.value = 'abcXYZ def';
+    b.localText.value = 'abc def123';
+    await nextTick();
+
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+
+    expect(a.localText.value).toBe(b.localText.value);
+    expect(a.localText.value).toContain('XYZ');
+    expect(a.localText.value).toContain('123');
+  });
+
+  it('does not keep generating outgoing changes once both peers have converged (no feedback loop)', async () => {
+    const a = makeCellTextPeer('same');
+    const b = makeCellTextPeer('same');
+    seedCellBaseline([a, b]);
+
+    a.localText.value = 'same text';
+    await nextTick();
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+    expect(a.localText.value).toBe(b.localText.value);
+
+    const stateBefore = Y.encodeStateAsUpdate(a.ydoc);
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+    const stateAfter = Y.encodeStateAsUpdate(a.ydoc);
+
+    expect(stateAfter).toEqual(stateBefore);
+  });
+
+  it('stop() detaches both the Y.Text observer and the local watcher', async () => {
+    const a = makeCellTextPeer('abc');
+    const b = makeCellTextPeer('abc');
+    seedCellBaseline([a, b]);
+    a.stop();
+
+    a.localText.value = 'changed locally after stop';
+    await nextTick();
+    expect(a.ytext.toString()).toBe('abc');
+
+    b.localText.value = 'changed on peer B after peer A stopped';
+    await nextTick();
+    syncDocs(a.ydoc, b.ydoc);
+    await nextTick();
+    expect(a.localText.value).toBe('changed locally after stop');
   });
 });
 

@@ -44,6 +44,14 @@ const props = defineProps({
   // aquest component només els renderitza, no decideix qui hi pertany.
   // {userId, displayName, cursor: {anchor, head} | null, ...}.
   collabPeers: { type: Array, default: () => [] },
+  // Fase 23: cert mentre el pare (DataInspector.vue/NestedDataNode.vue)
+  // està aplicant una fusió remota del pont de l'editor visual de cel·la
+  // -- preserva l'historial de desfer local en comptes d'esborrar-lo
+  // (mateixa correcció que la Fase 9 ja aplica al document principal via
+  // store.collabApplyingRemoteTemplate, aquí com a prop perquè el
+  // contingut canònic d'una cel·la viu en un ref local del pare, no a
+  // l'store).
+  applyingRemoteCellText: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(['update:modelValue', 'generate', 'update-cursor']);
@@ -108,10 +116,17 @@ if (props.isCellMode) {
   watch(() => props.modelValue, (newVal) => {
     if (editorText.value !== newVal) {
       editorText.value = newVal || '';
-      // A genuinely new external value means a *different* cell/field is
-      // now being edited (openCellEditor() in DataInspector.vue) — undo
-      // history from whatever was open before must never carry over.
-      editHistory.reset(newVal || '');
+      if (props.applyingRemoteCellText) {
+        // Fase 23: és una fusió remota del pont de l'editor visual de
+        // cel·la arribant MENTRE s'edita el mateix camp — preserva
+        // l'historial de desfer local (mateixa correcció que la Fase 9).
+        editHistory.push(newVal || '', { immediate: true });
+      } else {
+        // A genuinely new external value means a *different* cell/field is
+        // now being edited (openCellEditor() in DataInspector.vue) — undo
+        // history from whatever was open before must never carry over.
+        editHistory.reset(newVal || '');
+      }
     }
   }, { immediate: true });
 

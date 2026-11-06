@@ -52,7 +52,12 @@ const props = defineProps({
   // `helpers`, que només porta funcions) perquè aquest component el pugui
   // reenviar tal qual al seu propi <NestedDataNode> fill (secció "Child
   // Hierarchies" més avall).
-  remoteEditingPaths: { type: Array, default: () => [] }
+  remoteEditingPaths: { type: Array, default: () => [] },
+  // Fase 23 -- mateix motiu: cap ús propi aquí, només reenviament cap al
+  // <NestedDataNode> fill.
+  bindCellText: { type: Function, default: null },
+  setLocalCellCursor: { type: Function, default: null },
+  remoteCellCursors: { type: Array, default: () => [] }
 });
 
 const emit = defineEmits(['editing-path-change']);
@@ -268,6 +273,9 @@ const store = useWorkspaceStore();
       :nestingDepth="nestingDepth + 1"
       :remote-editing-paths="remoteEditingPaths"
       @editing-path-change="(p) => emit('editing-path-change', p)"
+      :bind-cell-text="bindCellText"
+      :set-local-cell-cursor="setLocalCellCursor"
+      :remote-cell-cursors="remoteCellCursors"
     />
   </template>
 </template>

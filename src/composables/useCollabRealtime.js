@@ -357,6 +357,13 @@ export function templateYTextName(docName) {
   return `template:${docName}`;
 }
 
+/** Nom del `Y.Text` d'una cel·la concreta del model de dades (Fase 23) --
+ * abast de PROJECTE, no de document (com `schema`/`data`), igual que el
+ * camí JSON (`path`) que ja identifica la cel·la a tot arreu (Fase 21). */
+export function cellYTextName(path) {
+  return `cell:${path}`;
+}
+
 /** Espera que la contrapart publiqui el nom del projecte al Y.Map `meta`
  * compartit (qui INICIA la sessió ja l'hi escriu abans de connectar el
  * provider, vegeu startRealtimeSession) -- amb un límit de temps, perquè si
@@ -603,7 +610,10 @@ export function requestProjectTransfer(ydoc, transferMap, chunksArray, { myUserI
  * `store.templateText` del document indicat per `docName`) i `editingPath`
  * (Fase 21, el camí JSON del camp del model de dades que té enfocat ara
  * mateix, o `null`) també són opcionals -- additius, cap consumidor
- * existent d'aquesta funció es trenca per no conèixer-los. */
+ * existent d'aquesta funció es trenca per no conèixer-los. `cellCursor`
+ * (Fase 23, `{path, anchor, head}` o `null`) és la posició de cursor dins
+ * l'editor visual d'UNA cel·la concreta -- independent de `cursor` (que és
+ * del document de plantilla principal). */
 export function mapAwarenessStatesToPeers(statesMap, selfClientId) {
   const peers = [];
   statesMap.forEach((state, clientId) => {
@@ -616,37 +626,44 @@ export function mapAwarenessStatesToPeers(statesMap, selfClientId) {
       docName: user.docName,
       cursor: user.cursor || null,
       editingPath: user.editingPath || null,
+      cellCursor: user.cellCursor || null,
     });
   });
   return peers;
 }
 
 /**
- * Connecta `store.templateText` a un `Y.Text` ja creat: repropaga les
- * edicions locals cap al Y.Text (com a diff posicional, no reemplaçament
- * sencer) i les fusions remotes cap a `store.templateText` (mateix flag
- * `store.collabApplyingRemoteTemplate` que ja interpreta TemplateEditor.vue).
- * Extret com a peça independent del transport (`WebrtcProvider`) perquè es
- * pugui provar amb dos `Y.Doc` en memòria sincronitzats directament via
- * `Y.applyUpdate`, sense xarxa real -- veure tests/collab_realtime.test.js.
+ * Connecta qualsevol text local (via `getLocal`/`setLocal`) a un `Y.Text`
+ * ja creat: repropaga les edicions locals cap al Y.Text (com a diff
+ * posicional, no reemplaçament sencer) i les fusions remotes cap al text
+ * local, envoltades de `setApplyingRemote(true)`/`(false)` (després d'un
+ * `nextTick`) perquè qui consumeixi el text local pugui distingir un canvi
+ * remot d'una edició pròpia -- i `getApplyingRemote()` evita que el propi
+ * `watch` repropagui aquell mateix canvi cap a Yjs com si fos una edició
+ * nova (mateix propòsit que `store.collabApplyingRemoteTemplate` ja
+ * complia quan aquesta funció només coneixia `store.templateText`
+ * directament). Extret com a peça independent del transport
+ * (`WebrtcProvider`) perquè es pugui provar amb dos `Y.Doc` en memòria
+ * sincronitzats directament via `Y.applyUpdate`, sense xarxa real -- veure
+ * tests/collab_realtime.test.js.
  *
  * Retorna una funció per desconnectar (atura el watcher; no toca el Y.Doc).
  */
-export function attachTemplateBridge(ydoc, ytext, store, localOrigin) {
+export function attachTextBridge(ydoc, ytext, { getLocal, setLocal, getApplyingRemote, setApplyingRemote }, localOrigin) {
   const observer = (event) => {
     if (event.transaction.origin === localOrigin) return; // eco de la pròpia escriptura
     const merged = ytext.toString();
-    if (merged === store.templateText) return;
-    store.collabApplyingRemoteTemplate = true;
-    store.templateText = merged;
+    if (merged === getLocal()) return;
+    setApplyingRemote(true);
+    setLocal(merged);
     nextTick(() => {
-      store.collabApplyingRemoteTemplate = false;
+      setApplyingRemote(false);
     });
   };
   ytext.observe(observer);
 
-  const stopWatch = watch(() => store.templateText, (newVal) => {
-    if (store.collabApplyingRemoteTemplate) return; // és el nostre propi merge remot acabat d'aplicar
+  const stopWatch = watch(getLocal, (newVal) => {
+    if (getApplyingRemote()) return; // és el nostre propi merge remot acabat d'aplicar
     const current = ytext.toString();
     if (current === (newVal || '')) return;
     ydoc.transact(() => {
@@ -658,6 +675,20 @@ export function attachTemplateBridge(ydoc, ytext, store, localOrigin) {
     ytext.unobserve(observer);
     stopWatch();
   };
+}
+
+/**
+ * Embolcall prim d'`attachTextBridge` específic per a `store.templateText`
+ * -- manté la mateixa firma/comportament d'abans de la Fase 23 (zero canvi
+ * per a `bindDocument` ni per als tests existents).
+ */
+export function attachTemplateBridge(ydoc, ytext, store, localOrigin) {
+  return attachTextBridge(ydoc, ytext, {
+    getLocal: () => store.templateText,
+    setLocal: (v) => { store.templateText = v; },
+    getApplyingRemote: () => store.collabApplyingRemoteTemplate,
+    setApplyingRemote: (v) => { store.collabApplyingRemoteTemplate = v; },
+  }, localOrigin);
 }
 
 /**
@@ -1008,6 +1039,14 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
   let stopProjectTransferResponder = null;
   let awarenessChangeHandler = null;
   let boundDocName = null;
+  // Fase 23: pont de l'editor visual de cel·la -- a diferència de
+  // boundDocName (vinculat una vegada per sessió, per document), aquest
+  // es (des)vincula a cada obertura/tancament del modal d'edició de
+  // cel·la, ja que és efímer per naturalesa (abast d'UN sol camp, no de
+  // tot un document).
+  let cellYText = null;
+  let stopCellWatch = null;
+  let boundCellPath = null;
   // Nom del projecte al qual pertany el `ydoc` actualment carregat (Fase
   // 16) -- `null` si no n'hi ha cap. Permet detectar, de manera defensiva,
   // si algú ha intentat connectar/capturar per a un projecte diferent del
@@ -1040,6 +1079,12 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
   // viceversa (Fases 20/21).
   let localCursor = null;
   let localEditingPath = null;
+  // Fase 23: posició de cursor dins l'editor visual d'UNA cel·la concreta
+  // -- distint de `cursor` (que és del document de plantilla principal) i
+  // d'`editingPath` (presència sense decalatges, Fase 21): porta també el
+  // `path`, perquè qui el consumeixi sàpiga a quina cel·la correspon sense
+  // haver de creuar-ho amb `editingPath` per separat.
+  let localCellCursor = null;
 
   function publishAwarenessUser() {
     if (!provider) return;
@@ -1049,6 +1094,7 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
       docName: currentDocName.value,
       cursor: localCursor,
       editingPath: localEditingPath,
+      cellCursor: localCellCursor,
     });
   }
 
@@ -1068,6 +1114,16 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
   function setLocalEditingPath(path) {
     if (!provider) return;
     localEditingPath = path;
+    publishAwarenessUser();
+  }
+
+  // Fase 23: publica (o esborra, amb `cursor: null`) la posició del cursor
+  // dins l'editor visual de la cel·la `path` -- no-op si `path` ja no és
+  // la cel·la actualment vinculada (mateix criteri que setLocalCursor amb
+  // `docName`/`currentDocName`).
+  function setLocalCellCursor(path, cursor) {
+    if (!provider || path !== boundCellPath) return;
+    localCellCursor = cursor ? { path, ...cursor } : null;
     publishAwarenessUser();
   }
 
@@ -1134,6 +1190,45 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
     currentDocName.value = docName;
   }
 
+  // Fase 23: (des)vincula el pont de l'editor visual d'UNA cel·la concreta
+  // (`path`) -- cridada en obrir el modal d'edició de cel·la, mai una
+  // vegada per sessió (com bindDocument): no-op (retorna un desvincula
+  // buit) si no hi ha sessió de xarxa activa o si `path` és fals. A
+  // diferència de bindDocument, no hi ha cap "preferLocal"/reconciliació
+  // offline -- l'editor de cel·la no té captura fora de línia (Fases
+  // 16/17), només importa mentre hi ha sessió en viu i el modal és obert,
+  // així que l'única reconciliació possible és "algú altre ja hi era
+  // editant quan m'hi he unit, prenc el seu contingut en curs" (mateix
+  // criteri que la branca NO-preferLocal de bindDocument).
+  function bindCellText(path, { getLocal, setLocal, getApplyingRemote, setApplyingRemote }) {
+    if (!provider || !path) return () => {};
+    if (stopCellWatch) {
+      stopCellWatch();
+      stopCellWatch = null;
+    }
+    cellYText = ydoc.getText(cellYTextName(path));
+    const local = getLocal();
+    if (cellYText.length === 0 && local) {
+      ydoc.transact(() => {
+        if (cellYText.length === 0) cellYText.insert(0, local);
+      }, localOrigin);
+    } else if (cellYText.toString() !== local) {
+      setApplyingRemote(true);
+      setLocal(cellYText.toString());
+      nextTick(() => setApplyingRemote(false));
+    }
+    boundCellPath = path;
+    stopCellWatch = attachTextBridge(ydoc, cellYText, { getLocal, setLocal, getApplyingRemote, setApplyingRemote }, localOrigin);
+    return () => {
+      if (stopCellWatch) {
+        stopCellWatch();
+        stopCellWatch = null;
+      }
+      boundCellPath = null;
+      cellYText = null;
+    };
+  }
+
   // Només xarxa -- NO toca ydoc ni cap pont de document (Fase 16: han de
   // sobreviure a una simple desconnexió, vegeu el doc comment de dalt del
   // fitxer). Segura de cridar encara que no hi hagi cap connexió activa.
@@ -1156,10 +1251,11 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
     currentPassword.value = '';
     pendingProjectName.value = '';
     transferProgress.value = null;
-    // Fase 20/21: cap sentit a republicar un cursor/camí d'edició d'una
+    // Fase 20/21/23: cap sentit a republicar un cursor/camí d'edició d'una
     // sessió de xarxa que ja no existeix en reconnectar.
     localCursor = null;
     localEditingPath = null;
+    localCellCursor = null;
   }
 
   // Tanca els ponts de document i allibera el Y.Doc persistent d'aquest
@@ -1179,12 +1275,18 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
       stopDataChannel();
       stopDataChannel = null;
     }
+    if (stopCellWatch) {
+      stopCellWatch();
+      stopCellWatch = null;
+    }
     if (currentProjectNameForDoc) {
       await closeProjectDoc(currentProjectNameForDoc);
     }
     ydoc = null;
     ytext = null;
     boundDocName = null;
+    cellYText = null;
+    boundCellPath = null;
     currentDocName.value = '';
     currentProjectNameForDoc = null;
   }
@@ -1533,5 +1635,7 @@ export function useCollabRealtime(buildProjectZipBlob, importProjectZip) {
     requestAndImportProject,
     setLocalCursor,
     setLocalEditingPath,
+    bindCellText,
+    setLocalCellCursor,
   };
 }

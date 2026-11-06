@@ -172,6 +172,8 @@ const {
   requestAndImportProject,
   setLocalCursor,
   setLocalEditingPath,
+  bindCellText,
+  setLocalCellCursor,
 } = collabRealtime;
 window.collabRealtime = collabRealtime;
 
@@ -351,6 +353,16 @@ const dataRemoteEditingPaths = computed(() => {
 const handleEditingPathChange = (path) => {
   setLocalEditingPath(path);
 };
+
+// Fase 23: participants sencers amb un cursor publicat dins l'editor
+// visual d'UNA cel·la (abast de projecte, com dataRemoteEditingPaths) --
+// NO es filtra pel camí aquí: DataInspector.vue/NestedDataNode.vue el
+// filtren localment pel camí que tinguin obert ara mateix al seu propi
+// modal, mateix criteri que remoteEditingPaths ja fa servir.
+const remoteCellCursors = computed(() => {
+  if (collabRealtimeStatus.value !== 'connected') return [];
+  return collabRealtimePeers.value.filter((p) => !p.isSelf && p.cellCursor);
+});
 
 const handleConnectCollabFolder = async () => {
   try {
@@ -3203,7 +3215,13 @@ const generateDocuments = async () => {
 
           <!-- Tab: Data Inspector -->
           <div class="tab-content" :class="{ active: store.activeTab === 'data' }" style="overflow-y: auto; height: 100%; min-height: 0; padding-right: 6px;">
-            <DataInspector :remote-editing-paths="dataRemoteEditingPaths" @editing-path-change="handleEditingPathChange" />
+            <DataInspector
+              :remote-editing-paths="dataRemoteEditingPaths"
+              @editing-path-change="handleEditingPathChange"
+              :bind-cell-text="bindCellText"
+              :set-local-cell-cursor="setLocalCellCursor"
+              :remote-cell-cursors="remoteCellCursors"
+            />
           </div>
 
           <!-- Tab: Template Editor -->

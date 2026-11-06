@@ -70,7 +70,17 @@ const props = defineProps({
   remoteEditingPaths: {
     type: Array,
     default: () => []
-  }
+  },
+  // Fase 23: funcions de useCollabRealtime.js (via App.vue/DataInspector.vue)
+  // i la llista sencera de participants amb cursor publicat dins l'editor
+  // visual de cel·la -- mateix criteri de reenviament que remoteEditingPaths:
+  // cap filtratge aquí (el filtratge per camí exacte passa dins el propi
+  // modal d'edició de cel·la d'aquesta instància), reenviat tal qual a
+  // <NestedItemForm> (que al seu torn el reenvia al seu propi
+  // <NestedDataNode> fill).
+  bindCellText: { type: Function, default: null },
+  setLocalCellCursor: { type: Function, default: null },
+  remoteCellCursors: { type: Array, default: () => [] }
 });
 
 const emit = defineEmits(['editing-path-change']);
@@ -717,6 +727,10 @@ const getReadOnlyCellStyle = (col) => {
 const isCellModalOpen = ref(false);
 const activeCellInfo = ref(null);
 const cellTextValue = ref('');
+// Fase 23: cert mentre s'aplica una fusió remota del pont de l'editor
+// visual de cel·la (vegeu DataInspector.vue per al mateix patró).
+const applyingRemoteCellText = ref(false);
+let cellBridgeDetach = null;
 
 // Fase 22: cellTextValue s'aplica sempre en viu a item[fieldKey], com
 // qualsevol altre camp (onCellInput, ja definit més amunt) -- abans es
@@ -737,16 +751,49 @@ const openCellEditor = (item, fieldKey, idx) => {
   cellTextValue.value = String(item[fieldKey] || '');
   isCellModalOpen.value = true;
   emit('editing-path-change', activeCellInfo.value.path);
+  // Fase 23: vincula el pont de text d'aquesta cel·la si hi ha sessió en
+  // viu activa (no-op altrament, comprovat dins bindCellText).
+  if (props.bindCellText && activeCellInfo.value.path) {
+    cellBridgeDetach = props.bindCellText(activeCellInfo.value.path, {
+      getLocal: () => cellTextValue.value,
+      setLocal: (v) => { cellTextValue.value = v; },
+      getApplyingRemote: () => applyingRemoteCellText.value,
+      setApplyingRemote: (v) => { applyingRemoteCellText.value = v; },
+    });
+  }
 };
 
 // Tanca l'editor de cel·la (×, "Tancar" o Escape) -- els canvis ja estan
 // aplicats (Fase 22), només cal forçar el recàlcul/desat immediats (mateix
 // idioma que onCellBlur per a qualsevol altre camp) i alliberar la marca
-// d'edició en viu (Fase 21).
+// d'edició en viu (Fase 21) i el cursor publicat (Fase 23).
 const closeCellEditor = () => {
   onCellBlur();
   isCellModalOpen.value = false;
   emit('editing-path-change', null);
+  if (cellBridgeDetach) {
+    cellBridgeDetach();
+    cellBridgeDetach = null;
+  }
+  if (props.setLocalCellCursor && activeCellInfo.value?.path) {
+    props.setLocalCellCursor(activeCellInfo.value.path, null);
+  }
+};
+
+// Fase 23: mateix criteri que cellCollabPeers a DataInspector.vue --
+// participants amb cursor publicat dins l'editor visual d'EXACTAMENT la
+// cel·la oberta ara mateix, en la forma que <TemplateEditor> ja espera.
+const cellCollabPeers = computed(() => {
+  if (!isCellModalOpen.value || !activeCellInfo.value?.path) return [];
+  return (props.remoteCellCursors || [])
+    .filter((p) => p.cellCursor && p.cellCursor.path === activeCellInfo.value.path)
+    .map((p) => ({ ...p, cursor: { anchor: p.cellCursor.anchor, head: p.cellCursor.head } }));
+});
+
+const handleCellCursorUpdate = (sel) => {
+  if (props.setLocalCellCursor && activeCellInfo.value?.path) {
+    props.setLocalCellCursor(activeCellInfo.value.path, sel);
+  }
 };
 
 // Row-edit modal (see showReadOnlyTable above): opens NestedItemForm for a
@@ -1962,6 +2009,9 @@ const itemFormHelpers = {
             :helpers="itemFormHelpers"
             :remote-editing-paths="remoteEditingPaths"
             @editing-path-change="(p) => emit('editing-path-change', p)"
+            :bind-cell-text="bindCellText"
+            :set-local-cell-cursor="setLocalCellCursor"
+            :remote-cell-cursors="remoteCellCursors"
           />
         </div>
       </div>
@@ -1989,6 +2039,9 @@ const itemFormHelpers = {
           :helpers="itemFormHelpers"
           :remote-editing-paths="remoteEditingPaths"
           @editing-path-change="(p) => emit('editing-path-change', p)"
+          :bind-cell-text="bindCellText"
+          :set-local-cell-cursor="setLocalCellCursor"
+          :remote-cell-cursors="remoteCellCursors"
         />
       </div>
       <div class="modal-footer" style="flex-shrink: 0; display: flex; justify-content: flex-end; border-top: 1px solid var(--border-color); padding-top: 0.5rem;">
@@ -2031,7 +2084,13 @@ const itemFormHelpers = {
         </div>
         
         <div class="modal-body" style="flex-grow: 1; padding: 0.5rem; overflow: hidden; display: flex; flex-direction: column;">
-          <TemplateEditor v-model="cellTextValue" :isCellMode="true" />
+          <TemplateEditor
+            v-model="cellTextValue"
+            :isCellMode="true"
+            :applying-remote-cell-text="applyingRemoteCellText"
+            :collab-peers="cellCollabPeers"
+            @update-cursor="handleCellCursorUpdate"
+          />
         </div>
         
         <div class="modal-footer" style="margin-top: auto; border-top: 1px solid var(--border-color); padding-top: 0.75rem; display: flex; justify-content: flex-end; gap: 8px;">

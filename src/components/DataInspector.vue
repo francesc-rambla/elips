@@ -36,7 +36,17 @@ import { runGlobalAutoAdjust } from '../main';
 // dades -- {path, displayName, color}. Reenviat tal qual a cada
 // <NestedDataNode> fill.
 const props = defineProps({
-  remoteEditingPaths: { type: Array, default: () => [] }
+  remoteEditingPaths: { type: Array, default: () => [] },
+  // Fase 23: funcions de useCollabRealtime.js passades directament des
+  // d'App.vue (mateix idioma que el bundle `helpers` de NestedItemForm.vue)
+  // -- cap relay per emit necessari, el modal d'edició de cel·la viu
+  // directament en aquest component. bindCellText/setLocalCellCursor són
+  // no-op si no hi ha sessió en viu activa (comprovat dins
+  // useCollabRealtime.js). remoteCellCursors és la llista SENCERA de
+  // participants amb cursor publicat (sense filtrar per camí encara).
+  bindCellText: { type: Function, default: null },
+  setLocalCellCursor: { type: Function, default: null },
+  remoteCellCursors: { type: Array, default: () => [] },
 });
 const emit = defineEmits(['editing-path-change']);
 
@@ -527,7 +537,14 @@ import GroupConfigModal from './GroupConfigModal.vue';
 
 const isCellModalOpen = ref(false);
 const cellTextValue = ref('');
-const activeCellInfo = ref({ sheet: '', keyOrIdx: '', col: null, isKv: true });
+const activeCellInfo = ref({ sheet: '', keyOrIdx: '', col: null, isKv: true, path: null });
+// Fase 23: cert mentre s'aplica una fusió remota del pont de l'editor
+// visual de cel·la -- passat com a prop a <TemplateEditor> perquè
+// preservi l'historial de desfer en lloc d'esborrar-lo.
+const applyingRemoteCellText = ref(false);
+// Funció de desconnexió del pont de la cel·la ACTUALMENT oberta (no
+// reactiva -- és només una referència de tancament, no estat de pantalla).
+let cellBridgeDetach = null;
 
 // Fase 22: cellTextValue s'aplica sempre en viu a store.excelJsonData, com
 // qualsevol altre camp de l'aplicació (onCellInput/onCellBlur, ja definits
@@ -551,7 +568,8 @@ const openCellEditor = (sheet, keyOrIdx, col, isKv) => {
     store.addLog("Només els camps de tipus Text es poden editar amb l'editor visual.", "info");
     return;
   }
-  activeCellInfo.value = { sheet, keyOrIdx, col, isKv };
+  const path = isKv ? `${sheet}.${keyOrIdx}` : `${sheet}.${keyOrIdx}.${col}`;
+  activeCellInfo.value = { sheet, keyOrIdx, col, isKv, path };
   const val = isKv
     ? store.excelJsonData[sheet][keyOrIdx]
     : store.excelJsonData[sheet][keyOrIdx][col];
@@ -560,7 +578,17 @@ const openCellEditor = (sheet, keyOrIdx, col, isKv) => {
   // Fase 21 (refinament): l'editor visual compta com "en edició" d'aquesta
   // cel·la encara que el focus ja no sigui sobre l'input original (el seu
   // propi @blur ja s'ha disparat en obrir el modal).
-  emit('editing-path-change', isKv ? `${sheet}.${keyOrIdx}` : `${sheet}.${keyOrIdx}.${col}`);
+  emit('editing-path-change', path);
+  // Fase 23: si hi ha sessió en viu activa, vincula el pont de text
+  // d'aquesta cel·la (no-op si no n'hi ha, comprovat dins bindCellText).
+  if (props.bindCellText) {
+    cellBridgeDetach = props.bindCellText(path, {
+      getLocal: () => cellTextValue.value,
+      setLocal: (v) => { cellTextValue.value = v; },
+      getApplyingRemote: () => applyingRemoteCellText.value,
+      setApplyingRemote: (v) => { applyingRemoteCellText.value = v; },
+    });
+  }
 };
 
 // Tanca l'editor de cel·la (×, "Tancar" o Escape) -- els canvis ja estan
@@ -570,6 +598,32 @@ const closeCellEditor = () => {
   onCellBlur();
   isCellModalOpen.value = false;
   emit('editing-path-change', null);
+  // Fase 23: desvincula el pont de text i esborra el cursor publicat
+  // d'aquesta cel·la.
+  if (cellBridgeDetach) {
+    cellBridgeDetach();
+    cellBridgeDetach = null;
+  }
+  if (props.setLocalCellCursor && activeCellInfo.value.path) {
+    props.setLocalCellCursor(activeCellInfo.value.path, null);
+  }
+};
+
+// Fase 23: participants amb cursor publicat dins l'editor visual d'EXACTAMENT
+// la cel·la oberta ara mateix, en la forma que <TemplateEditor> ja espera
+// (collabPeers amb `.cursor: {anchor, head}`, mateixa interfície que la
+// Fase 20 ja fa servir per al document principal).
+const cellCollabPeers = computed(() => {
+  if (!isCellModalOpen.value || !activeCellInfo.value.path) return [];
+  return (props.remoteCellCursors || [])
+    .filter((p) => p.cellCursor && p.cellCursor.path === activeCellInfo.value.path)
+    .map((p) => ({ ...p, cursor: { anchor: p.cellCursor.anchor, head: p.cellCursor.head } }));
+});
+
+const handleCellCursorUpdate = (sel) => {
+  if (props.setLocalCellCursor && activeCellInfo.value.path) {
+    props.setLocalCellCursor(activeCellInfo.value.path, sel);
+  }
 };
 
 // Gestiona dreceres de teclat (Escape/Enter) per a tots els modals propis d'aquest component, segons quin estigui obert
@@ -1769,6 +1823,9 @@ onMounted(() => {
               :parentPath="''"
               :remote-editing-paths="remoteEditingPaths"
               @editing-path-change="(p) => emit('editing-path-change', p)"
+              :bind-cell-text="bindCellText"
+              :set-local-cell-cursor="setLocalCellCursor"
+              :remote-cell-cursors="remoteCellCursors"
             />
           </template>
           
@@ -2011,6 +2068,9 @@ onMounted(() => {
                 :parentPath="name"
                 :remote-editing-paths="remoteEditingPaths"
                 @editing-path-change="(p) => emit('editing-path-change', p)"
+                :bind-cell-text="bindCellText"
+                :set-local-cell-cursor="setLocalCellCursor"
+                :remote-cell-cursors="remoteCellCursors"
               />
             </template>
           </template>
@@ -2032,7 +2092,13 @@ onMounted(() => {
         </div>
 
         <div class="modal-body" style="flex-grow: 1; padding: 0.5rem; overflow: hidden; display: flex; flex-direction: column;">
-          <TemplateEditor v-model="cellTextValue" :isCellMode="true" />
+          <TemplateEditor
+            v-model="cellTextValue"
+            :isCellMode="true"
+            :applying-remote-cell-text="applyingRemoteCellText"
+            :collab-peers="cellCollabPeers"
+            @update-cursor="handleCellCursorUpdate"
+          />
         </div>
 
         <div class="modal-footer" style="margin-top: auto;">
