@@ -718,6 +718,17 @@ const isCellModalOpen = ref(false);
 const activeCellInfo = ref(null);
 const cellTextValue = ref('');
 
+// Fase 22: cellTextValue s'aplica sempre en viu a item[fieldKey], com
+// qualsevol altre camp (onCellInput, ja definit més amunt) -- abans es
+// quedava en un esborrany local fins clicar "Aplicar", cosa que feia
+// perdre els canvis si el modal es tancava per error (×, Escape).
+watch(cellTextValue, (newVal) => {
+  if (activeCellInfo.value) {
+    activeCellInfo.value.item[activeCellInfo.value.fieldKey] = newVal;
+    onCellInput();
+  }
+});
+
 const openCellEditor = (item, fieldKey, idx) => {
   if (getElementType(fieldKey) !== 'Text') {
     return;
@@ -728,22 +739,14 @@ const openCellEditor = (item, fieldKey, idx) => {
   emit('editing-path-change', activeCellInfo.value.path);
 };
 
-// Tanca l'editor de cel·la (desant o no) -- sempre allibera la marca
-// d'edició en viu (Fase 21): mentre l'editor visual estigui obert, el camp
-// es considera "en edició" encara que el focus no sigui sobre l'input
-// original (@blur d'aquest ja s'ha disparat en obrir el modal).
+// Tanca l'editor de cel·la (×, "Tancar" o Escape) -- els canvis ja estan
+// aplicats (Fase 22), només cal forçar el recàlcul/desat immediats (mateix
+// idioma que onCellBlur per a qualsevol altre camp) i alliberar la marca
+// d'edició en viu (Fase 21).
 const closeCellEditor = () => {
+  onCellBlur();
   isCellModalOpen.value = false;
   emit('editing-path-change', null);
-};
-
-const saveCellEditor = () => {
-  if (activeCellInfo.value) {
-    const { item, fieldKey } = activeCellInfo.value;
-    item[fieldKey] = cellTextValue.value;
-  }
-  closeCellEditor();
-  store.addLog("Camp actualitzat correctament.", "success");
 };
 
 // Row-edit modal (see showReadOnlyTable above): opens NestedItemForm for a
@@ -776,12 +779,9 @@ const handleNestedKeydown = (e) => {
   }
 
   if (isCellModalOpen.value) {
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) {
       e.preventDefault();
       closeCellEditor();
-    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      saveCellEditor();
     }
     return;
   }
@@ -2035,8 +2035,7 @@ const itemFormHelpers = {
         </div>
         
         <div class="modal-footer" style="margin-top: auto; border-top: 1px solid var(--border-color); padding-top: 0.75rem; display: flex; justify-content: flex-end; gap: 8px;">
-          <button type="button" class="btn btn-secondary" style="width: auto;" @click="closeCellEditor">Cancel·lar</button>
-          <button type="button" class="btn btn-primary" style="width: auto;" @click="saveCellEditor">Aplicar Canvis</button>
+          <button type="button" class="btn btn-primary" style="width: auto;" @click="closeCellEditor">Tancar</button>
         </div>
       </div>
     </div>

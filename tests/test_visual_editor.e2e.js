@@ -171,7 +171,7 @@ async function testVisualEditor() {
   // components listened for it on `window`, and nothing stopped
   // propagation), discarding whatever the user had just typed; the outer
   // modal also never asked before discarding unsaved edits on its own.
-  console.log('➡️ 5. Esc dins un modal aniuat (editor de cel·la -> modal de Taula) només tanca el superior, i demana confirmació si hi ha canvis...');
+  console.log('➡️ 5. Esc dins un modal aniuat (editor de cel·la -> modal de Taula) només tanca el superior; el segon Esc tanca l\'editor de cel·la directament (Fase 22: aplicació en viu, sense confirmació de descart)...');
   const dialogs = [];
   page.on('dialog', async (dialog) => { dialogs.push(dialog.message()); await dialog.dismiss(); });
 
@@ -221,10 +221,12 @@ async function testVisualEditor() {
 
   await page.keyboard.press('Escape');
   await new Promise((r) => setTimeout(r, 300));
-  if (dialogs.length !== 1) throw new Error('Esperava un diàleg de confirmació abans de descartar canvis pendents, n\'hi ha ' + dialogs.length);
-  const countAfterDismiss = await page.evaluate(visibleModalCount);
-  if (countAfterDismiss !== 1) throw new Error('El modal de cel·la s\'ha tancat tot i haver cancel·lat la confirmació');
-  console.log('  ✓ Amb canvis pendents, Esc demana confirmació abans de tancar; en cancel·lar-la, el modal roman obert.');
+  if (dialogs.length !== 0) throw new Error('No hauria d\'aparèixer cap diàleg de confirmació (Fase 22), n\'han aparegut ' + dialogs.length);
+  const countAfterSecondEscape = await page.evaluate(visibleModalCount);
+  if (countAfterSecondEscape !== 0) throw new Error('El segon Esc hauria d\'haver tancat també el modal de cel·la, sense demanar confirmació');
+  const dataAfterClose = await page.evaluate(() => window.store.excelJsonData.General.descripcio);
+  if (!dataAfterClose.includes('MODIFICAT')) throw new Error('El canvi escrit a l\'editor visual s\'hauria d\'haver aplicat en viu a la dada abans de tancar: ' + dataAfterClose);
+  console.log('  ✓ El segon Esc tanca l\'editor de cel·la sense cap confirmació, i el canvi ja estava aplicat a la dada.');
 
   if (hadPageError) throw new Error('S\'ha produït un error de pàgina no capturat durant aquesta prova.');
 

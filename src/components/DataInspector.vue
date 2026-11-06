@@ -527,15 +527,22 @@ import GroupConfigModal from './GroupConfigModal.vue';
 
 const isCellModalOpen = ref(false);
 const cellTextValue = ref('');
-const cellTextValueAtOpen = ref('');
 const activeCellInfo = ref({ sheet: '', keyOrIdx: '', col: null, isKv: true });
 
-// TemplateEditor emits update:modelValue on every keystroke (see its
-// editorText watcher), so cellTextValue always reflects the live, in-progress
-// edit — comparing it against the value captured the moment the modal opened
-// is exactly "has the user changed anything since then", independent of
-// whether they've clicked "Aplicar" yet.
-const cellEditorHasUnsavedChanges = computed(() => cellTextValue.value !== cellTextValueAtOpen.value);
+// Fase 22: cellTextValue s'aplica sempre en viu a store.excelJsonData, com
+// qualsevol altre camp de l'aplicació (onCellInput/onCellBlur, ja definits
+// més amunt) -- abans es quedava en un esborrany local fins clicar
+// "Aplicar", cosa que feia perdre els canvis si el modal es tancava per
+// error (×, Escape). Ja no hi ha res a "descartar": tancar és només tancar.
+watch(cellTextValue, (newVal) => {
+  const { sheet, keyOrIdx, col, isKv } = activeCellInfo.value;
+  if (isKv) {
+    store.excelJsonData[sheet][keyOrIdx] = newVal;
+  } else {
+    store.excelJsonData[sheet][keyOrIdx][col] = newVal;
+  }
+  onCellInput();
+});
 
 // Obre l'editor visual de cel·la (Markdown+Jinja2) per a un camp de tipus Text, carregant-hi el valor actual
 const openCellEditor = (sheet, keyOrIdx, col, isKv) => {
@@ -549,7 +556,6 @@ const openCellEditor = (sheet, keyOrIdx, col, isKv) => {
     ? store.excelJsonData[sheet][keyOrIdx]
     : store.excelJsonData[sheet][keyOrIdx][col];
   cellTextValue.value = String(val || '');
-  cellTextValueAtOpen.value = cellTextValue.value;
   isCellModalOpen.value = true;
   // Fase 21 (refinament): l'editor visual compta com "en edició" d'aquesta
   // cel·la encara que el focus ja no sigui sobre l'input original (el seu
@@ -557,27 +563,11 @@ const openCellEditor = (sheet, keyOrIdx, col, isKv) => {
   emit('editing-path-change', isKv ? `${sheet}.${keyOrIdx}` : `${sheet}.${keyOrIdx}.${col}`);
 };
 
-// Desa el text editat al modal de cel·la de tornada a la dada corresponent (KV o tabular) i tanca el modal
-const saveCellEditor = () => {
-  const { sheet, keyOrIdx, col, isKv } = activeCellInfo.value;
-  if (isKv) {
-    store.excelJsonData[sheet][keyOrIdx] = cellTextValue.value;
-  } else {
-    store.excelJsonData[sheet][keyOrIdx][col] = cellTextValue.value;
-  }
-  isCellModalOpen.value = false;
-  emit('editing-path-change', null);
-  store.addLog("Cel·la actualitzada correctament.", "success");
-};
-
-// Tanca l'editor de cel·la SENSE desar (botó "Cancel·lar", "×" o Escape) —
-// si hi ha canvis pendents, demana confirmació abans de descartar-los.
+// Tanca l'editor de cel·la (×, "Tancar" o Escape) -- els canvis ja estan
+// aplicats (Fase 22), només cal forçar el recàlcul/desat immediats (mateix
+// idioma que onCellBlur per a qualsevol altre camp).
 const closeCellEditor = () => {
-  if (cellEditorHasUnsavedChanges.value && !window.confirm(
-    'Tens canvis sense desar en aquest camp. Vols descartar-los i tancar l\'editor?'
-  )) {
-    return;
-  }
+  onCellBlur();
   isCellModalOpen.value = false;
   emit('editing-path-change', null);
 };
@@ -604,12 +594,9 @@ const handleDataInspectorModalsKeydown = (e) => {
   }
 
   if (isCellModalOpen.value) {
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) {
       e.preventDefault();
       closeCellEditor();
-    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      saveCellEditor();
     }
     return;
   }
@@ -2049,8 +2036,7 @@ onMounted(() => {
         </div>
 
         <div class="modal-footer" style="margin-top: auto;">
-          <button class="btn btn-secondary" style="width: auto;" @click="closeCellEditor">Cancel·lar</button>
-          <button class="btn btn-primary" style="width: auto;" @click="saveCellEditor">Aplicar</button>
+          <button class="btn btn-primary" style="width: auto;" @click="closeCellEditor">Tancar</button>
         </div>
       </div>
     </div>
