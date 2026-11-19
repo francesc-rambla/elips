@@ -49,12 +49,18 @@ const props = defineProps({
   // `null` si encara no n'hi ha cap en curs).
   realtimePendingProjectName: { type: String, default: '' },
   realtimeTransferProgress: { type: Object, default: null },
+  // Fase 24: inici/tancament de sessió del tercer transport (sincronització
+  // al núvol, Firebase). 'unconfigured' | 'signed-out' | 'signing-in' |
+  // 'signed-in' | 'error'.
+  cloudAuthStatus: { type: String, default: 'unconfigured' },
+  cloudCurrentUserEmail: { type: String, default: '' },
+  cloudAuthError: { type: String, default: null },
 });
 
 const emit = defineEmits([
   'close', 'connect', 'disconnect', 'request-permission', 'update-display-name',
   'start-realtime-session', 'join-realtime-session', 'stop-realtime-session',
-  'request-project-transfer',
+  'request-project-transfer', 'cloud-sign-in', 'cloud-sign-out',
 ]);
 
 const nameInput = ref(props.displayName);
@@ -104,6 +110,14 @@ const submitJoinRealtimeSession = () => {
   if (!parsed) return;
   emit('join-realtime-session', parsed);
   joinCodeInput.value = '';
+};
+
+// Fase 24: formulari mínim d'inici de sessió al núvol -- la gestió de
+// projectes/membres pròpiament dita (Fases 25-27) encara no hi és.
+const cloudEmailInput = ref('');
+const cloudPasswordInput = ref('');
+const submitCloudSignIn = () => {
+  emit('cloud-sign-in', { email: cloudEmailInput.value.trim(), password: cloudPasswordInput.value });
 };
 
 const copyToClipboard = async (text) => {
@@ -353,6 +367,69 @@ const copyToClipboard = async (text) => {
                 <span v-if="peer.docName" style="font-size: 0.72rem; color: var(--text-muted);">{{ peer.docName }}</span>
               </div>
             </div>
+          </template>
+        </div>
+
+        <!-- Sincronització al núvol (Firebase) -- Fase 24: només
+             autenticació per ara. La persistència/sincronització real de
+             projectes (document d'accés per projecte, canals, deltes)
+             arriba a les Fases 25-27 (vegeu el pla). -->
+        <div style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+          <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary);">☁️ Sincronització al núvol</span>
+
+          <template v-if="cloudAuthStatus === 'unconfigured'">
+            <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0;">
+              Encara no configurada per a aquest desplegament -- cal omplir
+              <code>src/utils/firebaseConfig.js</code> amb les dades d'un projecte Firebase propi.
+            </p>
+          </template>
+          <template v-else>
+            <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0;">
+              Persisteix el projecte en una base de dades al núvol perquè l'equip
+              el pugui sincronitzar encara que mai coincidiu en línia.
+            </p>
+
+            <div v-if="cloudAuthStatus === 'signed-in'" style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="font-size: 0.82rem; color: var(--text-secondary);">
+                Connectat com a <strong>{{ cloudCurrentUserEmail }}</strong>
+              </div>
+              <button
+                class="btn btn-secondary text-danger"
+                style="width: auto; padding: 6px 14px; font-size: 0.8rem; align-self: flex-start;"
+                @click="emit('cloud-sign-out')"
+              >
+                Tanca la sessió
+              </button>
+            </div>
+            <form v-else style="display: flex; flex-direction: column; gap: 6px;" @submit.prevent="submitCloudSignIn">
+              <input
+                type="email"
+                v-model="cloudEmailInput"
+                class="data-input"
+                placeholder="Correu electrònic"
+                style="font-size: 0.82rem; height: 30px; padding: 2px 8px;"
+                required
+              >
+              <input
+                type="password"
+                v-model="cloudPasswordInput"
+                class="data-input"
+                placeholder="Contrasenya"
+                style="font-size: 0.82rem; height: 30px; padding: 2px 8px;"
+                required
+              >
+              <button
+                type="submit"
+                class="btn btn-primary"
+                style="width: auto; padding: 6px 14px; font-size: 0.8rem; align-self: flex-start;"
+                :disabled="cloudAuthStatus === 'signing-in'"
+              >
+                {{ cloudAuthStatus === 'signing-in' ? 'Connectant...' : 'Inicia sessió' }}
+              </button>
+              <div v-if="cloudAuthStatus === 'error' && cloudAuthError" style="font-size: 0.78rem; color: var(--color-danger, #dc2626);">
+                {{ cloudAuthError }}
+              </div>
+            </form>
           </template>
         </div>
       </div>

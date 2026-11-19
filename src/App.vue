@@ -27,6 +27,7 @@ import { useCollabFolder } from './composables/useCollabFolder';
 import { useCollabSync } from './composables/useCollabSync';
 import { useCollabRealtime, generateSessionCredentials, normalizeSignalingServers } from './composables/useCollabRealtime';
 import { getDisplayNameOrFallback, setDisplayName as setCollabDisplayName, getUserColor } from './composables/useCollabIdentity';
+import { useCloudAuth } from './composables/useCloudAuth';
 
 // Components
 import FileCard from './components/FileCard.vue';
@@ -176,6 +177,36 @@ const {
   setLocalCellCursor,
 } = collabRealtime;
 window.collabRealtime = collabRealtime;
+
+// Sincronització al núvol (Fase 24 -- veure .claude/plans/
+// unified-nibbling-adleman.md): tercer transport, independent dels altres
+// dos. Per ara només autenticació; la persistència/sincronització real de
+// projectes arriba a les Fases 25-27. Exposada a window per depuració,
+// mateix criteri que collabRealtime.
+const cloudAuth = useCloudAuth();
+const {
+  authStatus: cloudAuthStatus,
+  currentUser: cloudCurrentUser,
+  lastAuthError: cloudAuthError,
+  signIn: signInCloud,
+  signOut: signOutCloud,
+} = cloudAuth;
+window.cloudAuth = cloudAuth;
+
+const handleCloudSignIn = async ({ email, password }) => {
+  try {
+    await signInCloud(email, password);
+  } catch (e) {
+    // cloudAuthError ja es mostra a CollabPanel.vue -- cap alert() addicional.
+  }
+};
+const handleCloudSignOut = async () => {
+  try {
+    await signOutCloud();
+  } catch (e) {
+    store.addLog(`Error en tancar la sessió del núvol: ${e.message}`, 'error');
+  }
+};
 
 // Desat per poder tornar a intentar la connexió, amb les mateixes
 // credencials, un cop `handleRequestProjectTransfer` hagi importat el
@@ -3561,11 +3592,16 @@ const generateDocuments = async () => {
       :realtime-peers="collabRealtimePeers"
       :realtime-pending-project-name="collabRealtimePendingProjectName"
       :realtime-transfer-progress="collabRealtimeTransferProgress"
+      :cloud-auth-status="cloudAuthStatus"
+      :cloud-current-user-email="cloudCurrentUser?.email || ''"
+      :cloud-auth-error="cloudAuthError"
       @close="isCollabPanelOpen = false"
       @connect="handleConnectCollabFolder"
       @disconnect="disconnectCollabFolder"
       @request-permission="requestCollabPermission"
       @update-display-name="handleUpdateCollabDisplayName"
+      @cloud-sign-in="handleCloudSignIn"
+      @cloud-sign-out="handleCloudSignOut"
       @start-realtime-session="handleStartRealtimeSession"
       @join-realtime-session="handleJoinRealtimeSession"
       @stop-realtime-session="handleStopRealtimeSession"
