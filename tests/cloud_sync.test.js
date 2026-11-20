@@ -358,18 +358,73 @@ describe('useCloudSync (Fase 25: document d\'accés + canal de dades al núvol)'
     expect(memberCloud.isCurrentUserOwner()).toBe(false);
   });
 
-  it('deactivateCloudSync atura la sincronització i oblida l\'identificador desat localment', async () => {
+  it('deactivateCloudSync atura la sincronització PERÒ conserva l\'identificador desat localment (Fase 27: evita orfanar el projecte al núvol en canviar de projecte local)', async () => {
     const backend = makeFakeFirestoreBackend();
     const ownerAuth = makeCloudAuth('owner@test.com');
     const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
-    await ownerCloud.activateCloudSync('ProjecteA');
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
     await flush();
     expect(ownerCloud.cloudSyncStatus.value).toBe('connected');
 
-    ownerCloud.deactivateCloudSync('ProjecteA');
+    await ownerCloud.deactivateCloudSync();
     expect(ownerCloud.cloudSyncStatus.value).toBe('disconnected');
     expect(ownerCloud.cloudProjectId.value).toBe(null);
-    expect(localStorage.getItem('ProjecteA:cloudProjectId')).toBeNull();
+    // A diferència de la versió anterior a la Fase 27, aquí NO s'oblida --
+    // oblidar-la de debò és acció explícita de l'usuari (handleDeactivateCloudSync
+    // a App.vue), no un efecte secundari de desactivar/canviar de projecte.
+    expect(localStorage.getItem('ProjecteA:cloudProjectId')).toBe(id);
+  });
+
+  it('reconnectar-se després d\'un deactivateCloudSync reutilitza el MATEIX identificador, no en crea un de nou (regressió del bug corregit a la Fase 27)', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const store = useWorkspaceStore();
+    store.excelJsonData = { General: { nom: 'Expedient 1' } };
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    // Simula canviar de projecte i tornar-hi (com fa loadProject/createNewProject
+    // a App.vue): deactivateCloudSync() seguit d'una reconnexió -- mateixa
+    // seqüència que tryAutoReconnectCloudSync faria en reobrir 'ProjecteA'.
+    await ownerCloud.deactivateCloudSync();
+    const idAfterReconnect = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    expect(idAfterReconnect).toBe(id);
+    expect(ownerCloud.cloudSyncStatus.value).toBe('connected');
+    // Un sol document d'accés per a 'ProjecteA' -- no se n'ha creat cap de
+    // segon/orfe amb un altre UUID.
+    const accessDocs = [...backend.docsStore.keys()].filter((p) => p.endsWith('/_access/doc'));
+    expect(accessDocs).toEqual([`projects/${id}/_access/doc`]);
+  });
+
+  it('deactivateCloudSync puja a l\'instant una edició encara dins la finestra de debounce, en lloc de perdre-la (Fase 27)', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const store = useWorkspaceStore();
+    // Debounce llarg a propòsit (el valor real per defecte, 5s) -- la
+    // prova mai l'espera: el que es verifica és que deactivateCloudSync()
+    // puja l'edició DE SEGUIDA, no que calgui esperar el debounce.
+    store.excelJsonData = { General: { nom: 'Expedient 1' } };
+    const cloudAuth = makeCloudAuth('owner@test.com');
+    const cloud = useCloudSync(cloudAuth, backend.createClientFor('owner@test.com'));
+    const id = await cloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    store.excelJsonData = { ...store.excelJsonData, General: { ...store.excelJsonData.General, nom: 'Editat just abans de canviar de projecte' } };
+    // Deixa que el watcher (deep, flush 'pre' per defecte a Vue) programi
+    // el debounce de 5s abans d'aturar -- sense aquesta espera mínima,
+    // `deactivateCloudSync()` arribaria ABANS que hi hagués cap captura
+    // pendent a aturar/pujar, sense provar res del que es vol verificar.
+    await new Promise((r) => setTimeout(r, 100));
+    await cloud.deactivateCloudSync(); // encara dins la finestra de debounce de 5s
+    await flush();
+
+    const deltasAfterStop = [...backend.docsStore.keys()].filter((p) => p.startsWith(`projects/${id}/channels/data/deltas/`));
+    expect(deltasAfterStop.length).toBe(1);
+    expect(backend.docsStore.get(deltasAfterStop[0]).patch).toEqual([
+      { op: 'replace', path: '/General/nom', value: 'Editat just abans de canviar de projecte' },
+    ]);
   });
 
   it('la compactació fon els deltes dins una nova base i buida la subcol·lecció, sense canviar el resultat fusionat', async () => {

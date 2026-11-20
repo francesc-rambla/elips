@@ -246,8 +246,14 @@ const handleJoinCloudProject = async (id) => {
     alert(`Error en unir-te al projecte al núvol: ${e.message}`);
   }
 };
-const handleDeactivateCloudSync = () => {
-  deactivateCloudSync(currentProjectName.value);
+// Desconnexió manual (botó de CollabPanel.vue) -- a diferència de canviar
+// de projecte (deactivateCloudSync(), que ara MAI oblida la credencial,
+// Fase 27), aquí sí cal OBLIDAR-LA de debò: si no, tornar a obrir el mateix
+// projecte el reconnectaria en contra de la voluntat explícita de l'usuari
+// -- mateix criteri que handleStopRealtimeSession (Fase 15).
+const handleDeactivateCloudSync = async () => {
+  await deactivateCloudSync();
+  localStorage.removeItem(`${currentProjectName.value}:cloudProjectId`);
 };
 const handleAddCloudProjectMember = async (email) => {
   try {
@@ -263,6 +269,38 @@ const handleRemoveCloudProjectMember = async (email) => {
     alert(`Error en treure el membre: ${e.message}`);
   }
 };
+
+// Fase 27 (vegeu el pla): reconnexió transparent a la sincronització al
+// núvol prèvia d'aquest projecte en reobrir-lo -- mateix criteri que
+// tryAutoReconnectRealtime (Fase 15): sense cap botó ni confirmació, i cap
+// `alert()` en cas d'error (només un registre informatiu). `activateCloudSync`
+// ja és idempotent per a un identificador existent (bindToProject amb
+// seed:false), així que reutilitzar-la aquí tal qual no en duplica res.
+// A diferència de la sessió en viu, aquí cal que la sessió de Firebase
+// (cloudAuth, asíncrona -- `onAuthStateChanged`, useCloudAuth.js) ja s'hagi
+// restaurat abans de poder vincular res; com que pot arribar abans o
+// després que el projecte ja estigui carregat, aquesta mateixa funció es
+// crida també des del watcher de `cloudCurrentUser` de més avall, per
+// cobrir l'ordre invers (el cas habitual en recarregar la pàgina: el
+// projecte es restaura abans que `onAuthStateChanged` respongui).
+const tryAutoReconnectCloudSync = async (name) => {
+  if (!localStorage.getItem(`${name}:cloudProjectId`)) return;
+  if (!cloudCurrentUser.value) return; // el watcher de cloudCurrentUser ho reintentarà
+  if (cloudSyncStatus.value === 'connecting' || cloudSyncStatus.value === 'connected') return;
+  try {
+    await activateCloudSync(name, activeDocName.value);
+  } catch (e) {
+    store.addLog(`No s'ha pogut reconnectar automàticament a la sincronització al núvol: ${e.message}`, 'info');
+  }
+};
+
+// Reintent en resoldre's la sessió de Firebase DESPRÉS que el projecte ja
+// estigui carregat (vegeu més amunt) -- només per al projecte ACTUALMENT
+// obert; si l'usuari ja n'ha canviat quan arriba, `currentProjectName.value`
+// ja apunta al nou, que és exactament el que cal comprovar.
+watch(cloudCurrentUser, (user) => {
+  if (user) tryAutoReconnectCloudSync(currentProjectName.value);
+});
 
 // Desat per poder tornar a intentar la connexió, amb les mateixes
 // credencials, un cop `handleRequestProjectTransfer` hagi importat el
@@ -616,8 +654,13 @@ const createNewProject = async () => {
   // encara que la xarxa estigui desconnectada.
   await closeRealtimeForProject();
   // Mateix motiu per al tercer transport (Fase 25): el canal de dades al
-  // núvol és d'AQUEST projecte local, no del que hi entra.
-  deactivateCloudSync(currentProjectName.value);
+  // núvol és d'AQUEST projecte local, no del que hi entra. Esperat (Fase
+  // 27): si hi havia una edició local encara dins la finestra de debounce,
+  // deactivateCloudSync() la puja ABANS de continuar -- si no l'esperéssim,
+  // l'esborrat de store.* de més avall faria que la pujada capturés ja el
+  // contingut (buit) del projecte NOU en lloc de l'últim contingut real del
+  // projecte que es deixa.
+  await deactivateCloudSync();
 
   pauseAutoRecording();
   if (window.__flushGlobalSave) window.__flushGlobalSave();
@@ -676,11 +719,12 @@ const loadProject = async (name) => {
     return;
   }
 
-  // Vegeu la mateixa nota a createNewProject -- el doc/sessió en viu
-  // (connectada o només capturant en silenci, Fase 16) és del projecte que
-  // deixem ara, no del que hi entra.
+  // Vegeu la mateixa nota a createNewProject (incloent per què s'espera
+  // deactivateCloudSync(), Fase 27) -- el doc/sessió en viu (connectada o
+  // només capturant en silenci, Fase 16) és del projecte que deixem ara, no
+  // del que hi entra.
   await closeRealtimeForProject();
-  deactivateCloudSync(currentProjectName.value);
+  await deactivateCloudSync();
 
   pauseAutoRecording();
   if (window.__flushGlobalSave) window.__flushGlobalSave();
@@ -790,12 +834,13 @@ const loadProject = async (name) => {
   // Fase 16: reprèn la captura d'edicions de plantilla encara que no hi
   // hagi cap sessió en viu activa (no-op si aquest projecte mai ha fet
   // servir la sessió en viu -- cap cost). Fase 15: reconnexió transparent a
-  // la sessió en viu prèvia d'aquest projecte, si n'hi havia cap. Totes
-  // dues DESPRÉS que store.* ja tingui les dades del projecte nou (el bloc
-  // de dalt), ja que adjunten de seguida els ponts de plantilla/esquema/
-  // dades.
+  // la sessió en viu prèvia d'aquest projecte, si n'hi havia cap. Fase 27:
+  // mateix criteri per al tercer transport (núvol). Totes DESPRÉS que
+  // store.* ja tingui les dades del projecte nou (el bloc de dalt), ja que
+  // adjunten de seguida els ponts de plantilla/esquema/dades.
   await resumeOfflineCapture(name, aDoc);
   await tryAutoReconnectRealtime(name);
+  await tryAutoReconnectCloudSync(name);
 
   resumeAutoRecording();
   store.issues = [];
@@ -1644,9 +1689,15 @@ onMounted(async () => {
   // Fase 16: reprèn la captura d'edicions de plantilla encara que no hi
   // hagi cap sessió en viu activa (no-op si aquest projecte mai ha fet
   // servir la sessió en viu). Fase 15: reconnexió transparent a la sessió
-  // en viu prèvia d'aquest projecte, si n'hi havia cap.
+  // en viu prèvia d'aquest projecte, si n'hi havia cap. Fase 27: mateix
+  // criteri per al tercer transport (núvol) -- aquí `cloudCurrentUser`
+  // encara no ha tingut temps de resoldre's (és asíncron), però la crida
+  // és igualment segura: si encara no hi ha sessió de Firebase,
+  // tryAutoReconnectCloudSync no fa res i el watcher de cloudCurrentUser
+  // (definit més amunt) ho reintentarà quan es resolgui.
   await resumeOfflineCapture(pName, aDoc);
   await tryAutoReconnectRealtime(pName);
+  await tryAutoReconnectCloudSync(pName);
 
   // Watchers for automatic change differential recording (debounced by autoSaveDebounceSeconds) and instant localStorage sync
   watch(() => store.templateText, () => {

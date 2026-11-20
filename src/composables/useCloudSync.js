@@ -258,10 +258,30 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
     debounceTimer = null;
   }
 
-  function stopListening() {
+  // Fase 27: si hi havia una captura local pendent (dins la finestra de
+  // debounce) en aturar el canal -- p. ex. en canviar de projecte just
+  // després d'editar -- es puja ARA MATEIX, en lloc de només cancel·lar-la i
+  // perdre-la. Cal ESPERAR-LA (no només llançar-la): `captureLocalChange`
+  // llegeix `cloudProjectIdRef.value` (compartit, mateix ref, per TOTS els
+  // canals) via `channelRefs()` -- si el crida qui ens ha aturat (p. ex.
+  // `deactivateCloudSync`) i tot seguit posa aquest ref a `null` ABANS que
+  // la part asíncrona de `captureLocalChange` l'arribi a llegir, la pujada
+  // apunta a `projects/null/...` i falla amb `permission-denied`. Confirmat
+  // amb un test que reproduïa exactament aquesta carrera -- per això
+  // `stopListening` ara és `async` i QUI LA CRIDA l'ha d'esperar abans de
+  // tocar `cloudProjectId`.
+  async function stopListening() {
+    const hadPendingCapture = !!debounceTimer;
+    cancelPendingCapture();
+    if (hadPendingCapture) {
+      try {
+        await captureLocalChange();
+      } catch (e) {
+        logEvent(`Error en desar l'últim canvi local abans d'aturar la sincronització (${channelKey}): ${e.message}`, 'warning');
+      }
+    }
     if (unsubBase) { unsubBase(); unsubBase = null; }
     if (unsubDeltas) { unsubDeltas(); unsubDeltas = null; }
-    cancelPendingCapture();
     baseline = null;
     deltaDocs = [];
     lastMergedState.value = null;
@@ -414,12 +434,26 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
     await channel.startListening();
   }
 
-  function detachTemplateChannel() {
-    if (templateChannel) {
-      templateChannel.stopListening();
-      templateChannel = null;
-    }
+  // `async` pel mateix motiu que `stopListening` (Fase 27, vegeu el seu
+  // comentari): qui la crida ha d'esperar que la captura pendent (si n'hi
+  // havia) s'hagi pujat abans de continuar tocant `cloudProjectId`.
+  //
+  // `templateChannel = null` es fa ABANS (de manera síncrona, no després
+  // d'esperar `stopListening()`) perquè, mentre s'espera, el watcher de
+  // `store.templateText` (més avall) pot disparar-se entremig -- si encara
+  // veiés `templateChannel` apuntant al canal vell (ja aturat), hi
+  // programaria una captura NOVA sobre un canal mort amb `lastMergedState`
+  // buidat, que calcularia un pedaç incorrecte i el pujaria al canal vell
+  // (p. ex. el d'un document del qual ja s'ha desvinculat) -- confirmat amb
+  // un test que reproduïa exactament aquesta carrera en canviar de document
+  // dues vegades seguides.
+  async function detachTemplateChannel() {
+    const channel = templateChannel;
+    templateChannel = null;
     boundTemplateDocName = null;
+    if (channel) {
+      await channel.stopListening();
+    }
   }
 
   // Cridada des d'App.vue exactament als mateixos tres punts on ja es crida
@@ -429,7 +463,7 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
   // `bindToProject` ja vincula el document que toqui en connectar.
   async function bindCloudTemplateDocument(docName) {
     if (!docName || boundTemplateDocName === docName) return;
-    detachTemplateChannel();
+    await detachTemplateChannel();
     if (cloudSyncStatus.value !== 'connected') return;
     await attachTemplateChannel(docName);
   }
@@ -521,13 +555,35 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
     logCloudEvent("T'has unit a un projecte al núvol -- s'està aplicant el seu contingut.", 'success');
   }
 
-  function deactivateCloudSync(projectName) {
-    channels.forEach((c) => c.stopListening());
-    detachTemplateChannel();
+  // Fase 27: NO oblida l'identificador desat a `localStorage` -- aquesta
+  // funció també és la que crida App.vue en CANVIAR de projecte (abans
+  // oblidava la vinculació cada cop, orfanant-la: la pròxima vegada que
+  // s'obrís el mateix projecte local, `activateCloudSync` ja no trobaria
+  // cap `existing` i en crearia un de NOU, duplicant el projecte al núvol
+  // en lloc de reconnectar-se al mateix). Oblidar-lo de debò és una acció
+  // explícita i diferent (el botó "Desactiva" de CollabPanel.vue,
+  // `handleDeactivateCloudSync` a App.vue) -- mateix criteri que
+  // `closeRealtimeForProject()` (canvi de projecte, preserva la credencial)
+  // davant `handleStopRealtimeSession()` (desconnexió manual, l'oblida) ja
+  // estableix per a la sessió en viu, Fase 15/16.
+  async function deactivateCloudSync() {
+    // Es posa a 'disconnected'/'disabled' ABANS d'esperar res de sota
+    // (Fase 27): els `watchChannelCapture`/el watcher de `templateText`
+    // comproven `cloudSyncStatus.value !== 'connected'` abans de programar
+    // CAP captura nova -- si es canviés DESPRÉS dels `await`, un d'aquests
+    // watchers podria disparar-se durant la finestra d'espera i programar
+    // una captura nova sobre un canal que s'està aturant ara mateix. NO
+    // afecta el flush de la captura JA pendent de sota (aquell es dispara
+    // directament des de `stopListening`, no passa per aquest senyalador).
+    cloudSyncStatus.value = cloudAuth.currentUser.value ? 'disconnected' : 'disabled';
+    // Esperat: cal que qualsevol captura local pendent flushada per
+    // `stopListening` acabi de llegir `cloudProjectId.value` ABANS que la
+    // línia de sota el posi a `null` -- vegeu el comentari de
+    // `stopListening` per a la carrera exacta que això evita.
+    await Promise.all(channels.map((c) => c.stopListening()));
+    await detachTemplateChannel();
     stopAccessListener();
     cloudProjectId.value = null;
-    cloudSyncStatus.value = cloudAuth.currentUser.value ? 'disconnected' : 'disabled';
-    if (projectName) localStorage.removeItem(`${projectName}:cloudProjectId`);
   }
 
   async function addProjectMember(email) {
@@ -562,13 +618,17 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
   // cada listener falli pel seu compte. NO toca `localStorage`: un inici
   // de sessió posterior pot tornar a vincular-s'hi manualment (la
   // reconnexió transparent en carregar la pàgina és la Fase 27).
-  watch(cloudAuth.currentUser, (user) => {
+  watch(cloudAuth.currentUser, async (user) => {
     if (!user) {
-      channels.forEach((c) => c.stopListening());
-      detachTemplateChannel();
+      // Mateix ordre (cloudSyncStatus abans dels `await`, igual que els
+      // flushos esperant abans de tocar cloudProjectId) que
+      // deactivateCloudSync(), pel mateix motiu -- vegeu els seus
+      // comentaris.
+      cloudSyncStatus.value = 'disabled';
+      await Promise.all(channels.map((c) => c.stopListening()));
+      await detachTemplateChannel();
       stopAccessListener();
       cloudProjectId.value = null;
-      cloudSyncStatus.value = 'disabled';
     } else if (cloudSyncStatus.value === 'disabled') {
       cloudSyncStatus.value = 'disconnected';
     }
