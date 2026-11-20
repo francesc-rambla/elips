@@ -719,3 +719,162 @@ describe('useCloudSync (Fase 28.1: canal de fitxer binari excelFile)', () => {
     expect(ownerCloud.cloudActivityLog.value.some((e) => e.type === 'warning' && /integritat/i.test(e.text))).toBe(true);
   });
 });
+
+// Adaptador fals de `documentsList` (Fase 28.2) -- mateix contracte que
+// `documentsListCloudAdapter` a App.vue (`getLocal`/`setLocal`), incloent
+// la sembra de valors per defecte a `localStorage` per a qualsevol
+// document nou-arribat ABANS d'actualitzar la llista local -- mateixa
+// seqüència exacta (manllevada de createNewDocument) que App.vue fa servir.
+// `documentsList` és un `ref` de Vue de debò a App.vue (no un camp pla) --
+// la captura local depèn de la reactivitat de Vue per disparar-se en
+// reassignar-lo (`watch(documentsListAdapter.getLocal, ...)`); un objecte
+// pla aquí no dispararia mai cap watcher, a diferència del cas real.
+function makeDocumentsListAdapter(projectNameRef, initial = ['Document Principal']) {
+  const list = ref(initial);
+  const adapter = {
+    getLocal: () => list.value,
+    setLocal: (remoteList) => {
+      const pName = projectNameRef();
+      const newNames = remoteList.filter((n) => !list.value.includes(n));
+      newNames.forEach((cleanName) => {
+        localStorage.setItem(`${pName}:doc:${cleanName}:templateText`, '');
+        localStorage.setItem(`${pName}:doc:${cleanName}:templateFileName`, '');
+        localStorage.setItem(`${pName}:doc:${cleanName}:templateFileSize`, '0');
+        localStorage.setItem(`${pName}:doc:${cleanName}:refDocFileName`, '');
+        localStorage.setItem(`${pName}:doc:${cleanName}:refDocFileSize`, '0');
+      });
+      list.value = remoteList;
+    },
+  };
+  return { adapter, state: list };
+}
+
+describe('useCloudSync (Fase 28.2: canal documentsList)', () => {
+  it('un membre que s\'hi uneix rep documents que mai havia vist, amb valors per defecte usables a localStorage', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const { adapter: ownerDocsAdapter, state: ownerDocsState } = makeDocumentsListAdapter(() => 'ProjecteA', ['Document Principal', 'Plec de Clàusules']);
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'), { documentsList: ownerDocsAdapter });
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+    expect(ownerDocsState.value).toEqual(['Document Principal', 'Plec de Clàusules']);
+
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+
+    setActivePinia(createPinia());
+    const { adapter: memberDocsAdapter, state: memberDocsState } = makeDocumentsListAdapter(() => 'ProjecteB', ['Document Principal']);
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'), { documentsList: memberDocsAdapter });
+    await memberCloud.joinCloudProject('ProjecteB', id);
+    await flush();
+
+    expect(memberDocsState.value).toEqual(['Document Principal', 'Plec de Clàusules']);
+    // El document nou-arribat ja té valors per defecte usables -- no calen
+    // claus inexistents en commutar-s'hi (mateix criteri que createNewDocument).
+    expect(localStorage.getItem('ProjecteB:doc:Plec de Clàusules:templateText')).toBe('');
+    expect(localStorage.getItem('ProjecteB:doc:Plec de Clàusules:refDocFileSize')).toBe('0');
+  });
+
+  it('afegir un document nou localment el propaga a l\'altra banda sense tocar els documents ja coneguts', async () => {
+    const backend = makeFakeFirestoreBackend();
+    useWorkspaceStore().config.cloudSyncCaptureDebounceSeconds = CAPTURE_DEBOUNCE_SECONDS_TEST;
+    const { adapter: ownerDocsAdapter, state: ownerDocsState } = makeDocumentsListAdapter(() => 'ProjecteA', ['Document Principal']);
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'), { documentsList: ownerDocsAdapter });
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+    setActivePinia(createPinia());
+    const { adapter: memberDocsAdapter, state: memberDocsState } = makeDocumentsListAdapter(() => 'ProjecteB', ['Document Principal']);
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'), { documentsList: memberDocsAdapter });
+    await memberCloud.joinCloudProject('ProjecteB', id);
+    await flush();
+
+    ownerDocsState.value = [...ownerDocsState.value, 'Annex Tècnic'];
+    await flush();
+
+    expect(memberDocsState.value).toEqual(['Document Principal', 'Annex Tècnic']);
+  });
+});
+
+// Adaptador fals del document de referència (Fase 28.3) -- mateix
+// contracte que `refDocCloudAdapter` a App.vue, amb l'estat en una
+// variable local (no cal simular `activeDocName`/IndexedDB: el canal ja
+// assumeix, per construcció, que només està vinculat mentre el document
+// és l'actiu).
+function makeRefDocAdapter(initialBuffer = null, initialFileName = '') {
+  const state = { buffer: initialBuffer, fileName: initialFileName };
+  const adapter = {
+    getBuffer: async () => state.buffer,
+    getFileName: () => state.fileName,
+    setFile: async (buffer, fileName) => { state.buffer = buffer; state.fileName = fileName; },
+  };
+  return { adapter, state };
+}
+
+describe('useCloudSync (Fase 28.3: canal refDoc:<docName>)', () => {
+  it('activateCloudSync sembra el canal de referència del document actiu, i un membre que s\'hi uneix amb el mateix document el rep', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const refBuffer = new Uint8Array([5, 4, 3, 2, 1]).buffer;
+    const { adapter: ownerRefAdapter } = makeRefDocAdapter(refBuffer, 'referencia.docx');
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'), { refDoc: ownerRefAdapter });
+    const id = await ownerCloud.activateCloudSync('ProjecteA', 'Document Principal');
+    await flush();
+
+    expect(backend.docsStore.get(`projects/${id}/channels/refDoc:Document Principal`).fileName).toBe('referencia.docx');
+
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+
+    setActivePinia(createPinia());
+    const { adapter: memberRefAdapter, state: memberRefState } = makeRefDocAdapter(null, '');
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'), { refDoc: memberRefAdapter });
+    await memberCloud.joinCloudProject('ProjecteB', id, 'Document Principal');
+    await flush();
+
+    expect(memberRefState.fileName).toBe('referencia.docx');
+    expect(bytesOf(memberRefState.buffer)).toEqual(bytesOf(refBuffer));
+  });
+
+  it('un document sense fitxer de referència no crea cap canal buit', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const { adapter: ownerRefAdapter } = makeRefDocAdapter(null, '');
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'), { refDoc: ownerRefAdapter });
+    const id = await ownerCloud.activateCloudSync('ProjecteA', 'Document Principal');
+    await flush();
+
+    expect(backend.docsStore.has(`projects/${id}/channels/refDoc:Document Principal`)).toBe(false);
+  });
+
+  it('bindCloudRefDocDocument revincula al canviar de document: sembra si és nou, rellegeix el remot si ja existia', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const { adapter: ownerRefAdapter, state: ownerRefState } = makeRefDocAdapter(new Uint8Array([1, 2, 3]).buffer, 'principal.docx');
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'), { refDoc: ownerRefAdapter });
+    const id = await ownerCloud.activateCloudSync('ProjecteA', 'Document Principal');
+    await flush();
+
+    // Canvia a un document nou, mai sincronitzat -- com faria App.vue
+    // (loadDocumentConfig ja ha carregat el contingut local abans de
+    // revincular el canal) -- s'ha de SEMBRAR amb aquest contingut.
+    ownerRefState.buffer = new Uint8Array([9, 8, 7]).buffer;
+    ownerRefState.fileName = 'plec.docx';
+    await ownerCloud.bindCloudRefDocDocument('Plec de Clàusules');
+    await flush();
+    expect(backend.docsStore.get(`projects/${id}/channels/refDoc:Plec de Clàusules`).fileName).toBe('plec.docx');
+
+    // Torna al document principal -- ja tenia base remota, s'ha de
+    // RELLEGIR-LA (no re-sembrar-la amb el que hi hagi localment ara).
+    await ownerCloud.bindCloudRefDocDocument('Document Principal');
+    await flush();
+    expect(ownerRefState.fileName).toBe('principal.docx');
+    expect(bytesOf(ownerRefState.buffer)).toEqual([1, 2, 3]);
+  });
+});

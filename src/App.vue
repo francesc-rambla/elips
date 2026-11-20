@@ -236,7 +236,68 @@ const excelFileCloudAdapter = {
     store.excelFile = new File([buffer], fileName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   },
 };
-const cloudSync = useCloudSync(cloudAuth, undefined, { excelFile: excelFileCloudAdapter });
+// Fase 28.3: mateix idioma que excelFileCloudAdapter, per al document de
+// referència .docx del document ACTIU (el canal `refDoc:<docName>` només
+// és vinculat mentre aquell docName ho és, mateix invariant que el canal
+// `template`). `getBuffer` llegeix IndexedDB DIRECTAMENT (no
+// `store.refDocFile.arrayBuffer()`): `loadDocumentConfig` (App.vue)
+// restaura `store.refDocFile` de manera ASÍNCRONA i sense esperar-la (un
+// `.then()` sense `await`) en canviar de document -- si `getBuffer`
+// llegís `store.refDocFile`, sembrar el canal just en commutar hi podria
+// trobar-lo encara a `null` i sembrar-lo buit per error, encara que el
+// document SÍ tingui un fitxer de referència (ja persistit a IndexedDB,
+// només pendent de reflectir-se a l'store). Llegir la font real evita
+// aquesta carrera per construcció.
+const refDocCloudAdapter = {
+  getBuffer: async () => {
+    const pName = currentProjectName.value;
+    const dName = activeDocName.value;
+    return await getBinaryFile(`${pName}:doc:${dName}:refDocBuffer`);
+  },
+  getFileName: () => store.refDocFileName,
+  setFile: async (buffer, fileName) => {
+    const pName = currentProjectName.value;
+    const dName = activeDocName.value;
+    await saveBinaryFile(`${pName}:doc:${dName}:refDocBuffer`, buffer);
+    store.refDocFileName = fileName;
+    store.refDocFileSize = buffer.byteLength;
+    localStorage.setItem(`${pName}:doc:${dName}:refDocFileName`, fileName);
+    localStorage.setItem(`${pName}:doc:${dName}:refDocFileSize`, String(buffer.byteLength));
+    store.refDocFile = new File([buffer], fileName, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  },
+};
+// Fase 28.2: `documentsList` és un `ref` propi d'App.vue (no un camp de
+// l'store de Pinia), per això cal injectar-lo igual que els adaptadors
+// binaris. `setLocal` sembra PRIMER les claus per defecte de
+// `localStorage` de qualsevol document nou-arribat -- mateixa seqüència
+// exacta que createNewDocument ja fa en crear-ne un de nou -- ABANS
+// d'actualitzar `documentsList.value`, perquè un document "aparegut"
+// remotament sigui immediatament usable en commutar-s'hi (no trenqui per
+// claus inexistents).
+const documentsListCloudAdapter = {
+  getLocal: () => documentsList.value,
+  setLocal: (remoteList) => {
+    const pName = currentProjectName.value;
+    const newNames = remoteList.filter((n) => !documentsList.value.includes(n));
+    newNames.forEach((cleanName) => {
+      localStorage.setItem(`${pName}:doc:${cleanName}:templateText`, '');
+      localStorage.setItem(`${pName}:doc:${cleanName}:templateFileName`, '');
+      localStorage.setItem(`${pName}:doc:${cleanName}:templateFileSize`, '0');
+      localStorage.setItem(`${pName}:doc:${cleanName}:refDocFileName`, '');
+      localStorage.setItem(`${pName}:doc:${cleanName}:refDocFileSize`, '0');
+      const defaultFileBase = cleanName.toLowerCase().replace(/\s+/g, '_');
+      localStorage.setItem(`${pName}:doc:${cleanName}:outNameDocx`, `${defaultFileBase}.docx`);
+      localStorage.setItem(`${pName}:doc:${cleanName}:outNameMd`, `${defaultFileBase}.md`);
+    });
+    documentsList.value = remoteList;
+    localStorage.setItem(`${pName}:documentsList`, JSON.stringify(remoteList));
+  },
+};
+const cloudSync = useCloudSync(cloudAuth, undefined, {
+  excelFile: excelFileCloudAdapter,
+  refDoc: refDocCloudAdapter,
+  documentsList: documentsListCloudAdapter,
+});
 const {
   cloudSyncStatus,
   cloudProjectId,
@@ -251,6 +312,8 @@ const {
   removeProjectMember: removeCloudProjectMember,
   bindCloudTemplateDocument,
   captureExcelFileIfChanged,
+  bindCloudRefDocDocument,
+  captureRefDocIfChanged,
 } = cloudSync;
 window.cloudSync = cloudSync;
 
@@ -1046,9 +1109,11 @@ const switchActiveDocument = (newDocName) => {
   // 11.2) -- no cal desconnectar-la, cada document té el seu propi Y.Text
   // dins la mateixa sala/projecte.
   switchRealtimeDocument(newDocName);
-  // Mateix criteri per a la sincronització al núvol (Fase 26): revincula
-  // el canal `template:<docName>` al document nou, sense desconnectar res.
+  // Mateix criteri per a la sincronització al núvol (Fase 26/28.3):
+  // revincula els canals `template:<docName>`/`refDoc:<docName>` al
+  // document nou, sense desconnectar res.
   bindCloudTemplateDocument(newDocName);
+  bindCloudRefDocDocument(newDocName);
 
   store.addLog(`S'ha canviat al document '${newDocName}'.`, 'info');
 };
@@ -1123,6 +1188,7 @@ const createNewDocument = () => {
   loadDocumentConfig(pName, cleanName);
   switchRealtimeDocument(cleanName);
   bindCloudTemplateDocument(cleanName);
+  bindCloudRefDocDocument(cleanName);
 
   store.addLog(`Document '${cleanName}' creat correctament.`, 'success');
 };
@@ -1161,6 +1227,7 @@ const deleteDocument = (dName) => {
     loadDocumentConfig(pName, 'Document Principal');
     switchRealtimeDocument('Document Principal');
     bindCloudTemplateDocument('Document Principal');
+    bindCloudRefDocDocument('Document Principal');
   }
   
   store.addLog(`Document '${dName}' eliminat d'aquest projecte.`, 'info');
@@ -2125,6 +2192,7 @@ const onRefDocLoaded = async (file) => {
   
   // Store raw ArrayBuffer in IndexedDB for 100% persistent reload
   await saveBinaryFile(`${pName}:doc:${dName}:refDocBuffer`, buffer);
+  captureRefDocIfChanged();
   store.addLog(`Document de referència '${file.name}' desat correctament per a '${dName}'.`, 'success');
 };
 

@@ -37,11 +37,15 @@
  * actiu), revinculat en canviar de document, mateix criteri que
  * `bindDocument`/`switchRealtimeDocument` ja fan servir per al pont WebRTC.
  *
- * Fase 28 (en curs, 28.1): afegeix `excelFile`, un canal de FITXER BINARI
- * sencer (abast de projecte) via `createCloudBlobChannel` -- última
+ * Fase 28: afegeix `excelFile` (28.1) i `refDoc:<docName>` (28.3), canals
+ * de FITXER BINARI sencer via `createCloudBlobChannel` -- última
  * escriptura guanya sobre TOT el fitxer (comparat per hash SHA-256), mai
- * un pedaç JSON com els canals de dalt. Vegeu el pla per a `refDoc:<docName>`
- * i `documentsList` (28.2/28.3, encara no implementats).
+ * un pedaç JSON com els canals de dalt -- i `documentsList` (28.2), un
+ * sisè canal JSON fix que tanca la llacuna que, sense ell, deixaria
+ * `refDoc:<docName>` inabastable per a qui mai ha vist cap document més
+ * enllà de "Document Principal". `refDoc:<docName>` segueix exactament el
+ * mateix cicle de vida que `template:<docName>` (un sol canal "vinculat" a
+ * la vegada, el del document actiu).
  *
  * Autorització: cada projecte al núvol té el seu propi document d'accés
  * `projects/{id}/_access/doc` ({ownerEmail, memberEmails}), que les Regles
@@ -500,20 +504,31 @@ function createCloudBlobChannel({ channelKey, getDb, cloudProjectIdRef, getLocal
  * `getDb`: injectable, per defecte `defaultGetFirestoreModule` (producció,
  * Firestore real diferit); els tests hi passen un Firestore fals en
  * memòria sense tocar res més d'aquesta funció.
- * `binaryAdapters` (Fase 28, opcional): `{ excelFile: { getBuffer,
- * getFileName, setFile } }` -- injectat des d'App.vue, que és qui té accés
- * a `saveBinaryFile`/`currentProjectName` per persistir el fitxer rebut a
- * IndexedDB/`localStorage` (aquest mòdul no en toca mai cap directament,
- * seguint el mateix criteri que els canals JSON, que només toquen
- * `store.*`). Si no es passa, el canal `excelFile` queda inert (mai puja
+ * `externalAdapters` (Fase 28, opcional): `{ excelFile: { getBuffer,
+ * getFileName, setFile }, refDoc: { getBuffer, getFileName, setFile },
+ * documentsList: { getLocal, setLocal } }` -- injectats des d'App.vue, que
+ * és qui té accés a `saveBinaryFile`/`currentProjectName`/`documentsList`
+ * (aquest ref viu a App.vue, no a l'store de Pinia) per persistir el que
+ * es rep a IndexedDB/`localStorage` (aquest mòdul no en toca mai res
+ * directament, seguint el mateix criteri que els canals JSON, que només
+ * toquen `store.*`). Qualsevol adaptador no passat queda inert (mai puja
  * ni aplica res) -- cap crida existent es trenca.
  */
-export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, binaryAdapters = {}) {
+export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, externalAdapters = {}) {
   const store = useWorkspaceStore();
-  const excelFileAdapter = binaryAdapters.excelFile || {
+  const excelFileAdapter = externalAdapters.excelFile || {
     getBuffer: async () => null,
     getFileName: () => '',
     setFile: async () => {},
+  };
+  const refDocAdapter = externalAdapters.refDoc || {
+    getBuffer: async () => null,
+    getFileName: () => '',
+    setFile: async () => {},
+  };
+  const documentsListAdapter = externalAdapters.documentsList || {
+    getLocal: () => [],
+    setLocal: () => {},
   };
 
   // 'disabled' (ningú ha iniciat sessió al núvol) | 'disconnected' (sessió
@@ -585,7 +600,29 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, binar
     compactMessage: "S'ha compactat la sincronització al núvol (nova base comuna, esquema jeràrquic).",
     logEvent: logCloudEvent,
   });
-  const channels = [dataChannel, schemaChannel, sheetInfoChannel, hierarchySchemaChannel];
+  // Canal `documentsList` (Fase 28.2) -- un array de cadenes, reutilitza
+  // `createCloudChannel` TAL QUAL (`computeMetaPatch` ja és la forma
+  // correcta per a arrays). `getLocal`/`setLocal` venen de
+  // `documentsListAdapter` (injectat des d'App.vue) perquè `documentsList`
+  // és un `ref` propi d'App.vue, no un camp de l'store de Pinia -- aquest
+  // mòdul no en toca mai `localStorage` directament (mateix criteri que
+  // `excelFileAdapter`). Tanca la llacuna trobada en planificar aquesta
+  // fase: sense sincronitzar-ho, un membre que mai ha intercanviat cap ZIP
+  // només veuria "Document Principal", sense manera d'arribar mai a cap
+  // altre document ni, per tant, al seu canal `refDoc:<docName>` (28.3).
+  const documentsListChannel = createCloudChannel({
+    channelKey: 'documentsList',
+    getDb,
+    cloudProjectIdRef: cloudProjectId,
+    getLocal: documentsListAdapter.getLocal,
+    setLocal: documentsListAdapter.setLocal,
+    computePatch: computeMetaPatch,
+    compactionThreshold: () => store.config.cloudSyncCompactionThreshold,
+    mergeMessage: "S'han incorporat nous documents al projecte des de la sincronització al núvol.",
+    compactMessage: "S'ha compactat la sincronització al núvol (nova base comuna, llista de documents).",
+    logEvent: logCloudEvent,
+  });
+  const channels = [dataChannel, schemaChannel, sheetInfoChannel, hierarchySchemaChannel, documentsListChannel];
 
   // Canal binari `excelFile` (Fase 28) -- abast de PROJECTE sencer, sempre
   // actiu mentre hi ha sincronització connectada, mateix criteri que els
@@ -703,6 +740,79 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, binar
     await attachTemplateChannel(docName);
   }
 
+  // Canal binari `refDoc:<docName>` (Fase 28.3) -- mateix cicle de vida
+  // EXACTE que `template:<docName>` de dalt (un sol canal "vinculat" a la
+  // vegada, el del document actiu, revinculat en canviar de document), però
+  // amb `createCloudBlobChannel` en lloc de `createCloudChannel` perquè un
+  // document de referència és un fitxer binari, no text amb pedaços JSON.
+  // `refDocAdapter` (NO una factoria per `docName`) ja n'hi ha prou: per
+  // construcció, aquest canal només està vinculat MENTRE `docName` és
+  // l'actiu -- `getBuffer`/`setFile` sempre operen sobre
+  // `store.refDocFile`/`activeDocName.value`, exactament igual que
+  // `getLocal: () => store.templateText` del canal de plantilla no necessita
+  // tampoc cap paràmetre `docName` propi.
+  let refDocChannel = null;
+  let boundRefDocDocName = null;
+
+  function makeRefDocChannel(docName) {
+    return createCloudBlobChannel({
+      channelKey: `refDoc:${docName}`,
+      getDb,
+      cloudProjectIdRef: cloudProjectId,
+      getLocalBuffer: refDocAdapter.getBuffer,
+      getLocalFileName: refDocAdapter.getFileName,
+      setLocal: refDocAdapter.setFile,
+      logEvent: logCloudEvent,
+      maxFileSizeBytes: () => (store.config.cloudSyncMaxBinaryFileSizeMB || DEFAULT_MAX_BINARY_FILE_SIZE_MB) * 1024 * 1024,
+    });
+  }
+
+  // Mateixa comprovació d'existència que `attachTemplateChannel`: si ja hi
+  // ha una base remota per a aquest document (algú més ja hi havia sincronitzat
+  // la seva referència), només s'escolta; si no, se sembra des del contingut
+  // local (no-op dins `seedInitial` si el document no té cap fitxer de
+  // referència -- mai es crea cap canal/meta buit).
+  async function attachRefDocChannel(docName) {
+    const channel = makeRefDocChannel(docName);
+    refDocChannel = channel;
+    boundRefDocDocName = docName;
+    const { db, mod } = await getDb();
+    const metaRef = mod.doc(db, 'projects', cloudProjectId.value, 'channels', `refDoc:${docName}`);
+    const metaSnap = await mod.getDoc(metaRef);
+    if (!metaSnap.exists()) {
+      await channel.seedInitial();
+    }
+    await channel.startListening();
+  }
+
+  function detachRefDocChannel() {
+    if (refDocChannel) {
+      refDocChannel.stopListening();
+      refDocChannel = null;
+    }
+    boundRefDocDocName = null;
+  }
+
+  // Cridada des d'App.vue exactament als mateixos tres punts que
+  // `bindCloudTemplateDocument` -- canviar de document actiu, crear-ne un
+  // de nou, i el fallback a "Document Principal" en esborrar-ne un.
+  async function bindCloudRefDocDocument(docName) {
+    if (!docName || boundRefDocDocName === docName) return;
+    detachRefDocChannel();
+    if (cloudSyncStatus.value !== 'connected') return;
+    await attachRefDocChannel(docName);
+  }
+
+  // Cridada des d'App.vue (onRefDocLoaded), després que la seva pròpia
+  // escriptura local ja hagi passat -- opera sobre el canal que estigui
+  // vinculat ARA MATEIX (sempre el del document actiu, per construcció),
+  // mateix criteri que el watcher de captura de `templateText` de més
+  // avall per al canal dinàmic de plantilla.
+  async function captureRefDocIfChanged() {
+    if (cloudSyncStatus.value !== 'connected' || !refDocChannel) return;
+    await refDocChannel.captureIfChanged();
+  }
+
   function accessDocRef(db, mod) {
     return mod.doc(db, 'projects', cloudProjectId.value, '_access', 'doc');
   }
@@ -735,6 +845,7 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, binar
       await Promise.all([...channels, ...blobChannels].map((c) => c.startListening()));
       if (docName) {
         await attachTemplateChannel(docName);
+        await attachRefDocChannel(docName);
       }
       localStorage.setItem(`${projectName}:cloudProjectId`, id);
       cloudSyncStatus.value = 'connected';
@@ -821,6 +932,7 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, binar
     // quedin aturats en canviar/desactivar, com qualsevol altre canal.
     await Promise.all([...channels, ...blobChannels].map((c) => c.stopListening()));
     await detachTemplateChannel();
+    detachRefDocChannel();
     stopAccessListener();
     cloudProjectId.value = null;
   }
@@ -866,6 +978,7 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, binar
       cloudSyncStatus.value = 'disabled';
       await Promise.all([...channels, ...blobChannels].map((c) => c.stopListening()));
       await detachTemplateChannel();
+      detachRefDocChannel();
       stopAccessListener();
       cloudProjectId.value = null;
     } else if (cloudSyncStatus.value === 'disabled') {
@@ -889,6 +1002,7 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, binar
   watchChannelCapture(() => store.editorMetadata, schemaChannel);
   watchChannelCapture(() => store.sheetInfo, sheetInfoChannel);
   watchChannelCapture(() => store.hierarchySchema, hierarchySchemaChannel);
+  watchChannelCapture(documentsListAdapter.getLocal, documentsListChannel);
 
   // El canal de plantilla és dinàmic (`templateChannel`, revinculat per
   // `bindCloudTemplateDocument`) -- no es pot fer servir `watchChannelCapture`
@@ -914,5 +1028,7 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, binar
     removeProjectMember,
     bindCloudTemplateDocument,
     captureExcelFileIfChanged,
+    bindCloudRefDocDocument,
+    captureRefDocIfChanged,
   };
 }
