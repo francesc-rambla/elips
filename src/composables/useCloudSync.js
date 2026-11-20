@@ -17,7 +17,7 @@
  */
 
 /**
- * Sincronització al núvol (Fase 25 -- veure .claude/plans/
+ * Sincronització al núvol (Fases 25-26 -- veure .claude/plans/
  * unified-nibbling-adleman.md): tercer transport de col·laboració,
  * additiu als altres dos (carpeta compartida, useCollabSync.js; sessió en
  * viu WebRTC, useCollabRealtime.js). A diferència d'aquells dos, aquest
@@ -30,6 +30,13 @@
  * ON viuen la base i els deltes (Firestore, no fitxers), i que Firestore
  * EMPENY els canvis (`onSnapshot`) en lloc de necessitar sondeig.
  *
+ * Abast (Fase 26): `data` (excelJsonData), `schema` (editorMetadata),
+ * `sheetInfo`, `hierarchySchema` -- abast de PROJECTE sencer, sempre
+ * actius mentre hi ha sincronització connectada -- i `template:<docName>`
+ * -- abast de DOCUMENT, un sol canal vinculat a la vegada (el del document
+ * actiu), revinculat en canviar de document, mateix criteri que
+ * `bindDocument`/`switchRealtimeDocument` ja fan servir per al pont WebRTC.
+ *
  * Autorització: cada projecte al núvol té el seu propi document d'accés
  * `projects/{id}/_access/doc` ({ownerEmail, memberEmails}), que les Regles
  * de Seguretat de Firestore comproven per a TOTA la resta del contingut
@@ -39,7 +46,7 @@
  */
 import { ref, watch, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace.js';
-import { computeDataPatch, applyDataPatch } from '../utils/dataPatch.js';
+import { computeDataPatch, computeMetaPatch, applyDataPatch } from '../utils/dataPatch.js';
 import { getOrCreateUserId, getDisplayNameOrFallback } from './useCollabIdentity.js';
 import { getFirebaseApp } from './useCloudAuth.js';
 
@@ -74,15 +81,24 @@ function defaultGetFirestoreModule() {
 }
 
 /**
- * Un sol canal sincronitzat (per ara, només `data` -- veure el pla per a
- * `schema`/`sheetInfo`/`hierarchySchema`/`template:<docName>`, Fase 26,
- * que instancien aquesta mateixa factoria sense cap canvi). Document base
- * a `projects/{id}/channels/{channelKey}`, deltes a la subcol·lecció
+ * Un sol canal sincronitzat -- `data`, `schema`, `sheetInfo`,
+ * `hierarchySchema` i `template:<docName>` (Fase 26) hi instancien tots
+ * aquesta mateixa factoria, sense cap canvi. Document base a
+ * `projects/{id}/channels/{channelKey}`, deltes a la subcol·lecció
  * `.../deltas` -- mateix criteri d'ordenació determinista (ts, userId) que
  * `createDocChannel` (useCollabSync.js) i `attachDeltaLogChannel`
  * (useCollabRealtime.js, Fase 17) ja fan servir.
  */
-function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, setLocal, computePatch, mergeMessage, compactMessage, logEvent, compactionThreshold }) {
+/**
+ * `wrap`/`unwrap` (per defecte, identitat): mateix mecanisme que
+ * `createDocChannel` (useCollabSync.js) -- el canal `template` embolcalla
+ * el text pla com `{text: ...}` perquè `computeDataPatch`/`applyDataPatch`
+ * (pensats per a objectes) puguin diferenciar/aplicar-hi patches; la base
+ * ES DESA i ES LLEGEIX sempre en forma EMBOLCALLADA (consistent amb els
+ * patches, que també s'hi calculen embolcallats), i només es desembolcalla
+ * en el moment de `setLocal`.
+ */
+function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, setLocal, wrap = (v) => v, unwrap = (v) => v, computePatch, mergeMessage, compactMessage, logEvent, compactionThreshold }) {
   const isApplyingRemote = ref(false);
   const lastMergedState = ref(null);
 
@@ -121,14 +137,14 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
     }
     if (JSON.stringify(merged) !== JSON.stringify(lastMergedState.value)) {
       setApplyingRemote(true);
-      setLocal(merged);
+      setLocal(unwrap(merged));
       nextTick().then(() => {
         setApplyingRemote(false);
         // Rellegit via getLocal() (no `merged`) després de nextTick, pel
         // mateix motiu que pollCycle(): un recàlcul de camps (p. ex.
         // evaluateComputedFields) pot haver tornat a mutar l'store durant
         // aquest mateix flush.
-        lastMergedState.value = JSON.parse(JSON.stringify(getLocal()));
+        lastMergedState.value = JSON.parse(JSON.stringify(wrap(getLocal())));
         logEvent(mergeMessage, 'info');
       });
     }
@@ -173,7 +189,7 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
   async function seedInitial() {
     const { db, mod } = await getDb();
     const { base } = channelRefs(db, mod);
-    const local = getLocal();
+    const local = wrap(getLocal());
     await mod.setDoc(base, { snapshot: local, updatedAt: new Date().toISOString(), updatedBy: getOrCreateUserId() });
     baseline = JSON.parse(JSON.stringify(local));
     deltaDocs = [];
@@ -188,7 +204,20 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
     const { db, mod } = await getDb();
     const { base, deltas } = channelRefs(db, mod);
     unsubBase = mod.onSnapshot(base, (snap) => {
-      baseline = snap.exists() ? snap.data().snapshot : {};
+      if (snap.exists()) {
+        baseline = snap.data().snapshot;
+      } else if (baseline === null) {
+        // Cap base encara (p. ex. un projecte activat abans que aquest
+        // canal existís, Fase 26) -- s'autosembra amb el contingut local
+        // actual, mateix efecte que si aquest client n'hagués estat el
+        // primer a activar la sincronització. Escriptura best-effort: si
+        // falla (p. ex. un altre membre ja l'ha sembrat mentrestant), el
+        // pròxim `onSnapshot` real ja la corregirà.
+        baseline = wrap(getLocal());
+        lastMergedState.value = JSON.parse(JSON.stringify(baseline));
+        mod.setDoc(base, { snapshot: baseline, updatedAt: new Date().toISOString(), updatedBy: getOrCreateUserId() })
+          .catch((e) => logEvent(`Error en sembrar el canal al núvol (${channelKey}): ${e.message}`, 'warning'));
+      }
       recomputeAndApply();
     }, (err) => logEvent(`Error de sincronització al núvol (${channelKey}): ${err.message}`, 'error'));
     unsubDeltas = mod.onSnapshot(deltas, (snap) => {
@@ -200,7 +229,7 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
 
   async function captureLocalChange() {
     if (isApplyingRemote.value) return;
-    const patch = computePatch(lastMergedState.value, getLocal());
+    const patch = computePatch(lastMergedState.value, wrap(getLocal()));
     if (!patch) return;
     try {
       const { db, mod } = await getDb();
@@ -214,7 +243,7 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
       // Actualitzat a l'instant (no esperant el proper onSnapshot propi,
       // que de totes maneres arribarà, però més tard) perquè aquest client
       // no es re-diferenciï contra la seva pròpia escriptura acabada de fer.
-      lastMergedState.value = JSON.parse(JSON.stringify(getLocal()));
+      lastMergedState.value = JSON.parse(JSON.stringify(wrap(getLocal())));
     } catch (e) {
       logEvent(`Error en desar un canvi al núvol (${channelKey}): ${e.message}`, 'error');
     }
@@ -293,7 +322,117 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
     compactMessage: "S'ha compactat la sincronització al núvol (nova base comuna, dades).",
     logEvent: logCloudEvent,
   });
-  const channels = [dataChannel];
+  const schemaChannel = createCloudChannel({
+    channelKey: 'schema',
+    getDb,
+    cloudProjectIdRef: cloudProjectId,
+    getLocal: () => store.editorMetadata,
+    setLocal: (v) => { store.editorMetadata = v; },
+    computePatch: computeMetaPatch,
+    compactionThreshold: () => store.config.cloudSyncCompactionThreshold,
+    mergeMessage: "S'han incorporat canvis a l'esquema de dades des de la sincronització al núvol.",
+    compactMessage: "S'ha compactat la sincronització al núvol (nova base comuna, esquema de dades).",
+    logEvent: logCloudEvent,
+  });
+  const sheetInfoChannel = createCloudChannel({
+    channelKey: 'sheetInfo',
+    getDb,
+    cloudProjectIdRef: cloudProjectId,
+    getLocal: () => store.sheetInfo,
+    setLocal: (v) => { store.sheetInfo = v; },
+    computePatch: computeMetaPatch,
+    compactionThreshold: () => store.config.cloudSyncCompactionThreshold,
+    mergeMessage: "S'han incorporat canvis a la informació dels fulls des de la sincronització al núvol.",
+    compactMessage: "S'ha compactat la sincronització al núvol (nova base comuna, informació dels fulls).",
+    logEvent: logCloudEvent,
+  });
+  const hierarchySchemaChannel = createCloudChannel({
+    channelKey: 'hierarchySchema',
+    getDb,
+    cloudProjectIdRef: cloudProjectId,
+    getLocal: () => store.hierarchySchema,
+    setLocal: (v) => { store.hierarchySchema = v; },
+    computePatch: computeDataPatch,
+    compactionThreshold: () => store.config.cloudSyncCompactionThreshold,
+    mergeMessage: "S'han incorporat canvis a l'esquema jeràrquic des de la sincronització al núvol.",
+    compactMessage: "S'ha compactat la sincronització al núvol (nova base comuna, esquema jeràrquic).",
+    logEvent: logCloudEvent,
+  });
+  const channels = [dataChannel, schemaChannel, sheetInfoChannel, hierarchySchemaChannel];
+
+  // Canal `template:<docName>` (Fase 26): a diferència dels quatre d'amunt
+  // (sempre vius, abast de PROJECTE sencer), `templateText` és nomÉs el
+  // del document ACTIU en cada moment (la resta es persisteix a
+  // `localStorage`, `${pName}:doc:${dName}:templateText`, vegeu App.vue) --
+  // per això aquí NOMÉS es manté un sol canal "vinculat" a la vegada,
+  // mateix criteri que `bindDocument`/`switchRealtimeDocument` ja fan per
+  // al pont WebRTC (Fase 11.2/16): revincular en lloc de mantenir N canals
+  // simultanis per a tots els documents del projecte.
+  let templateChannel = null;
+  let boundTemplateDocName = null;
+
+  function makeTemplateChannel(docName) {
+    return createCloudChannel({
+      channelKey: `template:${docName}`,
+      getDb,
+      cloudProjectIdRef: cloudProjectId,
+      getLocal: () => store.templateText,
+      setLocal: (v) => { store.templateText = v; },
+      // Mateix criteri que el canal `template` de la carpeta compartida
+      // (Fase 8): `templateText` és un text pla, embolcallat com
+      // `{text: ...}` (base inclosa, no només els patches) perquè
+      // computeDataPatch/applyDataPatch (pensats per a objectes) hi
+      // puguin diferenciar/aplicar un únic patch "replace" de tot el text
+      // en cada canvi -- reutilitzant la mateixa canonada JSON-patch en
+      // lloc d'un diff de text caràcter a caràcter.
+      wrap: (v) => ({ text: v || '' }),
+      unwrap: (v) => v?.text || '',
+      computePatch: computeDataPatch,
+      compactionThreshold: () => store.config.cloudSyncCompactionThreshold,
+      mergeMessage: `S'han incorporat canvis a la plantilla del document "${docName}" des de la sincronització al núvol.`,
+      compactMessage: `S'ha compactat la sincronització al núvol (plantilla "${docName}").`,
+      logEvent: logCloudEvent,
+    });
+  }
+
+  // Comprova si ja hi ha una base remota per a aquest document abans de
+  // decidir si cal sembrar-la (primer cop que ALGÚ sincronitza aquest
+  // document concret) o només escoltar-la (ja existia, p. ex. un altre
+  // membre ja l'havia creat, o el propi usuari hi torna més tard) --
+  // mateix idioma de reconciliació que `bindDocument` (useCollabRealtime.js)
+  // ja fa servir per al Y.Text del document.
+  async function attachTemplateChannel(docName) {
+    const channel = makeTemplateChannel(docName);
+    templateChannel = channel;
+    boundTemplateDocName = docName;
+    const { db, mod } = await getDb();
+    const baseRef = mod.doc(db, 'projects', cloudProjectId.value, 'channels', `template:${docName}`);
+    const baseSnap = await mod.getDoc(baseRef);
+    if (!baseSnap.exists()) {
+      await channel.seedInitial();
+    }
+    await channel.startListening();
+  }
+
+  function detachTemplateChannel() {
+    if (templateChannel) {
+      templateChannel.stopListening();
+      templateChannel = null;
+    }
+    boundTemplateDocName = null;
+  }
+
+  // Cridada des d'App.vue exactament als mateixos tres punts on ja es crida
+  // `switchRealtimeDocument` (Fase 11.2): canviar de document actiu,
+  // crear-ne un de nou, i el fallback a "Document Principal" en
+  // esborrar-ne un. No-op si encara no hi ha sincronització connectada --
+  // `bindToProject` ja vincula el document que toqui en connectar.
+  async function bindCloudTemplateDocument(docName) {
+    if (!docName || boundTemplateDocName === docName) return;
+    detachTemplateChannel();
+    if (cloudSyncStatus.value !== 'connected') return;
+    await attachTemplateChannel(docName);
+  }
 
   function accessDocRef(db, mod) {
     return mod.doc(db, 'projects', cloudProjectId.value, '_access', 'doc');
@@ -316,15 +455,18 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
     return !!email && !!projectAccess.value && normalizeEmail(projectAccess.value.ownerEmail) === email;
   }
 
-  async function bindToProject(projectName, id, { seed } = { seed: false }) {
+  async function bindToProject(projectName, id, { seed, docName } = { seed: false, docName: null }) {
     cloudSyncStatus.value = 'connecting';
     cloudProjectId.value = id;
     try {
       if (seed) {
-        await dataChannel.seedInitial();
+        await Promise.all(channels.map((c) => c.seedInitial()));
       }
       await startAccessListener();
       await Promise.all(channels.map((c) => c.startListening()));
+      if (docName) {
+        await attachTemplateChannel(docName);
+      }
       localStorage.setItem(`${projectName}:cloudProjectId`, id);
       cloudSyncStatus.value = 'connected';
     } catch (e) {
@@ -335,13 +477,13 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
     }
   }
 
-  async function activateCloudSync(projectName) {
+  async function activateCloudSync(projectName, docName) {
     if (!cloudAuth.currentUser.value) {
       throw new Error('Cal iniciar sessió al núvol abans d\'activar la sincronització.');
     }
     const existing = localStorage.getItem(`${projectName}:cloudProjectId`);
     if (existing) {
-      await bindToProject(projectName, existing, { seed: false });
+      await bindToProject(projectName, existing, { seed: false, docName });
       return existing;
     }
     const email = normalizeEmail(cloudAuth.currentUser.value.email);
@@ -352,12 +494,12 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
       memberEmails: [email],
     });
     cloudProjectId.value = id;
-    await bindToProject(projectName, id, { seed: true });
+    await bindToProject(projectName, id, { seed: true, docName });
     logCloudEvent("S'ha activat la sincronització al núvol per a aquest projecte.", 'success');
     return id;
   }
 
-  async function joinCloudProject(projectName, id) {
+  async function joinCloudProject(projectName, id, docName) {
     if (!cloudAuth.currentUser.value) {
       throw new Error('Cal iniciar sessió al núvol abans d\'unir-te a un projecte.');
     }
@@ -375,12 +517,13 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
       }
       throw e;
     }
-    await bindToProject(projectName, cleanId, { seed: false });
+    await bindToProject(projectName, cleanId, { seed: false, docName });
     logCloudEvent("T'has unit a un projecte al núvol -- s'està aplicant el seu contingut.", 'success');
   }
 
   function deactivateCloudSync(projectName) {
     channels.forEach((c) => c.stopListening());
+    detachTemplateChannel();
     stopAccessListener();
     cloudProjectId.value = null;
     cloudSyncStatus.value = cloudAuth.currentUser.value ? 'disconnected' : 'disabled';
@@ -422,6 +565,7 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
   watch(cloudAuth.currentUser, (user) => {
     if (!user) {
       channels.forEach((c) => c.stopListening());
+      detachTemplateChannel();
       stopAccessListener();
       cloudProjectId.value = null;
       cloudSyncStatus.value = 'disabled';
@@ -430,15 +574,32 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
     }
   });
 
-  // Watcher de captura local -- mateix idioma que startCollabSync() a
-  // useCollabSync.js (comprovat des de FORA de captureLocalChange, abans
-  // que el debounce dispari, perquè un canvi causat per una fusió remota
-  // en curs no quedi mai ni tan sols programat).
-  watch(() => store.excelJsonData, () => {
-    if (cloudSyncStatus.value !== 'connected' || dataChannel.isApplyingRemote.value) return;
+  // Watcher de captura local per a cada canal fix -- mateix idioma que
+  // startCollabSync() a useCollabSync.js (comprovat des de FORA de
+  // captureLocalChange, abans que el debounce dispari, perquè un canvi
+  // causat per una fusió remota en curs no quedi mai ni tan sols
+  // programat).
+  function watchChannelCapture(getter, channel) {
+    watch(getter, () => {
+      if (cloudSyncStatus.value !== 'connected' || channel.isApplyingRemote.value) return;
+      const delaySec = store.config.cloudSyncCaptureDebounceSeconds || 5;
+      channel.scheduleCaptureOnChange(delaySec * 1000);
+    }, { deep: true });
+  }
+  watchChannelCapture(() => store.excelJsonData, dataChannel);
+  watchChannelCapture(() => store.editorMetadata, schemaChannel);
+  watchChannelCapture(() => store.sheetInfo, sheetInfoChannel);
+  watchChannelCapture(() => store.hierarchySchema, hierarchySchemaChannel);
+
+  // El canal de plantilla és dinàmic (`templateChannel`, revinculat per
+  // `bindCloudTemplateDocument`) -- no es pot fer servir `watchChannelCapture`
+  // (que tanca sobre un canal fix) perquè cal llegir la variable `let`
+  // MÉS ACTUALITZADA en el moment de l'esdeveniment, no la d'ara mateix.
+  watch(() => store.templateText, () => {
+    if (cloudSyncStatus.value !== 'connected' || !templateChannel || templateChannel.isApplyingRemote.value) return;
     const delaySec = store.config.cloudSyncCaptureDebounceSeconds || 5;
-    dataChannel.scheduleCaptureOnChange(delaySec * 1000);
-  }, { deep: true });
+    templateChannel.scheduleCaptureOnChange(delaySec * 1000);
+  });
 
   return {
     cloudSyncStatus,
@@ -452,5 +613,6 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
     deactivateCloudSync,
     addProjectMember,
     removeProjectMember,
+    bindCloudTemplateDocument,
   };
 }

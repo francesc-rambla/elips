@@ -400,3 +400,117 @@ describe('useCloudSync (Fase 25: document d\'accés + canal de dades al núvol)'
     expect(backend.docsStore.get(`projects/${id}/channels/data`).snapshot).toEqual({ General: { comptador: 4 } });
   });
 });
+
+describe('useCloudSync (Fase 26: canals schema/sheetInfo/hierarchySchema/template)', () => {
+  it('activateCloudSync sembra els quatre canals de projecte sencer (data/schema/sheetInfo/hierarchySchema)', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const store = useWorkspaceStore();
+    store.excelJsonData = { General: { nom: 'Expedient 1' } };
+    store.editorMetadata = [{ key: 'nom', type: 'text' }];
+    store.sheetInfo = [{ sheet: 'General' }];
+    store.hierarchySchema = { General: { kind: 'flat' } };
+    const cloudAuth = makeCloudAuth('owner@test.com');
+    const cloud = useCloudSync(cloudAuth, backend.createClientFor('owner@test.com'));
+
+    const id = await cloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    expect(backend.docsStore.get(`projects/${id}/channels/data`).snapshot).toEqual({ General: { nom: 'Expedient 1' } });
+    expect(backend.docsStore.get(`projects/${id}/channels/schema`).snapshot).toEqual([{ key: 'nom', type: 'text' }]);
+    expect(backend.docsStore.get(`projects/${id}/channels/sheetInfo`).snapshot).toEqual([{ sheet: 'General' }]);
+    expect(backend.docsStore.get(`projects/${id}/channels/hierarchySchema`).snapshot).toEqual({ General: { kind: 'flat' } });
+  });
+
+  it('el canal schema convergeix entre propietari i membre igual que el de dades', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const storeOwner = useWorkspaceStore();
+    storeOwner.config.cloudSyncCaptureDebounceSeconds = CAPTURE_DEBOUNCE_SECONDS_TEST;
+    storeOwner.editorMetadata = [{ key: 'nom', type: 'text' }];
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteA', 'Document Principal');
+    await flush();
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+
+    setActivePinia(createPinia());
+    const storeMember = useWorkspaceStore();
+    storeMember.config.cloudSyncCaptureDebounceSeconds = CAPTURE_DEBOUNCE_SECONDS_TEST;
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'));
+    await memberCloud.joinCloudProject('ProjecteB', id, 'Document Principal');
+    await flush();
+    expect(storeMember.editorMetadata).toEqual([{ key: 'nom', type: 'text' }]);
+
+    storeMember.editorMetadata = [...storeMember.editorMetadata, { key: 'import', type: 'number' }];
+    await flush();
+
+    expect(storeOwner.editorMetadata).toEqual([{ key: 'nom', type: 'text' }, { key: 'import', type: 'number' }]);
+  });
+
+  it('activateCloudSync sembra el canal de plantilla del document actiu', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const store = useWorkspaceStore();
+    store.templateText = 'Hola {{ nom }}';
+    const cloudAuth = makeCloudAuth('owner@test.com');
+    const cloud = useCloudSync(cloudAuth, backend.createClientFor('owner@test.com'));
+
+    const id = await cloud.activateCloudSync('ProjecteA', 'Document Principal');
+    await flush();
+
+    expect(backend.docsStore.get(`projects/${id}/channels/template:Document Principal`).snapshot).toEqual({ text: 'Hola {{ nom }}' });
+  });
+
+  it('un membre que s\'uneix amb el mateix document actiu rep la plantilla ja sincronitzada, i els canvis d\'ambdues bandes convergeixen', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const storeOwner = useWorkspaceStore();
+    storeOwner.config.cloudSyncCaptureDebounceSeconds = CAPTURE_DEBOUNCE_SECONDS_TEST;
+    storeOwner.templateText = 'Text original';
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteA', 'Document Principal');
+    await flush();
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+
+    setActivePinia(createPinia());
+    const storeMember = useWorkspaceStore();
+    storeMember.config.cloudSyncCaptureDebounceSeconds = CAPTURE_DEBOUNCE_SECONDS_TEST;
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'));
+    await memberCloud.joinCloudProject('ProjecteB', id, 'Document Principal');
+    await flush();
+    expect(storeMember.templateText).toBe('Text original');
+
+    storeMember.templateText = 'Text canviat pel membre';
+    await flush();
+    expect(storeOwner.templateText).toBe('Text canviat pel membre');
+  });
+
+  it('bindCloudTemplateDocument revincula al canviar de document: sembra si és nou, rellegeix el remot si ja existia', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const storeOwner = useWorkspaceStore();
+    storeOwner.config.cloudSyncCaptureDebounceSeconds = CAPTURE_DEBOUNCE_SECONDS_TEST;
+    storeOwner.templateText = 'Contingut del document principal';
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteA', 'Document Principal');
+    await flush();
+
+    // Canvia a un document nou, mai sincronitzat abans -- com faria
+    // App.vue (loadDocumentConfig ja ha carregat el seu contingut local
+    // abans de revincular el canal) -- s'ha de SEMBRAR amb aquest
+    // contingut, no perdre'l.
+    storeOwner.templateText = 'Contingut del plec, encara no al núvol';
+    await ownerCloud.bindCloudTemplateDocument('Plec de Clàusules');
+    await flush();
+    expect(backend.docsStore.get(`projects/${id}/channels/template:Plec de Clàusules`).snapshot).toEqual({ text: 'Contingut del plec, encara no al núvol' });
+    expect(storeOwner.templateText).toBe('Contingut del plec, encara no al núvol');
+
+    // Torna al document principal -- ja tenia base remota, s'ha de
+    // RELLEGIR-LA (no re-sembrar-la amb el que hi hagi localment ara).
+    await ownerCloud.bindCloudTemplateDocument('Document Principal');
+    await flush();
+    expect(storeOwner.templateText).toBe('Contingut del document principal');
+  });
+});

@@ -225,12 +225,13 @@ const {
   deactivateCloudSync,
   addProjectMember: addCloudProjectMember,
   removeProjectMember: removeCloudProjectMember,
+  bindCloudTemplateDocument,
 } = cloudSync;
 window.cloudSync = cloudSync;
 
 const handleActivateCloudSync = async () => {
   try {
-    await activateCloudSync(currentProjectName.value);
+    await activateCloudSync(currentProjectName.value, activeDocName.value);
   } catch (e) {
     alert(`Error en activar la sincronització al núvol: ${e.message}`);
   }
@@ -240,7 +241,7 @@ const handleJoinCloudProject = async (id) => {
     return;
   }
   try {
-    await joinCloudProject(currentProjectName.value, id);
+    await joinCloudProject(currentProjectName.value, id, activeDocName.value);
   } catch (e) {
     alert(`Error en unir-te al projecte al núvol: ${e.message}`);
   }
@@ -975,6 +976,9 @@ const switchActiveDocument = (newDocName) => {
   // 11.2) -- no cal desconnectar-la, cada document té el seu propi Y.Text
   // dins la mateixa sala/projecte.
   switchRealtimeDocument(newDocName);
+  // Mateix criteri per a la sincronització al núvol (Fase 26): revincula
+  // el canal `template:<docName>` al document nou, sense desconnectar res.
+  bindCloudTemplateDocument(newDocName);
 
   store.addLog(`S'ha canviat al document '${newDocName}'.`, 'info');
 };
@@ -1048,6 +1052,7 @@ const createNewDocument = () => {
   localStorage.setItem(`${pName}:activeDocName`, cleanName);
   loadDocumentConfig(pName, cleanName);
   switchRealtimeDocument(cleanName);
+  bindCloudTemplateDocument(cleanName);
 
   store.addLog(`Document '${cleanName}' creat correctament.`, 'success');
 };
@@ -1085,6 +1090,7 @@ const deleteDocument = (dName) => {
     localStorage.setItem(`${pName}:activeDocName`, 'Document Principal');
     loadDocumentConfig(pName, 'Document Principal');
     switchRealtimeDocument('Document Principal');
+    bindCloudTemplateDocument('Document Principal');
   }
   
   store.addLog(`Document '${dName}' eliminat d'aquest projecte.`, 'info');
