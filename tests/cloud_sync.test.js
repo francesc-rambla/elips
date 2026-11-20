@@ -1,0 +1,402 @@
+/*
+ * elips — Editor de LIcitacions PúbliqueS
+ * Copyright (C) 2026  Francesc Rambla i Marigot
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { setActivePinia, createPinia } from 'pinia';
+import { ref } from 'vue';
+
+beforeEach(() => {
+  if (typeof globalThis.localStorage === 'undefined') {
+    const storage = new Map();
+    globalThis.localStorage = {
+      getItem: (key) => (storage.has(key) ? storage.get(key) : null),
+      setItem: (key, val) => storage.set(key, String(val)),
+      removeItem: (key) => storage.delete(key),
+      clear: () => storage.clear(),
+    };
+  }
+  globalThis.localStorage.clear();
+  setActivePinia(createPinia());
+});
+
+import { useWorkspaceStore } from '../src/stores/workspace.js';
+import { useCloudSync } from '../src/composables/useCloudSync.js';
+
+/**
+ * Backend fals en memòria, compartit entre "clients" simulats -- mateix
+ * esperit que makeFakeCollabFolder() a tests/collab_sync.test.js (un sol
+ * magatzem en memòria, múltiples instàncies independents llegint-lo/
+ * escrivint-lo), però aquí ENS CAL, a més, reproduir la lògica real de les
+ * Regles de Seguretat de Firestore (el pla, secció "Regles de Seguretat":
+ * només membres de `_access/doc.memberEmails` poden llegir/escriure res
+ * del projecte, només el propietari pot actualitzar `_access/doc`) --
+ * altrament els tests de "permission-denied" no demostrarien res de debò.
+ *
+ * `createClientFor(email)` retorna un `getDb` INJECTABLE (el segon
+ * paràmetre de `useCloudSync`) que fa de "aquest usuari concret" -- totes
+ * les instàncies comparteixen el mateix `docsStore`/llistes de listeners,
+ * de manera que dos `useCloudSync` (dos "peers") hi convergeixen de debò.
+ */
+function makeFakeFirestoreBackend() {
+  const docsStore = new Map(); // path -> plain object
+  const docListeners = new Map(); // path -> Set<fn>
+  const collectionListeners = new Map(); // collectionPath -> Set<fn>
+  const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+
+  function permissionDenied(message) {
+    const err = new Error(message || 'Missing or insufficient permissions.');
+    err.code = 'permission-denied';
+    return err;
+  }
+
+  // projects/{id}/_access/doc -- separat dels canals perquè les regles el
+  // tracten de manera diferent (create pel propietari, update NOMÉS pel
+  // propietari, read per qualsevol membre).
+  function isAccessDocPath(path) {
+    const parts = path.split('/');
+    return parts.length === 4 && parts[0] === 'projects' && parts[2] === '_access' && parts[3] === 'doc';
+  }
+  function accessPathFor(path) {
+    const parts = path.split('/');
+    return `projects/${parts[1]}/_access/doc`;
+  }
+  function isMember(path, email) {
+    const access = docsStore.get(accessPathFor(path));
+    return !!access && !!email && access.memberEmails.includes(email);
+  }
+  function isOwner(path, email) {
+    const access = docsStore.get(accessPathFor(path));
+    return !!access && !!email && access.ownerEmail === email;
+  }
+
+  function notifyDoc(path) {
+    const data = docsStore.get(path);
+    (docListeners.get(path) || new Set()).forEach((fn) => fn({
+      exists: () => docsStore.has(path),
+      data: () => clone(data),
+    }));
+  }
+  function childDocsOf(collectionPath) {
+    const prefix = `${collectionPath}/`;
+    const out = [];
+    for (const [p, data] of docsStore.entries()) {
+      if (p.startsWith(prefix) && !p.slice(prefix.length).includes('/')) out.push({ path: p, data });
+    }
+    return out;
+  }
+  function notifyCollection(collectionPath) {
+    const children = childDocsOf(collectionPath);
+    const snap = { forEach: (fn) => children.forEach((d) => fn({ data: () => clone(d.data), ref: { path: d.path } })) };
+    (collectionListeners.get(collectionPath) || new Set()).forEach((fn) => fn(snap));
+  }
+
+  const ARRAY_UNION = 'arrayUnion';
+  const ARRAY_REMOVE = 'arrayRemove';
+
+  function createClientFor(email) {
+    const mod = {
+      getFirestore: () => ({ __fake: true }),
+      doc: (_db, ...segs) => ({ __kind: 'doc', path: segs.join('/') }),
+      collection: (_db, ...segs) => ({ __kind: 'collection', path: segs.join('/') }),
+
+      async setDoc(ref, data) {
+        if (isAccessDocPath(ref.path)) {
+          const existing = docsStore.get(ref.path);
+          if (!existing) {
+            // create: qui escriu s'hi ha d'incloure com a propietari i membre.
+            if (data.ownerEmail !== email || !data.memberEmails.includes(email)) {
+              throw permissionDenied();
+            }
+          } else if (!isOwner(ref.path, email)) {
+            throw permissionDenied();
+          }
+        } else if (!isMember(ref.path, email)) {
+          throw permissionDenied();
+        }
+        docsStore.set(ref.path, clone(data));
+        notifyDoc(ref.path);
+      },
+
+      async getDoc(ref) {
+        if (isAccessDocPath(ref.path)) {
+          if (docsStore.has(ref.path) && !isMember(ref.path, email)) throw permissionDenied();
+        } else if (!isMember(ref.path, email)) {
+          throw permissionDenied();
+        }
+        const data = docsStore.get(ref.path);
+        return { exists: () => docsStore.has(ref.path), data: () => clone(data) };
+      },
+
+      async getDocs(collRef) {
+        if (!isMember(collRef.path, email)) throw permissionDenied();
+        const children = childDocsOf(collRef.path);
+        return { forEach: (fn) => children.forEach((d) => fn({ data: () => clone(d.data), ref: { path: d.path } })) };
+      },
+
+      async addDoc(collRef, data) {
+        if (!isMember(collRef.path, email)) throw permissionDenied();
+        const id = `d${Math.random().toString(36).slice(2)}${docsStore.size}`;
+        const path = `${collRef.path}/${id}`;
+        docsStore.set(path, clone(data));
+        notifyCollection(collRef.path);
+        return { path };
+      },
+
+      async updateDoc(ref, patch) {
+        if (isAccessDocPath(ref.path)) {
+          if (!isOwner(ref.path, email)) throw permissionDenied();
+        } else if (!isMember(ref.path, email)) {
+          throw permissionDenied();
+        }
+        const current = docsStore.get(ref.path);
+        if (!current) throw new Error(`No document to update at ${ref.path}`);
+        const next = { ...current };
+        for (const [k, v] of Object.entries(patch)) {
+          if (v && v.__op === ARRAY_UNION) {
+            const arr = Array.isArray(next[k]) ? next[k].slice() : [];
+            v.values.forEach((val) => { if (!arr.includes(val)) arr.push(val); });
+            next[k] = arr;
+          } else if (v && v.__op === ARRAY_REMOVE) {
+            const arr = Array.isArray(next[k]) ? next[k].slice() : [];
+            next[k] = arr.filter((val) => !v.values.includes(val));
+          } else {
+            next[k] = v;
+          }
+        }
+        docsStore.set(ref.path, next);
+        notifyDoc(ref.path);
+      },
+
+      onSnapshot(ref, cb, errCb) {
+        const checkAllowed = ref.__kind === 'doc'
+          ? () => (isAccessDocPath(ref.path) ? (!docsStore.has(ref.path) || isMember(ref.path, email)) : isMember(ref.path, email))
+          : () => isMember(ref.path, email);
+        if (!checkAllowed()) {
+          if (errCb) errCb(permissionDenied());
+          return () => {};
+        }
+        if (ref.__kind === 'doc') {
+          const set = docListeners.get(ref.path) || new Set();
+          set.add(cb);
+          docListeners.set(ref.path, set);
+          const data = docsStore.get(ref.path);
+          cb({ exists: () => docsStore.has(ref.path), data: () => clone(data) });
+          return () => set.delete(cb);
+        }
+        const set = collectionListeners.get(ref.path) || new Set();
+        set.add(cb);
+        collectionListeners.set(ref.path, set);
+        const children = childDocsOf(ref.path);
+        cb({ forEach: (fn) => children.forEach((d) => fn({ data: () => clone(d.data), ref: { path: d.path } })) });
+        return () => set.delete(cb);
+      },
+
+      writeBatch() {
+        const deletions = [];
+        return {
+          delete(ref) { deletions.push(ref.path); },
+          async commit() {
+            const touchedCollections = new Set();
+            deletions.forEach((path) => {
+              docsStore.delete(path);
+              touchedCollections.add(path.slice(0, path.lastIndexOf('/')));
+            });
+            touchedCollections.forEach((c) => notifyCollection(c));
+          },
+        };
+      },
+
+      arrayUnion: (...values) => ({ __op: ARRAY_UNION, values }),
+      arrayRemove: (...values) => ({ __op: ARRAY_REMOVE, values }),
+    };
+    return async () => ({ db: { __fake: true }, mod });
+  }
+
+  return { docsStore, createClientFor };
+}
+
+function makeCloudAuth(email) {
+  return { currentUser: ref(email ? { uid: email, email } : null) };
+}
+
+// El debounce de captura real per defecte és de 5s (store.config.
+// cloudSyncCaptureDebounceSeconds) -- cada test que faci una edició local
+// l'ha d'escurçar explícitament (CAPTURE_DEBOUNCE_SECONDS_TEST) abans de
+// mutar excelJsonData, o la prova hauria d'esperar 5 segons reals per
+// veure la captura. flush() espera prou temps real (per sobre d'aquest
+// valor escurçat, i per a qualsevol `nextTick()` pendent de Vue) perquè
+// les cadenes async d'aquest motor (onSnapshot -> recomputeAndApply ->
+// nextTick, o el propi debounce) s'acabin de resoldre.
+const CAPTURE_DEBOUNCE_SECONDS_TEST = 0.05;
+async function flush() {
+  await new Promise((r) => setTimeout(r, 120));
+  await new Promise((r) => setTimeout(r, 120));
+}
+
+describe('useCloudSync (Fase 25: document d\'accés + canal de dades al núvol)', () => {
+  it('activateCloudSync crea el document d\'accés amb el propietari com a únic membre i sembra el canal de dades', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const store = useWorkspaceStore();
+    store.excelJsonData = { General: { nom: 'Expedient 1' } };
+    const cloudAuth = makeCloudAuth('owner@test.com');
+    const cloud = useCloudSync(cloudAuth, backend.createClientFor('owner@test.com'));
+
+    const id = await cloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    expect(cloud.cloudSyncStatus.value).toBe('connected');
+    expect(backend.docsStore.get(`projects/${id}/_access/doc`)).toEqual({
+      ownerEmail: 'owner@test.com',
+      memberEmails: ['owner@test.com'],
+    });
+    expect(backend.docsStore.get(`projects/${id}/channels/data`).snapshot).toEqual({ General: { nom: 'Expedient 1' } });
+    expect(localStorage.getItem('ProjecteA:cloudProjectId')).toBe(id);
+  });
+
+  it('un segon membre, un cop afegit pel propietari, convergeix amb canvis fets a camins diferents per totes dues bandes', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const storeOwner = useWorkspaceStore();
+    storeOwner.config.cloudSyncCaptureDebounceSeconds = CAPTURE_DEBOUNCE_SECONDS_TEST;
+    storeOwner.excelJsonData = { General: { nom: 'Expedient 1', altre: 'X' } };
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+
+    setActivePinia(createPinia());
+    const storeMember = useWorkspaceStore();
+    storeMember.config.cloudSyncCaptureDebounceSeconds = CAPTURE_DEBOUNCE_SECONDS_TEST;
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'));
+    await memberCloud.joinCloudProject('ProjecteB', id);
+    await flush();
+
+    expect(storeMember.excelJsonData).toEqual({ General: { nom: 'Expedient 1', altre: 'X' } });
+
+    // Propietari edita un camp, membre edita un altre -- totes dues bandes
+    // han de convergir, mai sobreescriure's l'una a l'altra.
+    storeOwner.excelJsonData = { ...storeOwner.excelJsonData, General: { ...storeOwner.excelJsonData.General, nom: 'Expedient canviat pel propietari' } };
+    await flush();
+    storeMember.excelJsonData = { ...storeMember.excelJsonData, General: { ...storeMember.excelJsonData.General, altre: 'Y, canviat pel membre' } };
+    await flush();
+
+    expect(storeOwner.excelJsonData.General).toEqual({ nom: 'Expedient canviat pel propietari', altre: 'Y, canviat pel membre' });
+    expect(storeMember.excelJsonData.General).toEqual({ nom: 'Expedient canviat pel propietari', altre: 'Y, canviat pel membre' });
+  });
+
+  it('joinCloudProject dona un error clar (i no toca res) quan encara no ets membre', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    setActivePinia(createPinia());
+    const storeOutsider = useWorkspaceStore();
+    storeOutsider.excelJsonData = { General: { nom: 'El meu propi contingut, intacte' } };
+    const outsiderAuth = makeCloudAuth('fora@test.com');
+    const outsiderCloud = useCloudSync(outsiderAuth, backend.createClientFor('fora@test.com'));
+
+    await expect(outsiderCloud.joinCloudProject('ProjecteC', id)).rejects.toThrow(/encara no tens accés/i);
+    expect(localStorage.getItem('ProjecteC:cloudProjectId')).toBeNull();
+    expect(storeOutsider.excelJsonData).toEqual({ General: { nom: 'El meu propi contingut, intacte' } });
+  });
+
+  it('només el propietari pot afegir o treure membres -- un membre normal rep permission-denied', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+
+    setActivePinia(createPinia());
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'));
+    await memberCloud.joinCloudProject('ProjecteB', id);
+    await flush();
+
+    await expect(memberCloud.addProjectMember('altre@test.com')).rejects.toThrow();
+    const access = backend.docsStore.get(`projects/${id}/_access/doc`);
+    expect(access.memberEmails).toEqual(['owner@test.com', 'membre@test.com']);
+  });
+
+  it('isCurrentUserOwner reflecteix correctament qui és el propietari un cop vinculat', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+    expect(ownerCloud.isCurrentUserOwner()).toBe(true);
+
+    setActivePinia(createPinia());
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'));
+    await memberCloud.joinCloudProject('ProjecteB', id);
+    await flush();
+    expect(memberCloud.isCurrentUserOwner()).toBe(false);
+  });
+
+  it('deactivateCloudSync atura la sincronització i oblida l\'identificador desat localment', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+    expect(ownerCloud.cloudSyncStatus.value).toBe('connected');
+
+    ownerCloud.deactivateCloudSync('ProjecteA');
+    expect(ownerCloud.cloudSyncStatus.value).toBe('disconnected');
+    expect(ownerCloud.cloudProjectId.value).toBe(null);
+    expect(localStorage.getItem('ProjecteA:cloudProjectId')).toBeNull();
+  });
+
+  it('la compactació fon els deltes dins una nova base i buida la subcol·lecció, sense canviar el resultat fusionat', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const store = useWorkspaceStore();
+    store.config.cloudSyncCompactionThreshold = 2;
+    store.config.cloudSyncCaptureDebounceSeconds = CAPTURE_DEBOUNCE_SECONDS_TEST;
+    store.excelJsonData = { General: { comptador: 0 } };
+    const cloudAuth = makeCloudAuth('owner@test.com');
+    const cloud = useCloudSync(cloudAuth, backend.createClientFor('owner@test.com'));
+    const id = await cloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    // Llindar de compactació = 2: el 2n i el 4t delta haurien de disparar
+    // una compactació cadascun, deixant la subcol·lecció buida al final.
+    store.excelJsonData = { General: { comptador: 1 } };
+    await flush();
+    store.excelJsonData = { General: { comptador: 2 } };
+    await flush();
+    store.excelJsonData = { General: { comptador: 3 } };
+    await flush();
+    store.excelJsonData = { General: { comptador: 4 } };
+    await flush();
+
+    expect(store.excelJsonData).toEqual({ General: { comptador: 4 } });
+    const deltasLeft = [...backend.docsStore.keys()].filter((p) => p.startsWith(`projects/${id}/channels/data/deltas/`));
+    expect(deltasLeft.length).toBe(0);
+    expect(backend.docsStore.get(`projects/${id}/channels/data`).snapshot).toEqual({ General: { comptador: 4 } });
+  });
+});

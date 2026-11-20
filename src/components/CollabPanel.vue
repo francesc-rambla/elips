@@ -55,12 +55,22 @@ const props = defineProps({
   cloudAuthStatus: { type: String, default: 'unconfigured' },
   cloudCurrentUserEmail: { type: String, default: '' },
   cloudAuthError: { type: String, default: null },
+  // Fase 25: motor real de sincronització (document d'accés + canal de
+  // dades). 'disabled' | 'disconnected' | 'connecting' | 'connected' | 'error'.
+  cloudSyncStatus: { type: String, default: 'disabled' },
+  cloudProjectId: { type: String, default: null },
+  cloudSyncError: { type: String, default: null },
+  cloudActivityLog: { type: Array, default: () => [] },
+  cloudProjectAccess: { type: Object, default: null }, // {ownerEmail, memberEmails}
+  isCloudProjectOwner: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
   'close', 'connect', 'disconnect', 'request-permission', 'update-display-name',
   'start-realtime-session', 'join-realtime-session', 'stop-realtime-session',
   'request-project-transfer', 'cloud-sign-in', 'cloud-sign-out',
+  'activate-cloud-sync', 'join-cloud-project', 'deactivate-cloud-sync',
+  'add-cloud-project-member', 'remove-cloud-project-member',
 ]);
 
 const nameInput = ref(props.displayName);
@@ -118,6 +128,27 @@ const cloudEmailInput = ref('');
 const cloudPasswordInput = ref('');
 const submitCloudSignIn = () => {
   emit('cloud-sign-in', { email: cloudEmailInput.value.trim(), password: cloudPasswordInput.value });
+};
+
+// Fase 25: gestió del projecte al núvol (activar/unir-se/gestionar accés).
+const cloudJoinIdInput = ref('');
+const cloudNewMemberInput = ref('');
+const cloudSyncStatusLabel = {
+  disabled: 'Cal iniciar sessió',
+  disconnected: 'Cap projecte al núvol vinculat',
+  connecting: 'Connectant...',
+  connected: 'Connectat',
+  error: 'Error de connexió',
+};
+const submitJoinCloudProject = () => {
+  if (!cloudJoinIdInput.value.trim()) return;
+  emit('join-cloud-project', cloudJoinIdInput.value.trim());
+  cloudJoinIdInput.value = '';
+};
+const submitAddCloudMember = () => {
+  if (!cloudNewMemberInput.value.trim()) return;
+  emit('add-cloud-project-member', cloudNewMemberInput.value.trim());
+  cloudNewMemberInput.value = '';
 };
 
 const copyToClipboard = async (text) => {
@@ -370,10 +401,10 @@ const copyToClipboard = async (text) => {
           </template>
         </div>
 
-        <!-- Sincronització al núvol (Firebase) -- Fase 24: només
-             autenticació per ara. La persistència/sincronització real de
-             projectes (document d'accés per projecte, canals, deltes)
-             arriba a les Fases 25-27 (vegeu el pla). -->
+        <!-- Sincronització al núvol (Firebase) -- Fase 24 (autenticació) +
+             Fase 25 (document d'accés per projecte + canal de dades real).
+             Vegeu el pla per a les Fases 26-27 (resta de canals, auto-
+             reconnexió transparent). -->
         <div style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 1rem;">
           <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary);">☁️ Sincronització al núvol</span>
 
@@ -389,17 +420,86 @@ const copyToClipboard = async (text) => {
               el pugui sincronitzar encara que mai coincidiu en línia.
             </p>
 
-            <div v-if="cloudAuthStatus === 'signed-in'" style="display: flex; flex-direction: column; gap: 6px;">
-              <div style="font-size: 0.82rem; color: var(--text-secondary);">
-                Connectat com a <strong>{{ cloudCurrentUserEmail }}</strong>
+            <div v-if="cloudAuthStatus === 'signed-in'" style="display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 0.82rem; color: var(--text-secondary);">
+                  Connectat com a <strong>{{ cloudCurrentUserEmail }}</strong>
+                </span>
+                <button type="button" class="btn-icon-only" style="border: none; background: none; cursor: pointer; font-size: 0.74rem; color: var(--text-muted);" @click="emit('cloud-sign-out')">Tanca la sessió</button>
               </div>
-              <button
-                class="btn btn-secondary text-danger"
-                style="width: auto; padding: 6px 14px; font-size: 0.8rem; align-self: flex-start;"
-                @click="emit('cloud-sign-out')"
-              >
-                Tanca la sessió
-              </button>
+
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 0.85rem; color: var(--text-secondary);">Projecte al núvol:</span>
+                <span style="font-size: 0.85rem; font-weight: 700;" :style="{ color: cloudSyncStatus === 'connected' ? 'var(--color-success, #16a34a)' : (cloudSyncStatus === 'error' ? 'var(--color-danger, #dc2626)' : 'var(--text-primary)') }">
+                  {{ cloudSyncStatusLabel[cloudSyncStatus] || cloudSyncStatus }}
+                </span>
+              </div>
+              <div v-if="cloudSyncStatus === 'error' && cloudSyncError" style="font-size: 0.78rem; color: var(--color-danger, #dc2626);">
+                {{ cloudSyncError }}
+              </div>
+
+              <template v-if="cloudSyncStatus === 'connected'">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span style="font-size: 0.78rem; color: var(--text-secondary); flex-shrink: 0;">Identificador:</span>
+                  <code style="font-size: 0.72rem; background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; flex: 1; overflow-x: auto; white-space: nowrap;">{{ cloudProjectId }}</code>
+                  <button type="button" class="btn-icon-only" style="border: none; background: none; cursor: pointer;" title="Copia l'identificador" @click="copyToClipboard(cloudProjectId)">📋</button>
+                </div>
+                <p style="font-size: 0.72rem; color: var(--text-muted); margin: 0;">
+                  Comparteix-lo amb qui vulguis que hi tingui accés -- només hi podran entrar un cop l'afegeixis a sota.
+                </p>
+
+                <div style="display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border-color); padding-top: 8px;">
+                  <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">Gestiona l'accés</span>
+                  <template v-if="isCloudProjectOwner">
+                    <div v-for="email in (cloudProjectAccess?.memberEmails || [])" :key="email" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem;">
+                      <span>{{ email }}<span v-if="email === cloudProjectAccess?.ownerEmail" style="font-size: 0.7rem; color: var(--text-muted);"> (propietari)</span></span>
+                      <button v-if="email !== cloudProjectAccess?.ownerEmail" type="button" class="btn-icon-only" style="border: none; background: none; cursor: pointer;" title="Treu l'accés" @click="emit('remove-cloud-project-member', email)">✕</button>
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-top: 4px;">
+                      <input type="email" v-model="cloudNewMemberInput" class="data-input" placeholder="Afegeix un correu..." style="font-size: 0.8rem; height: 28px; padding: 2px 8px;" @keyup.enter="submitAddCloudMember">
+                      <button class="btn btn-secondary" style="width: auto; padding: 4px 10px; font-size: 0.76rem;" @click="submitAddCloudMember">Afegeix</button>
+                    </div>
+                  </template>
+                  <p v-else style="font-size: 0.78rem; color: var(--text-muted); margin: 0;">
+                    Ets membre d'aquest projecte, gestionat per <strong>{{ cloudProjectAccess?.ownerEmail }}</strong>.
+                  </p>
+                </div>
+
+                <button class="btn btn-secondary text-danger" style="width: auto; padding: 6px 14px; font-size: 0.8rem; align-self: flex-start;" @click="emit('deactivate-cloud-sync')">
+                  Desvincula aquest projecte
+                </button>
+
+                <div v-if="cloudActivityLog.length" style="display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--border-color); padding-top: 8px; max-height: 120px; overflow-y: auto;">
+                  <div v-for="(entry, idx) in cloudActivityLog" :key="idx" style="font-size: 0.72rem; color: var(--text-muted);">
+                    <span style="font-family: monospace;">{{ entry.time }}</span> — {{ entry.text }}
+                  </div>
+                </div>
+              </template>
+
+              <template v-else>
+                <button class="btn btn-primary" style="width: auto; padding: 6px 14px; font-size: 0.8rem; align-self: flex-start;" @click="emit('activate-cloud-sync')">
+                  ☁️ Activa la sincronització per a aquest projecte
+                </button>
+                <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
+                  <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);">O uneix-te a un projecte al núvol existent</label>
+                  <input
+                    type="text"
+                    v-model="cloudJoinIdInput"
+                    class="data-input"
+                    placeholder="Identificador del projecte..."
+                    style="font-size: 0.82rem; height: 30px; padding: 2px 8px; font-family: monospace;"
+                    @keyup.enter="submitJoinCloudProject"
+                  >
+                  <button
+                    class="btn btn-secondary"
+                    style="width: auto; padding: 5px 12px; font-size: 0.78rem; align-self: flex-start;"
+                    :disabled="!cloudJoinIdInput.trim()"
+                    @click="submitJoinCloudProject"
+                  >
+                    Uneix-te
+                  </button>
+                </div>
+              </template>
             </div>
             <form v-else style="display: flex; flex-direction: column; gap: 6px;" @submit.prevent="submitCloudSignIn">
               <input

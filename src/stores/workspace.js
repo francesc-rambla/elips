@@ -151,7 +151,11 @@ export const useWorkspaceStore = defineStore('workspace', {
       // Sessió en viu WebRTC (see useCollabRealtime.js, Fase 11.3) --
       // servidors de senyalització configurables, cap amb SLA garantit.
       collabSignalingServers: JSON.parse(localStorage.getItem('collabSignalingServers') || JSON.stringify(KNOWN_SIGNALING_SERVERS)),
-      collabPreferredSignalingServer: localStorage.getItem('collabPreferredSignalingServer') || ''
+      collabPreferredSignalingServer: localStorage.getItem('collabPreferredSignalingServer') || '',
+      // Sincronització al núvol (Fase 25, useCloudSync.js) -- mateix patró
+      // que els altres dos transports.
+      cloudSyncCaptureDebounceSeconds: parseInt(localStorage.getItem('cloudSyncCaptureDebounceSeconds') || '5', 10),
+      cloudSyncCompactionThreshold: parseInt(localStorage.getItem('cloudSyncCompactionThreshold') || '200', 10)
     }
   }),
   

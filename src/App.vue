@@ -28,6 +28,7 @@ import { useCollabSync } from './composables/useCollabSync';
 import { useCollabRealtime, generateSessionCredentials, normalizeSignalingServers } from './composables/useCollabRealtime';
 import { getDisplayNameOrFallback, setDisplayName as setCollabDisplayName, getUserColor } from './composables/useCollabIdentity';
 import { useCloudAuth } from './composables/useCloudAuth';
+import { useCloudSync } from './composables/useCloudSync';
 
 // Components
 import FileCard from './components/FileCard.vue';
@@ -205,6 +206,60 @@ const handleCloudSignOut = async () => {
     await signOutCloud();
   } catch (e) {
     store.addLog(`Error en tancar la sessió del núvol: ${e.message}`, 'error');
+  }
+};
+
+// Fase 25 (veure el pla): motor real de sincronització al núvol -- cada
+// projecte LOCAL pot vincular-se a UN projecte al núvol (document d'accés
+// + canal de dades), mai més d'un alhora.
+const cloudSync = useCloudSync(cloudAuth);
+const {
+  cloudSyncStatus,
+  cloudProjectId,
+  lastCloudSyncError,
+  cloudActivityLog,
+  projectAccess: cloudProjectAccess,
+  isCurrentUserOwner: isCloudProjectOwner,
+  activateCloudSync,
+  joinCloudProject,
+  deactivateCloudSync,
+  addProjectMember: addCloudProjectMember,
+  removeProjectMember: removeCloudProjectMember,
+} = cloudSync;
+window.cloudSync = cloudSync;
+
+const handleActivateCloudSync = async () => {
+  try {
+    await activateCloudSync(currentProjectName.value);
+  } catch (e) {
+    alert(`Error en activar la sincronització al núvol: ${e.message}`);
+  }
+};
+const handleJoinCloudProject = async (id) => {
+  if (!confirm('Unir-te a aquest projecte al núvol sobreescriurà el contingut del projecte local actual amb el que hi hagi al núvol. Continuar?')) {
+    return;
+  }
+  try {
+    await joinCloudProject(currentProjectName.value, id);
+  } catch (e) {
+    alert(`Error en unir-te al projecte al núvol: ${e.message}`);
+  }
+};
+const handleDeactivateCloudSync = () => {
+  deactivateCloudSync(currentProjectName.value);
+};
+const handleAddCloudProjectMember = async (email) => {
+  try {
+    await addCloudProjectMember(email);
+  } catch (e) {
+    alert(`Error en afegir el membre: ${e.message}`);
+  }
+};
+const handleRemoveCloudProjectMember = async (email) => {
+  try {
+    await removeCloudProjectMember(email);
+  } catch (e) {
+    alert(`Error en treure el membre: ${e.message}`);
   }
 };
 
@@ -559,6 +614,9 @@ const createNewProject = async () => {
   // de la Fase 16, un Y.Doc persistent pot estar capturant edicions locals
   // encara que la xarxa estigui desconnectada.
   await closeRealtimeForProject();
+  // Mateix motiu per al tercer transport (Fase 25): el canal de dades al
+  // núvol és d'AQUEST projecte local, no del que hi entra.
+  deactivateCloudSync(currentProjectName.value);
 
   pauseAutoRecording();
   if (window.__flushGlobalSave) window.__flushGlobalSave();
@@ -621,6 +679,7 @@ const loadProject = async (name) => {
   // (connectada o només capturant en silenci, Fase 16) és del projecte que
   // deixem ara, no del que hi entra.
   await closeRealtimeForProject();
+  deactivateCloudSync(currentProjectName.value);
 
   pauseAutoRecording();
   if (window.__flushGlobalSave) window.__flushGlobalSave();
@@ -3595,6 +3654,12 @@ const generateDocuments = async () => {
       :cloud-auth-status="cloudAuthStatus"
       :cloud-current-user-email="cloudCurrentUser?.email || ''"
       :cloud-auth-error="cloudAuthError"
+      :cloud-sync-status="cloudSyncStatus"
+      :cloud-project-id="cloudProjectId"
+      :cloud-sync-error="lastCloudSyncError"
+      :cloud-activity-log="cloudActivityLog"
+      :cloud-project-access="cloudProjectAccess"
+      :is-cloud-project-owner="isCloudProjectOwner()"
       @close="isCollabPanelOpen = false"
       @connect="handleConnectCollabFolder"
       @disconnect="disconnectCollabFolder"
@@ -3602,6 +3667,11 @@ const generateDocuments = async () => {
       @update-display-name="handleUpdateCollabDisplayName"
       @cloud-sign-in="handleCloudSignIn"
       @cloud-sign-out="handleCloudSignOut"
+      @activate-cloud-sync="handleActivateCloudSync"
+      @join-cloud-project="handleJoinCloudProject"
+      @deactivate-cloud-sync="handleDeactivateCloudSync"
+      @add-cloud-project-member="handleAddCloudProjectMember"
+      @remove-cloud-project-member="handleRemoveCloudProjectMember"
       @start-realtime-session="handleStartRealtimeSession"
       @join-realtime-session="handleJoinRealtimeSession"
       @stop-realtime-session="handleStopRealtimeSession"

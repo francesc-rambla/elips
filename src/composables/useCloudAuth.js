@@ -34,7 +34,12 @@ import { ref } from 'vue';
 import { firebaseConfig, isCloudSyncConfigured } from '../utils/firebaseConfig';
 
 let appPromise = null;
-function getFirebaseApp() {
+// Exportada perquè useCloudSync.js (Fase 25) reutilitzi la MATEIXA app
+// Firebase (singleton a nivell de mòdul) en lloc d'inicialitzar-ne una
+// segona -- `getApps().length ? getApp() : initializeApp(...)` ja ho
+// protegeix igualment, però compartir la promesa evita una doble
+// inicialització concurrent en arrencar.
+export function getFirebaseApp() {
   if (!appPromise) {
     appPromise = import('firebase/app').then(({ initializeApp, getApps, getApp }) => (
       getApps().length ? getApp() : initializeApp(firebaseConfig)
