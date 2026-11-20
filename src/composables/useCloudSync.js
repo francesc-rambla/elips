@@ -37,6 +37,12 @@
  * actiu), revinculat en canviar de document, mateix criteri que
  * `bindDocument`/`switchRealtimeDocument` ja fan servir per al pont WebRTC.
  *
+ * Fase 28 (en curs, 28.1): afegeix `excelFile`, un canal de FITXER BINARI
+ * sencer (abast de projecte) via `createCloudBlobChannel` -- última
+ * escriptura guanya sobre TOT el fitxer (comparat per hash SHA-256), mai
+ * un pedaç JSON com els canals de dalt. Vegeu el pla per a `refDoc:<docName>`
+ * i `documentsList` (28.2/28.3, encara no implementats).
+ *
  * Autorització: cada projecte al núvol té el seu propi document d'accés
  * `projects/{id}/_access/doc` ({ownerEmail, memberEmails}), que les Regles
  * de Seguretat de Firestore comproven per a TOTA la resta del contingut
@@ -49,9 +55,30 @@ import { useWorkspaceStore } from '../stores/workspace.js';
 import { computeDataPatch, computeMetaPatch, applyDataPatch } from '../utils/dataPatch.js';
 import { getOrCreateUserId, getDisplayNameOrFallback } from './useCollabIdentity.js';
 import { getFirebaseApp } from './useCloudAuth.js';
+// `chunkBytes`/`concatChunks` (Fase 14) ja són funcions pures reutilitzables
+// tal qual -- no depenen de WebRTC/Yjs, només trossegen/reconstrueixen un
+// `Uint8Array`. Aquí serveixen per repartir un fitxer binari en documents
+// Firestore d'un MiB (Fase 28), en lloc de missatges WebRTC de 16 KiB.
+import { chunkBytes, concatChunks } from './useCollabRealtime.js';
 
 const ACTIVITY_LOG_MAX = 20;
 const DEFAULT_COMPACTION_THRESHOLD = 200;
+const DEFAULT_MAX_BINARY_FILE_SIZE_MB = 10;
+// 900 KiB -- marge ampli sota l'1 MiB per document de Firestore (camp
+// `Bytes` + camps de metadades + sobrecàrrega pròpia de Firestore
+// inclosos), mai cal fragmentar-ho més fi com la Fase 14 (16 KiB) perquè
+// aquí no hi ha cap canal de dades WebRTC de per mig.
+const BLOB_CHUNK_SIZE = 900 * 1024;
+
+// Hash hexadecimal SHA-256 d'un ArrayBuffer/Uint8Array -- Web Crypto API,
+// disponible nativament en qualsevol context segur (https/localhost), cap
+// dependència nova. Serveix per decidir si un fitxer ha canviat de debò
+// (evita repujar/reaplicar contingut idèntic) i per verificar la
+// integritat d'un fitxer reconstruït a partir dels seus trossos.
+async function sha256Hex(data) {
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 // Normalitzat sempre igual (minúscules, sense espais) perquè la comparació
 // client-side ("ets el propietari?") coincideixi amb `request.auth.token.email`
@@ -300,14 +327,194 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
 }
 
 /**
+ * Canal per a UN fitxer BINARI sencer (Fase 28) -- `excelFile` (abast de
+ * projecte) i, més endavant, `refDoc:<docName>` (abast de document,
+ * mateix cicle de vida que `template:<docName>`). A diferència de
+ * `createCloudChannel` (pensat per a diferències de camp JSON), un fitxer
+ * binari es reemplaça SENCER, última escriptura guanya -- exactament el
+ * mateix criteri que `collab_project.zip`/`refDocFile` ja reben avui a la
+ * carpeta compartida i a WebRTC (mai es "diferencien" tampoc allà). Per
+ * això NO reutilitza `computePatch`/`applyDataPatch`: compara per HASH
+ * (SHA-256) l'estat local contra el remot, sense cap registre de deltes.
+ *
+ * Disposició a Firestore: `projects/{id}/channels/{channelKey}` (meta:
+ * `{fileName, fileSize, totalChunks, sha256Hex, updatedAt, updatedBy}`) +
+ * la subcol·lecció germana `.../chunks/{index}` (`{data: Bytes}`,
+ * `index` = '0', '1', ... -- mai es llegeix l'ordre implícit de Firestore,
+ * que no és numèric per a IDs de text; es parseja `index` explícitament a
+ * cada lectura).
+ *
+ * `getLocalBuffer`/`getLocalFileName`/`setLocal` (injectats des d'App.vue,
+ * vegeu `useCloudSync`): aquest canal no toca MAI IndexedDB/`localStorage`
+ * directament (seguint el mateix criteri que `createCloudChannel`, que
+ * només toca `store.*`) -- la persistència entre recàrregues de pàgina és
+ * responsabilitat de qui injecta `setLocal`.
+ */
+function createCloudBlobChannel({ channelKey, getDb, cloudProjectIdRef, getLocalBuffer, getLocalFileName, setLocal, logEvent, maxFileSizeBytes }) {
+  let unsubMeta = null;
+
+  function channelRefs(db, mod) {
+    const projectId = cloudProjectIdRef.value;
+    return {
+      meta: mod.doc(db, 'projects', projectId, 'channels', channelKey),
+      chunks: mod.collection(db, 'projects', projectId, 'channels', channelKey, 'chunks'),
+      chunkDoc: (i) => mod.doc(db, 'projects', projectId, 'channels', channelKey, 'chunks', String(i)),
+    };
+  }
+
+  function maxBytes() {
+    return (typeof maxFileSizeBytes === 'function' ? maxFileSizeBytes() : maxFileSizeBytes) || (DEFAULT_MAX_BINARY_FILE_SIZE_MB * 1024 * 1024);
+  }
+
+  // Puja `buffer` sencer: substitueix la meta + TOTS els chunks en un SOL
+  // `writeBatch` atòmic -- cap lector hi pot veure mai un estat a mig
+  // escriure (a diferència d'escriure cada chunk per separat). Si la nova
+  // versió té MENYS trossos que l'anterior, els sobrants -- s'esborren
+  // dins el MATEIX batch (mateix escombratge que `maybeCompact` ja fa per
+  // als deltes).
+  async function uploadBuffer(buffer, fileName, hash, db, mod) {
+    const limit = maxBytes();
+    if (buffer.byteLength > limit) {
+      logEvent(`El fitxer "${fileName}" (${(buffer.byteLength / 1048576).toFixed(1)} MiB) supera el límit de sincronització al núvol (${(limit / 1048576).toFixed(0)} MiB) -- fes servir la carpeta compartida o una sessió en viu per compartir-lo.`, 'warning');
+      return;
+    }
+    const { meta, chunks, chunkDoc } = channelRefs(db, mod);
+    const parts = chunkBytes(new Uint8Array(buffer), BLOB_CHUNK_SIZE);
+    const existingSnap = await mod.getDocs(chunks);
+    const staleRefs = [];
+    existingSnap.forEach((d) => {
+      const idx = parseInt(d.ref.path.split('/').pop(), 10);
+      if (Number.isNaN(idx) || idx >= parts.length) staleRefs.push(d.ref);
+    });
+    const batch = mod.writeBatch(db);
+    batch.set(meta, {
+      fileName,
+      fileSize: buffer.byteLength,
+      totalChunks: parts.length,
+      sha256Hex: hash,
+      updatedAt: new Date().toISOString(),
+      updatedBy: getOrCreateUserId(),
+    });
+    parts.forEach((chunk, i) => {
+      batch.set(chunkDoc(i), { data: mod.Bytes.fromUint8Array(chunk) });
+    });
+    staleRefs.forEach((ref) => batch.delete(ref));
+    await batch.commit();
+  }
+
+  // Llegeix tots els chunks declarats per `meta`, els reconstrueix EN
+  // ORDRE NUMÈRIC explícit (mai l'ordre implícit de `getDocs`, que no és
+  // garantit i, fins i tot si ho fos, seria lexicogràfic -- '10' abans de
+  // '2' -- no numèric), en verifica l'`sha256Hex` reconstruït contra el
+  // declarat (si no coincideix, o falta algun chunk, s'espera al pròxim
+  // `onSnapshot` en lloc d'aplicar dades a mitges) i aplica `setLocal`.
+  async function fetchAndApply(meta) {
+    const { db, mod } = await getDb();
+    const { chunks } = channelRefs(db, mod);
+    const snap = await mod.getDocs(chunks);
+    const ordered = new Array(meta.totalChunks);
+    snap.forEach((d) => {
+      const idx = parseInt(d.ref.path.split('/').pop(), 10);
+      if (!Number.isNaN(idx) && idx < meta.totalChunks) {
+        ordered[idx] = d.data().data.toUint8Array();
+      }
+    });
+    if (ordered.some((c) => !c)) {
+      logEvent(`Dades incompletes en rebre "${meta.fileName}" des del núvol -- s'esperarà la pròxima actualització.`, 'warning');
+      return;
+    }
+    const bytes = concatChunks(ordered);
+    const hash = await sha256Hex(bytes);
+    if (hash !== meta.sha256Hex) {
+      logEvent(`La verificació d'integritat de "${meta.fileName}" no coincideix -- s'esperarà la pròxima actualització.`, 'warning');
+      return;
+    }
+    await setLocal(bytes.buffer, meta.fileName);
+    logEvent(`S'ha rebut una versió actualitzada de "${meta.fileName}" des de la sincronització al núvol.`, 'info');
+  }
+
+  // Escrit en activar/crear el projecte -- no-op si no hi ha cap fitxer
+  // local (p. ex. un document sense cap fitxer de referència): mai es crea
+  // cap canal/meta buit.
+  async function seedInitial() {
+    const buffer = await getLocalBuffer();
+    if (!buffer) return;
+    const fileName = getLocalFileName();
+    const hash = await sha256Hex(buffer);
+    const { db, mod } = await getDb();
+    await uploadBuffer(buffer, fileName, hash, db, mod);
+  }
+
+  // `onSnapshot` sobre el document meta -- compara sempre contra l'estat
+  // LOCAL real en aquest instant (mai una variable cau pròpia, el mateix
+  // tipus de carrera ja trobat i corregit a la Fase 27): si el hash remot
+  // coincideix amb el hash de l'estat local actual (inclòs el cas "és el
+  // meu propi eco, acabo de pujar-ho jo mateix"), no cal fer res.
+  async function startListening() {
+    const { db, mod } = await getDb();
+    const { meta } = channelRefs(db, mod);
+    unsubMeta = mod.onSnapshot(meta, async (snap) => {
+      if (!snap.exists()) return; // cap fitxer remot encara -- res a baixar
+      const remoteData = snap.data();
+      const localBuffer = await getLocalBuffer();
+      const localHash = localBuffer ? await sha256Hex(localBuffer) : null;
+      if (remoteData.sha256Hex === localHash) return;
+      await fetchAndApply(remoteData);
+    }, (err) => logEvent(`Error de sincronització al núvol (${channelKey}): ${err.message}`, 'error'));
+  }
+
+  // Cridada EXPLÍCITAMENT (mai per un watcher reactiu de bytes -- un
+  // fitxer binari no es "tecleja", es reemplaça sencer en punts discrets i
+  // coneguts) des d'App.vue, després que la seva pròpia escriptura local ja
+  // hagi passat. Compara sempre contra l'estat REMOT real llegit ara
+  // mateix (mai una variable cau local) pel mateix motiu que
+  // `startListening` -- evita repujar contingut que ja hi és.
+  async function captureIfChanged() {
+    const buffer = await getLocalBuffer();
+    if (!buffer) return; // res a pujar -- l'eliminació del fitxer remot no es gestiona aquí (Fase 28.1)
+    const fileName = getLocalFileName();
+    const hash = await sha256Hex(buffer);
+    const { db, mod } = await getDb();
+    const { meta } = channelRefs(db, mod);
+    const snap = await mod.getDoc(meta);
+    if (snap.exists() && snap.data().sha256Hex === hash) return;
+    await uploadBuffer(buffer, fileName, hash, db, mod);
+  }
+
+  function stopListening() {
+    if (unsubMeta) { unsubMeta(); unsubMeta = null; }
+  }
+
+  return {
+    channelKey,
+    seedInitial,
+    startListening,
+    stopListening,
+    captureIfChanged,
+  };
+}
+
+/**
  * `cloudAuth`: l'objecte retornat per useCloudAuth() -- aquest composable
  * només hi llegeix `currentUser`, mai en gestiona la sessió ell mateix.
  * `getDb`: injectable, per defecte `defaultGetFirestoreModule` (producció,
  * Firestore real diferit); els tests hi passen un Firestore fals en
  * memòria sense tocar res més d'aquesta funció.
+ * `binaryAdapters` (Fase 28, opcional): `{ excelFile: { getBuffer,
+ * getFileName, setFile } }` -- injectat des d'App.vue, que és qui té accés
+ * a `saveBinaryFile`/`currentProjectName` per persistir el fitxer rebut a
+ * IndexedDB/`localStorage` (aquest mòdul no en toca mai cap directament,
+ * seguint el mateix criteri que els canals JSON, que només toquen
+ * `store.*`). Si no es passa, el canal `excelFile` queda inert (mai puja
+ * ni aplica res) -- cap crida existent es trenca.
  */
-export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
+export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, binaryAdapters = {}) {
   const store = useWorkspaceStore();
+  const excelFileAdapter = binaryAdapters.excelFile || {
+    getBuffer: async () => null,
+    getFileName: () => '',
+    setFile: async () => {},
+  };
 
   // 'disabled' (ningú ha iniciat sessió al núvol) | 'disconnected' (sessió
   // iniciada, cap projecte al núvol vinculat a AQUEST projecte local) |
@@ -379,6 +586,34 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
     logEvent: logCloudEvent,
   });
   const channels = [dataChannel, schemaChannel, sheetInfoChannel, hierarchySchemaChannel];
+
+  // Canal binari `excelFile` (Fase 28) -- abast de PROJECTE sencer, sempre
+  // actiu mentre hi ha sincronització connectada, mateix criteri que els
+  // quatre canals JSON de dalt. Mantingut en una llista PRÒPIA
+  // (`blobChannels`), no barrejat dins `channels`, perquè la seva forma
+  // (`seedInitial`/`startListening`/`stopListening`/`captureIfChanged`, SENSE
+  // `isApplyingRemote`/`lastMergedState`/`scheduleCaptureOnChange`) és
+  // diferent de la dels canals JSON.
+  const excelFileChannel = createCloudBlobChannel({
+    channelKey: 'excelFile',
+    getDb,
+    cloudProjectIdRef: cloudProjectId,
+    getLocalBuffer: excelFileAdapter.getBuffer,
+    getLocalFileName: excelFileAdapter.getFileName,
+    setLocal: excelFileAdapter.setFile,
+    logEvent: logCloudEvent,
+    maxFileSizeBytes: () => (store.config.cloudSyncMaxBinaryFileSizeMB || DEFAULT_MAX_BINARY_FILE_SIZE_MB) * 1024 * 1024,
+  });
+  const blobChannels = [excelFileChannel];
+
+  // Cridada des d'App.vue després que el fitxer Excel local ja s'hagi
+  // substituït i persistit (processExcelFile/bindExcelAsTemplateOnly/
+  // importProjectZip) -- no-op silenciós si no hi ha sincronització
+  // connectada.
+  async function captureExcelFileIfChanged() {
+    if (cloudSyncStatus.value !== 'connected') return;
+    await excelFileChannel.captureIfChanged();
+  }
 
   // Canal `template:<docName>` (Fase 26): a diferència dels quatre d'amunt
   // (sempre vius, abast de PROJECTE sencer), `templateText` és nomÉs el
@@ -494,10 +729,10 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
     cloudProjectId.value = id;
     try {
       if (seed) {
-        await Promise.all(channels.map((c) => c.seedInitial()));
+        await Promise.all([...channels, ...blobChannels].map((c) => c.seedInitial()));
       }
       await startAccessListener();
-      await Promise.all(channels.map((c) => c.startListening()));
+      await Promise.all([...channels, ...blobChannels].map((c) => c.startListening()));
       if (docName) {
         await attachTemplateChannel(docName);
       }
@@ -579,8 +814,12 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
     // Esperat: cal que qualsevol captura local pendent flushada per
     // `stopListening` acabi de llegir `cloudProjectId.value` ABANS que la
     // línia de sota el posi a `null` -- vegeu el comentari de
-    // `stopListening` per a la carrera exacta que això evita.
-    await Promise.all(channels.map((c) => c.stopListening()));
+    // `stopListening` per a la carrera exacta que això evita. Els canals de
+    // blob (Fase 28) no tenen cap captura pendent a flushejar (la captura
+    // és esdevinguda, no temporitzada) -- el seu `stopListening()` només
+    // desconnecta l'`onSnapshot`, però s'inclouen igualment aquí perquè
+    // quedin aturats en canviar/desactivar, com qualsevol altre canal.
+    await Promise.all([...channels, ...blobChannels].map((c) => c.stopListening()));
     await detachTemplateChannel();
     stopAccessListener();
     cloudProjectId.value = null;
@@ -625,7 +864,7 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
       // deactivateCloudSync(), pel mateix motiu -- vegeu els seus
       // comentaris.
       cloudSyncStatus.value = 'disabled';
-      await Promise.all(channels.map((c) => c.stopListening()));
+      await Promise.all([...channels, ...blobChannels].map((c) => c.stopListening()));
       await detachTemplateChannel();
       stopAccessListener();
       cloudProjectId.value = null;
@@ -674,5 +913,6 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule) {
     addProjectMember,
     removeProjectMember,
     bindCloudTemplateDocument,
+    captureExcelFileIfChanged,
   };
 }

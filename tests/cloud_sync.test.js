@@ -56,7 +56,16 @@ function makeFakeFirestoreBackend() {
   const docsStore = new Map(); // path -> plain object
   const docListeners = new Map(); // path -> Set<fn>
   const collectionListeners = new Map(); // collectionPath -> Set<fn>
-  const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+  // `clone` ha de sobreviure un camp `Bytes` (Fase 28, un objecte amb
+  // `.toUint8Array()`, mai JSON-serialitzable tal qual -- `JSON.stringify`
+  // descartaria el mètode en silenci) -- el replacer/reviver el tradueix a
+  // un array pla de números pel mig, i el reconstrueix com el MATEIX tipus
+  // d'objecte (`{toUint8Array}`) en sortir. Transparent per a qualsevol
+  // altra dada (mai hi ha cap `toUint8Array` en un valor JSON normal).
+  const clone = (v) => (v === undefined ? undefined : JSON.parse(
+    JSON.stringify(v, (_k, val) => (val && typeof val.toUint8Array === 'function') ? { __bytesArray: Array.from(val.toUint8Array()) } : val),
+    (_k, val) => (val && Array.isArray(val.__bytesArray)) ? { toUint8Array: () => new Uint8Array(val.__bytesArray) } : val,
+  ));
 
   function permissionDenied(message) {
     const err = new Error(message || 'Missing or insufficient permissions.');
@@ -207,22 +216,43 @@ function makeFakeFirestoreBackend() {
       },
 
       writeBatch() {
-        const deletions = [];
+        const ops = [];
         return {
-          delete(ref) { deletions.push(ref.path); },
+          delete(ref) { ops.push({ type: 'delete', path: ref.path }); },
+          // Fase 28: `uploadBuffer` (useCloudSync.js) escriu la meta + TOTS
+          // els chunks d'un fitxer binari en un sol batch atòmic -- calia
+          // `set` aquí, `writeBatch` abans només admetia `delete` (prou per
+          // a la compactació de deltes, que és l'únic ús que en feien fins
+          // ara els canals JSON).
+          set(ref, data) { ops.push({ type: 'set', path: ref.path, data }); },
           async commit() {
             const touchedCollections = new Set();
-            deletions.forEach((path) => {
-              docsStore.delete(path);
-              touchedCollections.add(path.slice(0, path.lastIndexOf('/')));
-            });
+            for (const op of ops) {
+              if (op.type === 'delete') {
+                docsStore.delete(op.path);
+              } else {
+                if (!isMember(op.path, email)) throw permissionDenied();
+                docsStore.set(op.path, clone(op.data));
+              }
+              touchedCollections.add(op.path.slice(0, op.path.lastIndexOf('/')));
+            }
             touchedCollections.forEach((c) => notifyCollection(c));
+            // Qualsevol `set` sobre un document concret (p. ex. la meta
+            // d'un canal de blob) també ha de notificar el seu propi
+            // `onSnapshot` de DOCUMENT, no només el de la col·lecció que el
+            // conté -- mateix criteri que `notifyDoc` ja fa per a `setDoc`.
+            ops.filter((op) => op.type === 'set').forEach((op) => notifyDoc(op.path));
           },
         };
       },
 
       arrayUnion: (...values) => ({ __op: ARRAY_UNION, values }),
       arrayRemove: (...values) => ({ __op: ARRAY_REMOVE, values }),
+      // Fase 28: mínim fals de `Bytes` (el tipus natiu de Firestore per a
+      // binari cru) -- en producció `Bytes.fromUint8Array(arr).toUint8Array()`
+      // fa anada i tornada de debò; aquí n'hi ha prou que ho faci també,
+      // sense simular la codificació interna real de Firestore.
+      Bytes: { fromUint8Array: (arr) => ({ toUint8Array: () => arr }) },
     };
     return async () => ({ db: { __fake: true }, mod });
   }
@@ -567,5 +597,125 @@ describe('useCloudSync (Fase 26: canals schema/sheetInfo/hierarchySchema/templat
     await ownerCloud.bindCloudTemplateDocument('Document Principal');
     await flush();
     expect(storeOwner.templateText).toBe('Contingut del document principal');
+  });
+});
+
+// Adaptador fals del fitxer Excel (Fase 28) -- mateix contracte que
+// `excelFileCloudAdapter` a App.vue (`getBuffer`/`getFileName`/`setFile`),
+// amb l'estat en una variable local en lloc d'IndexedDB/`store.excelFile`
+// real, perquè el test en pugui llegir/mutar directament sense dependre de
+// `indexedDB` (no disponible a l'entorn de Vitest).
+function makeExcelFileAdapter(initialBuffer = null, initialFileName = '') {
+  const state = { buffer: initialBuffer, fileName: initialFileName };
+  const adapter = {
+    getBuffer: async () => state.buffer,
+    getFileName: () => state.fileName,
+    setFile: async (buffer, fileName) => { state.buffer = buffer; state.fileName = fileName; },
+  };
+  return { adapter, state };
+}
+
+function bytesOf(buffer) {
+  return buffer ? Array.from(new Uint8Array(buffer)) : null;
+}
+
+describe('useCloudSync (Fase 28.1: canal de fitxer binari excelFile)', () => {
+  it('activateCloudSync sembra el canal excelFile, i un membre que s\'hi uneix rep els MATEIXOS bytes', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const ownerBuffer = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80]).buffer;
+    const { adapter: ownerAdapter } = makeExcelFileAdapter(ownerBuffer, 'prova.xlsx');
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'), { excelFile: ownerAdapter });
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    const meta = backend.docsStore.get(`projects/${id}/channels/excelFile`);
+    expect(meta.fileName).toBe('prova.xlsx');
+    expect(meta.fileSize).toBe(8);
+    expect(meta.totalChunks).toBe(1);
+    const chunk0 = backend.docsStore.get(`projects/${id}/channels/excelFile/chunks/0`);
+    expect(Array.from(chunk0.data.toUint8Array())).toEqual(bytesOf(ownerBuffer));
+
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+
+    setActivePinia(createPinia());
+    const { adapter: memberAdapter, state: memberState } = makeExcelFileAdapter(null, '');
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'), { excelFile: memberAdapter });
+    await memberCloud.joinCloudProject('ProjecteB', id);
+    await flush();
+
+    expect(memberState.fileName).toBe('prova.xlsx');
+    expect(bytesOf(memberState.buffer)).toEqual(bytesOf(ownerBuffer));
+  });
+
+  it('captureExcelFileIfChanged repuja NOMÉS quan el contingut ha canviat de debò', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const { adapter, state } = makeExcelFileAdapter(new Uint8Array([1, 2, 3]).buffer, 'a.xlsx');
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'), { excelFile: adapter });
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+    const metaPath = `projects/${id}/channels/excelFile`;
+    const updatedAtAfterSeed = backend.docsStore.get(metaPath).updatedAt;
+
+    // Mateix contingut -- cap repujada real (comprovat per hash contra el
+    // que ja hi ha al núvol, no per cap variable cau local).
+    await ownerCloud.captureExcelFileIfChanged();
+    await flush();
+    expect(backend.docsStore.get(metaPath).updatedAt).toBe(updatedAtAfterSeed);
+
+    // Contingut realment diferent -- SÍ repuja, amb el hash/fitxers nous.
+    state.buffer = new Uint8Array([9, 9, 9, 9, 9]).buffer;
+    state.fileName = 'a-v2.xlsx';
+    await ownerCloud.captureExcelFileIfChanged();
+    await flush();
+    const metaAfterChange = backend.docsStore.get(metaPath);
+    expect(metaAfterChange.fileName).toBe('a-v2.xlsx');
+    expect(metaAfterChange.updatedAt).not.toBe(updatedAtAfterSeed);
+    const chunk0 = backend.docsStore.get(`${metaPath}/chunks/0`);
+    expect(Array.from(chunk0.data.toUint8Array())).toEqual([9, 9, 9, 9, 9]);
+  });
+
+  it('un fitxer que supera cloudSyncMaxBinaryFileSizeMB es salta amb un avís, sense escriure cap document', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const store = useWorkspaceStore();
+    store.config.cloudSyncMaxBinaryFileSizeMB = 1 / 1024; // ~1 KiB
+    const bigBuffer = new Uint8Array(2048).buffer; // 2 KiB, per sobre del límit
+    const { adapter } = makeExcelFileAdapter(bigBuffer, 'gran.xlsx');
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'), { excelFile: adapter });
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    expect(backend.docsStore.has(`projects/${id}/channels/excelFile`)).toBe(false);
+    expect(ownerCloud.cloudActivityLog.value.some((e) => e.type === 'warning' && /gran\.xlsx/.test(e.text))).toBe(true);
+  });
+
+  it('una verificació d\'integritat incorrecta NO s\'aplica localment -- s\'espera la pròxima actualització', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const { adapter, state } = makeExcelFileAdapter(new Uint8Array([10, 20, 30]).buffer, 'original.xlsx');
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'), { excelFile: adapter });
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    // Corromp el núvol DIRECTAMENT (sense passar per uploadBuffer): un
+    // chunk amb bytes arbitraris, i una meta amb un hash que NO hi coincideix
+    // -- simula una lectura a mitges o una dada malmesa al servidor.
+    const { db, mod } = await backend.createClientFor('owner@test.com')();
+    await mod.setDoc(mod.doc(db, 'projects', id, 'channels', 'excelFile', 'chunks', '0'), {
+      data: mod.Bytes.fromUint8Array(new Uint8Array([1, 1, 1])),
+    });
+    await mod.setDoc(mod.doc(db, 'projects', id, 'channels', 'excelFile'), {
+      fileName: 'corromput.xlsx', fileSize: 3, totalChunks: 1, sha256Hex: 'deadbeef', updatedAt: new Date().toISOString(), updatedBy: 'algú',
+    });
+    await flush();
+
+    // L'estat local NO s'ha tocat -- ni el nom ni els bytes han canviat.
+    expect(state.fileName).toBe('original.xlsx');
+    expect(bytesOf(state.buffer)).toEqual([10, 20, 30]);
+    expect(ownerCloud.cloudActivityLog.value.some((e) => e.type === 'warning' && /integritat/i.test(e.text))).toBe(true);
   });
 });

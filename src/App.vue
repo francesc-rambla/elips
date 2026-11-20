@@ -212,7 +212,31 @@ const handleCloudSignOut = async () => {
 // Fase 25 (veure el pla): motor real de sincronització al núvol -- cada
 // projecte LOCAL pot vincular-se a UN projecte al núvol (document d'accés
 // + canal de dades), mai més d'un alhora.
-const cloudSync = useCloudSync(cloudAuth);
+//
+// Fase 28: adaptador del fitxer Excel d'origen, injectat perquè
+// useCloudSync.js no hagi de tocar mai IndexedDB/`localStorage` directament
+// (seguint el mateix criteri que els canals JSON, que només toquen
+// `store.*`) -- aquest mòdul és qui té `saveBinaryFile`/`currentProjectName`
+// a mà. `setFile` reemplaça NOMÉS el fitxer baixable (IndexedDB + store.excelFile/
+// Name/Size + localStorage), EXPRÉSSAMENT sense tornar a analitzar-lo amb
+// el motor WASM ni tocar `store.excelJsonData`/`editorMetadata` -- aquests
+// ja tenen el seu propi canal sincronitzat (`data`/`schema`), i reprocessar
+// l'Excel rebut els sobreescriuria amb el contingut ESTÀTIC del fitxer en
+// lloc de l'estat ja fusionat/evolucionat.
+const excelFileCloudAdapter = {
+  getBuffer: async () => (store.excelFile ? await store.excelFile.arrayBuffer() : null),
+  getFileName: () => store.excelFileName,
+  setFile: async (buffer, fileName) => {
+    const pName = currentProjectName.value;
+    await saveBinaryFile(`${pName}:excelFileBuffer`, buffer);
+    store.excelFileName = fileName;
+    store.excelFileSize = buffer.byteLength;
+    localStorage.setItem(`${pName}:excelFileName`, fileName);
+    localStorage.setItem(`${pName}:excelFileSize`, String(buffer.byteLength));
+    store.excelFile = new File([buffer], fileName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  },
+};
+const cloudSync = useCloudSync(cloudAuth, undefined, { excelFile: excelFileCloudAdapter });
 const {
   cloudSyncStatus,
   cloudProjectId,
@@ -226,6 +250,7 @@ const {
   addProjectMember: addCloudProjectMember,
   removeProjectMember: removeCloudProjectMember,
   bindCloudTemplateDocument,
+  captureExcelFileIfChanged,
 } = cloudSync;
 window.cloudSync = cloudSync;
 
@@ -1418,6 +1443,17 @@ const importProjectZip = async (file) => {
     let pName = manifest.projectName || file.name.replace(/\.zip$/i, '');
     pName = pName.replace(/[^a-zA-Z0-9_\-\s]/g, '_');
 
+    // Mateixa nota que a createNewProject/loadProject: una sessió en viu o
+    // una sincronització al núvol connectades són del projecte que es deixa
+    // ARA (`currentProjectName.value`, encara no reassignat en aquest punt),
+    // no del que s'acaba d'importar -- si no s'aturessin aquí, el contingut
+    // del projecte IMPORTAT es propagaria cap als canals del projecte
+    // ANTERIOR tan bon punt es netegi/reompli l'store més avall (bug trobat
+    // en revisar l'abast de la Fase 28: aquesta funció no ho feia, a
+    // diferència de les altres dues formes de canviar de projecte).
+    await closeRealtimeForProject();
+    await deactivateCloudSync();
+
     // Flush current active project state before switching
     if (currentProjectName.value && activeDocName.value) {
       saveCurrentProject();
@@ -1509,6 +1545,7 @@ const importProjectZip = async (file) => {
       await saveBinaryFile(`${pName}:excelFileBuffer`, xBuffer);
       const excelFileObj = new File([xBuffer], xFileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       store.excelFile = excelFileObj;
+      captureExcelFileIfChanged();
 
       try {
         if (!store.enginesReady) {
@@ -1855,7 +1892,8 @@ const bindExcelAsTemplateOnly = async (file) => {
   // Save raw ArrayBuffer in IndexedDB
   await saveBinaryFile(`${pName}:excelFileBuffer`, buffer);
   saveCurrentProject();
-  
+  captureExcelFileIfChanged();
+
   try {
     if (!store.enginesReady) {
       await initEngines();
@@ -2031,6 +2069,7 @@ const processExcelFile = async (file) => {
   // Store raw ArrayBuffer in IndexedDB for 100% persistent reload
   await saveBinaryFile(`${pName}:excelFileBuffer`, buffer);
   saveCurrentProject();
+  captureExcelFileIfChanged();
 
   try {
     if (!store.enginesReady) {

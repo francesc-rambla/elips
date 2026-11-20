@@ -155,7 +155,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       // Sincronització al núvol (Fase 25, useCloudSync.js) -- mateix patró
       // que els altres dos transports.
       cloudSyncCaptureDebounceSeconds: parseInt(localStorage.getItem('cloudSyncCaptureDebounceSeconds') || '5', 10),
-      cloudSyncCompactionThreshold: parseInt(localStorage.getItem('cloudSyncCompactionThreshold') || '200', 10)
+      cloudSyncCompactionThreshold: parseInt(localStorage.getItem('cloudSyncCompactionThreshold') || '200', 10),
+      // Fase 28: mida màxima (MiB) d'un fitxer binari (Excel d'origen,
+      // document de referència) que es puja a la sincronització al núvol --
+      // un de més gran se salta amb un avís, per no esgotar el límit
+      // d'emmagatzematge/trànsit gratuït de Firestore amb un sol fitxer.
+      cloudSyncMaxBinaryFileSizeMB: parseInt(localStorage.getItem('cloudSyncMaxBinaryFileSizeMB') || '10', 10)
     }
   }),
   
