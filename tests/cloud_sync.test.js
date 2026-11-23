@@ -878,3 +878,105 @@ describe('useCloudSync (Fase 28.3: canal refDoc:<docName>)', () => {
     expect(bytesOf(ownerRefState.buffer)).toEqual([1, 2, 3]);
   });
 });
+
+describe('useCloudSync (Fase 29: evita la fuita de listeners en canviar de projecte vinculat)', () => {
+  it('unir-se a un projecte d\'una altra persona SENSE desactivar primer no deixa el projecte anterior "revertint" les dades', async () => {
+    const backend = makeFakeFirestoreBackend();
+
+    // Projecte propi de l'"owner", ja connectat.
+    const storeOwner = useWorkspaceStore();
+    storeOwner.excelJsonData = { marcador: 'X' };
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const idX = await ownerCloud.activateCloudSync('ProjecteX');
+    await flush();
+    expect(storeOwner.excelJsonData).toEqual({ marcador: 'X' });
+
+    // Projecte d'una altra persona, amb l'owner afegit com a membre.
+    setActivePinia(createPinia());
+    const storeOther = useWorkspaceStore();
+    storeOther.excelJsonData = { marcador: 'Y' };
+    const otherAuth = makeCloudAuth('altra@test.com');
+    const otherCloud = useCloudSync(otherAuth, backend.createClientFor('altra@test.com'));
+    const idY = await otherCloud.activateCloudSync('ProjecteY');
+    await flush();
+    await otherCloud.addProjectMember('owner@test.com');
+    await flush();
+
+    // L'owner s'uneix al projecte Y SENSE haver cridat deactivateCloudSync()
+    // -- exactament l'escenari reportat: un dispositiu amb sincronització
+    // pròpia ja activa que s'uneix a un altre projecte.
+    await ownerCloud.joinCloudProject('ProjecteB', idY, 'Document Principal');
+    await flush();
+    expect(storeOwner.excelJsonData).toEqual({ marcador: 'Y' });
+
+    // Prova directa que el listener del projecte X ja no hi és: un canvi
+    // fet DIRECTAMENT al canal `data` de X al servidor (sense passar per
+    // ownerCloud) no hauria d'arribar mai a storeOwner -- si el listener
+    // vell encara hi fos penjat, el rebria i el "revertiria".
+    const { db, mod } = await backend.createClientFor('owner@test.com')();
+    await mod.setDoc(mod.doc(db, 'projects', idX, 'channels', 'data'), {
+      snapshot: { marcador: 'X-CANVIAT-DESPRÉS' }, updatedAt: new Date().toISOString(), updatedBy: 'algú',
+    });
+    await flush();
+
+    expect(storeOwner.excelJsonData).toEqual({ marcador: 'Y' });
+  });
+
+  it('dues operacions de vinculació llançades gairebé alhora (sense esperar la primera) convergeixen a l\'última cridada, sense dades corruptes', async () => {
+    // Escenari plausible (no confirmat com la causa exacta de l'usuari,
+    // però real i reproduïble): signar-se pot disparar TANT el watcher de
+    // reconnexió transparent (Fase 27, si aquest projecte local ja tenia
+    // un `cloudProjectId` desat d'una sessió de proves anterior) COM,
+    // gairebé a l'instant, un clic manual a "Uneix-te" a un ALTRE
+    // projecte -- dues crides a bindToProject() sense que l'una esperi
+    // l'altra. Aquest test confirma que, en aquest entorn, totes dues
+    // criden a través de la mateixa cua interna (`enqueueCloudOp`) i el
+    // resultat final és consistent amb la DARRERA crida -- no demostra
+    // adversarialment cada possible intercalació temporal (hauria de
+    // manipular els temps interns de Firestore per forçar-ho), però sí
+    // que la cua no introdueix cap vol/estat inconsistent en l'ús normal.
+    const backend = makeFakeFirestoreBackend();
+    const storeOwner = useWorkspaceStore();
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const idX = await ownerCloud.activateCloudSync('ProjecteX');
+    await flush();
+    await ownerCloud.deactivateCloudSync();
+
+    setActivePinia(createPinia());
+    const storeOther = useWorkspaceStore();
+    storeOther.excelJsonData = { marcador: 'Y' };
+    const otherAuth = makeCloudAuth('altra@test.com');
+    const otherCloud = useCloudSync(otherAuth, backend.createClientFor('altra@test.com'));
+    const idY = await otherCloud.activateCloudSync('ProjecteY');
+    await flush();
+    await otherCloud.addProjectMember('owner@test.com');
+    await flush();
+
+    setActivePinia(createPinia());
+    const storeOwner2 = useWorkspaceStore();
+    const ownerCloud2 = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    // Totes dues LLANÇADES alhora, SENSE esperar la primera -- la cua
+    // interna (Fase 29) les ha d'executar en sèrie, en l'ordre de crida,
+    // mai barrejades.
+    const callA = ownerCloud2.activateCloudSync('ProjecteX');
+    const callB = ownerCloud2.joinCloudProject('ProjecteY2', idY);
+    await Promise.all([callA, callB]);
+    await flush();
+
+    expect(ownerCloud2.cloudProjectId.value).toBe(idY);
+    expect(ownerCloud2.cloudSyncStatus.value).toBe('connected');
+    expect(storeOwner2.excelJsonData).toEqual({ marcador: 'Y' });
+
+    // Cap reversió posterior -- un canvi directe al projecte X no hauria
+    // d'arribar mai (el seu listener, si l'hi hagués arribat a haver,
+    // hauria quedat aturat per la serialització).
+    const { db, mod } = await backend.createClientFor('owner@test.com')();
+    await mod.setDoc(mod.doc(db, 'projects', idX, 'channels', 'data'), {
+      snapshot: { marcador: 'X-CANVIAT-DESPRÉS' }, updatedAt: new Date().toISOString(), updatedBy: 'algú',
+    });
+    await flush();
+    expect(storeOwner2.excelJsonData).toEqual({ marcador: 'Y' });
+  });
+});

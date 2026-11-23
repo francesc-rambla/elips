@@ -834,7 +834,59 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     return !!email && !!projectAccess.value && normalizeEmail(projectAccess.value.ownerEmail) === email;
   }
 
-  async function bindToProject(projectName, id, { seed, docName } = { seed: false, docName: null }) {
+  // Fase 29: abans de vincular-se a CAP projecte (sigui activar-ne un de
+  // propi o unir-se al d'una altra persona), cal assegurar-se que no hi
+  // quedi res d'una vinculació ANTERIOR encara actiu. Sense això, un
+  // dispositiu que ja tingués la seva pròpia sincronització connectada i
+  // que tot seguit s'unís a un ALTRE projecte deixava els listeners VELLS
+  // penjats (mai es cridava el seu `unsub...()`, només es reassignaven
+  // les variables), encara reaccionant al projecte ANTERIOR i competint
+  // amb els nous sobre el MATEIX estat intern compartit de cada canal
+  // (`baseline`/`deltaDocs`/`lastMergedState`) -- depenent de l'ordre
+  // d'arribada dels `onSnapshot`, el contingut final podia "revertir"
+  // silenciosament al del projecte anterior. Bug confirmat en ús real
+  // (vegeu el pla, Fase 29) -- `teardownChannels()` és la mateixa
+  // seqüència que `deactivateCloudSync()` ja fa servir, sense tocar
+  // `localStorage` (oblidar la credencial és sempre decisió d'una capa
+  // per sobre).
+  async function teardownChannels() {
+    await Promise.all([...channels, ...blobChannels].map((c) => c.stopListening()));
+    await detachTemplateChannel();
+    detachRefDocChannel();
+    stopAccessListener();
+    cloudProjectId.value = null;
+  }
+
+  // Fase 29: `bindToProject`/`deactivateCloudSync`/el watcher de tancament
+  // de sessió poden ser cridats des de MÉS D'UN camí alhora sense que
+  // l'usuari hagi fet doble clic en res -- p. ex. signar-se just en obrir
+  // el panell de col·laboració dispara TANT el watcher de
+  // `cloudCurrentUser` (que intenta una reconnexió transparent, Fase 27,
+  // si aquest projecte local ja tenia un `cloudProjectId` desat d'una
+  // sessió de proves anterior) COM, gairebé a l'instant, un clic manual a
+  // "Uneix-te" a un projecte DIFERENT. Com que `cloudProjectId` és un únic
+  // ref COMPARTIT per tots els canals (llegit a `channelRefs()` en cada
+  // operació, no capturat un sol cop), dues d'aquestes operacions EN CURS
+  // alhora es trepitgen l'una a l'altra -- `teardownChannels()` per si sol
+  // no basta si totes dues criden abans que l'altra hagi acabat. Aquesta
+  // cua serialitza TOTES les operacions que toquen la vinculació al
+  // núvol -- mai se'n solapen dues, siguin quin sigui el seu origen.
+  let cloudOpQueue = Promise.resolve();
+  function enqueueCloudOp(fn) {
+    const run = cloudOpQueue.then(fn);
+    // Encadenat perquè la PRÒXIMA operació esperi aquesta, tant si acaba bé
+    // com si falla -- un error en una no ha de bloquejar-ne cap de
+    // posterior.
+    cloudOpQueue = run.catch(() => {});
+    return run;
+  }
+
+  function bindToProject(projectName, id, opts = { seed: false, docName: null }) {
+    return enqueueCloudOp(() => bindToProjectNow(projectName, id, opts));
+  }
+
+  async function bindToProjectNow(projectName, id, { seed, docName } = { seed: false, docName: null }) {
+    await teardownChannels();
     cloudSyncStatus.value = 'connecting';
     cloudProjectId.value = id;
     try {
@@ -873,7 +925,9 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
       ownerEmail: email,
       memberEmails: [email],
     });
-    cloudProjectId.value = id;
+    // `cloudProjectId.value` no cal fixar-lo aquí -- `bindToProject` ja ho
+    // fa com el seu propi primer pas (després de `teardownChannels()`,
+    // Fase 29); fixar-lo abans només seria sobreescrit de seguida.
     await bindToProject(projectName, id, { seed: true, docName });
     logCloudEvent("S'ha activat la sincronització al núvol per a aquest projecte.", 'success');
     return id;
@@ -912,29 +966,21 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
   // `closeRealtimeForProject()` (canvi de projecte, preserva la credencial)
   // davant `handleStopRealtimeSession()` (desconnexió manual, l'oblida) ja
   // estableix per a la sessió en viu, Fase 15/16.
-  async function deactivateCloudSync() {
-    // Es posa a 'disconnected'/'disabled' ABANS d'esperar res de sota
-    // (Fase 27): els `watchChannelCapture`/el watcher de `templateText`
-    // comproven `cloudSyncStatus.value !== 'connected'` abans de programar
-    // CAP captura nova -- si es canviés DESPRÉS dels `await`, un d'aquests
-    // watchers podria disparar-se durant la finestra d'espera i programar
-    // una captura nova sobre un canal que s'està aturant ara mateix. NO
-    // afecta el flush de la captura JA pendent de sota (aquell es dispara
-    // directament des de `stopListening`, no passa per aquest senyalador).
+  function deactivateCloudSync() {
+    // Es posa a 'disconnected'/'disabled' IMMEDIATAMENT, SÍNCRONAMENT,
+    // abans d'encuar res (Fase 27, mantingut a la Fase 29): els
+    // `watchChannelCapture`/el watcher de `templateText` comproven
+    // `cloudSyncStatus.value !== 'connected'` abans de programar CAP
+    // captura nova -- si això s'ajornés fins que la cua hi arribés, un
+    // d'aquests watchers podria disparar-se durant l'espera i programar
+    // una captura nova sobre un canal que està a punt d'aturar-se. NO
+    // afecta el flush de la captura JA pendent de dins `teardownChannels`
+    // (es dispara directament des de `stopListening`, no passa per aquest
+    // senyalador). L'aturada real dels canals SÍ s'encua (Fase 29): si
+    // hi ha una vinculació en curs, es deixa acabar abans d'aturar-la,
+    // mai interromput a mig fer.
     cloudSyncStatus.value = cloudAuth.currentUser.value ? 'disconnected' : 'disabled';
-    // Esperat: cal que qualsevol captura local pendent flushada per
-    // `stopListening` acabi de llegir `cloudProjectId.value` ABANS que la
-    // línia de sota el posi a `null` -- vegeu el comentari de
-    // `stopListening` per a la carrera exacta que això evita. Els canals de
-    // blob (Fase 28) no tenen cap captura pendent a flushejar (la captura
-    // és esdevinguda, no temporitzada) -- el seu `stopListening()` només
-    // desconnecta l'`onSnapshot`, però s'inclouen igualment aquí perquè
-    // quedin aturats en canviar/desactivar, com qualsevol altre canal.
-    await Promise.all([...channels, ...blobChannels].map((c) => c.stopListening()));
-    await detachTemplateChannel();
-    detachRefDocChannel();
-    stopAccessListener();
-    cloudProjectId.value = null;
+    return enqueueCloudOp(() => teardownChannels());
   }
 
   async function addProjectMember(email) {
@@ -969,18 +1015,13 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
   // cada listener falli pel seu compte. NO toca `localStorage`: un inici
   // de sessió posterior pot tornar a vincular-s'hi manualment (la
   // reconnexió transparent en carregar la pàgina és la Fase 27).
-  watch(cloudAuth.currentUser, async (user) => {
+  watch(cloudAuth.currentUser, (user) => {
     if (!user) {
-      // Mateix ordre (cloudSyncStatus abans dels `await`, igual que els
-      // flushos esperant abans de tocar cloudProjectId) que
-      // deactivateCloudSync(), pel mateix motiu -- vegeu els seus
-      // comentaris.
+      // Mateix criteri que deactivateCloudSync() -- cloudSyncStatus
+      // síncron de seguida, l'aturada real dels canals encuada (Fase 29)
+      // -- vegeu els seus comentaris.
       cloudSyncStatus.value = 'disabled';
-      await Promise.all([...channels, ...blobChannels].map((c) => c.stopListening()));
-      await detachTemplateChannel();
-      detachRefDocChannel();
-      stopAccessListener();
-      cloudProjectId.value = null;
+      enqueueCloudOp(() => teardownChannels());
     } else if (cloudSyncStatus.value === 'disabled') {
       cloudSyncStatus.value = 'disconnected';
     }
