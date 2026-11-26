@@ -1084,16 +1084,48 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     }
   }
 
+  // Fase 30, reforç: un projecte vinculat ABANS que aquesta fase existís té
+  // un `_access/doc` sense `projectName` i cap entrada pròpia a
+  // `userProjects/` -- totes dues només s'escrivien en CREAR el projecte
+  // (branca nova, més avall), mai en RECONNECTAR-s'hi (branca `existing`,
+  // l'únic camí que seguirà sempre un projecte ja vinculat d'una sessió
+  // anterior) -- sense això, el projecte reconnecta i sincronitza
+  // perfectament, però queda invisible per sempre a "Projectes als quals
+  // tens accés", fins i tot per al seu propi propietari. Es repara aquí,
+  // de manera "best-effort" i idempotent, cada vegada que es reconnecta --
+  // sense cap migració separada. Només el propietari pot escriure
+  // `_access/doc` (regla de seguretat), així que la manca de `projectName`
+  // només es corregeix quan és ELL qui reconnecta; qualsevol membre
+  // (propietari o no) sempre pot refer la SEVA PRÒPIA entrada a
+  // `userProjects/`.
+  async function backfillUserProjectIndex(projectId, email, localProjectName) {
+    try {
+      const { db, mod } = await getDb();
+      const accessSnap = await mod.getDoc(mod.doc(db, 'projects', projectId, '_access', 'doc'));
+      if (!accessSnap.exists()) return;
+      const data = accessSnap.data();
+      const canonicalName = data.projectName || localProjectName;
+      if (!data.projectName && data.ownerEmail === email) {
+        await mod.updateDoc(mod.doc(db, 'projects', projectId, '_access', 'doc'), { projectName: canonicalName });
+      }
+      await writeUserProjectIndexEntry(email, projectId, canonicalName, data.ownerEmail);
+    } catch (e) {
+      // Best-effort -- mai bloqueja la reconnexió normal si falla (p. ex.
+      // una regla de seguretat vella encara no actualitzada en algun entorn).
+    }
+  }
+
   async function activateCloudSync(projectName, docName) {
     if (!cloudAuth.currentUser.value) {
       throw new Error('Cal iniciar sessió al núvol abans d\'activar la sincronització.');
     }
+    const email = normalizeEmail(cloudAuth.currentUser.value.email);
     const existing = localStorage.getItem(`${projectName}:cloudProjectId`);
     if (existing) {
       await bindToProject(projectName, existing, { seed: false, docName });
+      await backfillUserProjectIndex(existing, email, projectName);
       return existing;
     }
-    const email = normalizeEmail(cloudAuth.currentUser.value.email);
     const id = crypto.randomUUID();
     const { db, mod } = await getDb();
     // Fase 30: `projectName` -- el nom LOCAL del projecte en aquest

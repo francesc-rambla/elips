@@ -1182,6 +1182,62 @@ describe('useCloudSync (Fase 30: identitat real del projecte + índex "projectes
     const { db, mod } = await backend.createClientFor('estrany@test.com')();
     await expect(mod.getDocs(mod.collection(db, 'userProjects', 'owner@test.com', 'projects'))).rejects.toMatchObject({ code: 'permission-denied' });
   });
+
+  it('un projecte vinculat ABANS d\'aquesta fase (sense projectName ni entrada a l\'índex) es repara en reconnectar-s\'hi', async () => {
+    // Simula l'estat real d'un projecte que ja estava vinculat abans que
+    // aquesta fase existís: `_access/doc` sense `projectName`, cap entrada
+    // a `userProjects/`, i el vincle local ja present a `localStorage`
+    // (mai creat via `activateCloudSync`, que és l'únic lloc que escrivia
+    // totes dues coses -- i només en la branca de creació, mai en
+    // reconnectar).
+    const backend = makeFakeFirestoreBackend();
+    const preExistingId = 'projecte-anterior-a-fase-30';
+    backend.docsStore.set(`projects/${preExistingId}/_access/doc`, {
+      ownerEmail: 'owner@test.com',
+      memberEmails: ['owner@test.com'],
+      // deliberadament sense `projectName`
+    });
+    localStorage.setItem('ProjecteAntic:cloudProjectId', preExistingId);
+
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+
+    // En absència de la reparació, aquesta reconnexió seguiria la branca
+    // `existing` d'`activateCloudSync` SENSE escriure mai `projectName` ni
+    // l'entrada a l'índex -- `listMyCloudProjects()` quedaria buit per
+    // sempre, encara que reconnecti una i altra vegada.
+    const returnedId = await ownerCloud.activateCloudSync('ProjecteAntic');
+    await flush();
+
+    expect(returnedId).toBe(preExistingId);
+    expect(backend.docsStore.get(`projects/${preExistingId}/_access/doc`).projectName).toBe('ProjecteAntic');
+    expect(await ownerCloud.listMyCloudProjects()).toEqual([
+      { projectId: preExistingId, projectName: 'ProjecteAntic', ownerEmail: 'owner@test.com' },
+    ]);
+  });
+
+  it('un MEMBRE (no propietari) d\'un projecte antic refà la seva pròpia entrada a l\'índex en reconnectar-s\'hi, sense tocar `_access/doc`', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const preExistingId = 'projecte-antic-compartit';
+    backend.docsStore.set(`projects/${preExistingId}/_access/doc`, {
+      ownerEmail: 'owner@test.com',
+      memberEmails: ['owner@test.com', 'membre@test.com'],
+      projectName: 'Projecte Antic Compartit', // el propietari ja l'ha reparat
+    });
+    localStorage.setItem('CopiaDelMembre:cloudProjectId', preExistingId);
+
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'));
+    await memberCloud.activateCloudSync('CopiaDelMembre');
+    await flush();
+
+    expect(await memberCloud.listMyCloudProjects()).toEqual([
+      { projectId: preExistingId, projectName: 'Projecte Antic Compartit', ownerEmail: 'owner@test.com' },
+    ]);
+    // Un membre no té permís d'escriure `_access/doc` -- confirma que no
+    // s'hi ha intentat tocar res (seguiria igual, però ho fem explícit).
+    expect(backend.docsStore.get(`projects/${preExistingId}/_access/doc`).projectName).toBe('Projecte Antic Compartit');
+  });
 });
 
 describe('useCloudSync (Fase 32: indicador de progrés durant la sincronització inicial)', () => {
