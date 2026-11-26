@@ -63,6 +63,13 @@ const props = defineProps({
   cloudActivityLog: { type: Array, default: () => [] },
   cloudProjectAccess: { type: Object, default: null }, // {ownerEmail, memberEmails}
   isCloudProjectOwner: { type: Boolean, default: false },
+  // Fase 30/31: projectes als quals aquest correu té accés
+  // ({projectId, projectName, ownerEmail}[]), per mostrar-los pel seu nom
+  // real -- independent de si AQUEST projecte local ja n'és un.
+  myCloudProjects: { type: Array, default: () => [] },
+  // Fase 32: cert mentre s'espera la primera instantània de cada canal
+  // just després d'activar/unir-se -- vegeu useCloudSync.js.
+  cloudIsApplyingInitialSync: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -70,7 +77,7 @@ const emit = defineEmits([
   'start-realtime-session', 'join-realtime-session', 'stop-realtime-session',
   'request-project-transfer', 'cloud-sign-in', 'cloud-sign-out',
   'activate-cloud-sync', 'join-cloud-project', 'deactivate-cloud-sync',
-  'add-cloud-project-member', 'remove-cloud-project-member',
+  'add-cloud-project-member', 'remove-cloud-project-member', 'open-cloud-project',
 ]);
 
 const nameInput = ref(props.displayName);
@@ -151,6 +158,11 @@ const submitAddCloudMember = () => {
   cloudNewMemberInput.value = '';
 };
 
+// Fase 33: tres pestanyes independents per als tres transports -- abans una
+// sola columna apilada. El camp de nom (compartit) es manté per sobre,
+// fora de les pestanyes.
+const activeTab = ref('folder'); // 'folder' | 'realtime' | 'cloud'
+
 const copyToClipboard = async (text) => {
   try {
     await navigator.clipboard.writeText(text);
@@ -191,12 +203,21 @@ const copyToClipboard = async (text) => {
           </div>
         </div>
 
+        <!-- Fase 33: una pestanya per transport -- cadascuna mostra NOMÉS
+             la seva pròpia secció/configuració. -->
+        <div style="padding: 0 1.25rem; display: flex; gap: 4px; border-bottom: 1px solid var(--border-color);">
+          <button type="button" class="office-tab-btn" :class="{ active: activeTab === 'folder' }" @click="activeTab = 'folder'">📁 Carpeta compartida</button>
+          <button type="button" class="office-tab-btn" :class="{ active: activeTab === 'realtime' }" @click="activeTab = 'realtime'">📡 Sessió en viu</button>
+          <button type="button" class="office-tab-btn" :class="{ active: activeTab === 'cloud' }" @click="activeTab = 'cloud'">☁️ Sincronització al núvol</button>
+        </div>
+
+        <div v-show="activeTab === 'folder'" style="display: flex; flex-direction: column; gap: 1rem;">
         <template v-if="!isCollabSupported">
           <p style="font-size: 0.85rem; color: var(--text-secondary); padding: 0 1.25rem;">
             La col·laboració via <strong>carpeta compartida</strong> (p. ex. dins el vostre OneDrive
             sincronitzat) requereix la File System Access API del navegador, disponible
             només a <strong>Chrome</strong> i <strong>Edge</strong>. La <strong>sessió en viu
-            (WebRTC)</strong> de més avall funciona igualment en aquest navegador.
+            (WebRTC)</strong> de la pestanya corresponent funciona igualment en aquest navegador.
           </p>
         </template>
         <template v-else>
@@ -270,12 +291,13 @@ const copyToClipboard = async (text) => {
             </div>
           </div>
         </template>
+        </div>
 
         <!-- Sessió en viu (WebRTC) -- funciona a qualsevol navegador, no
              gated per isCollabSupported (això és específic de la carpeta,
              que necessita la File System Access API). Pot coexistir amb
              la carpeta compartida sense coordinar-s'hi. -->
-        <div style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+        <div v-show="activeTab === 'realtime'" style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 8px; padding-top: 1rem;">
           <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary);">📡 Sessió en viu (WebRTC)</span>
           <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0;">
             Edició en temps real amb qualsevol navegador, sense carpeta compartida.
@@ -403,9 +425,9 @@ const copyToClipboard = async (text) => {
 
         <!-- Sincronització al núvol (Firebase) -- Fase 24 (autenticació) +
              Fase 25 (document d'accés per projecte + canal de dades real).
-             Vegeu el pla per a les Fases 26-27 (resta de canals, auto-
-             reconnexió transparent). -->
-        <div style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+             Vegeu el pla per a les Fases 26-33 (resta de canals, identitat
+             real del projecte, selector, indicador de progrés). -->
+        <div v-show="activeTab === 'cloud'" style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 8px; padding-top: 1rem;">
           <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary);">☁️ Sincronització al núvol</span>
 
           <template v-if="cloudAuthStatus === 'unconfigured'">
@@ -436,6 +458,13 @@ const copyToClipboard = async (text) => {
               </div>
               <div v-if="cloudSyncStatus === 'error' && cloudSyncError" style="font-size: 0.78rem; color: var(--color-danger, #dc2626);">
                 {{ cloudSyncError }}
+              </div>
+              <!-- Fase 32: una activació/unió que trigui uns segons (o més,
+                   en connexions lentes) mai ha de semblar que ha fallat en
+                   silenci -- cloudSyncStatus encara és 'connecting' mentre
+                   dura. -->
+              <div v-if="cloudIsApplyingInitialSync" style="font-size: 0.78rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px;">
+                ⏳ Sincronitzant el contingut inicial... pot trigar uns segons.
               </div>
 
               <template v-if="cloudSyncStatus === 'connected'">
@@ -480,8 +509,30 @@ const copyToClipboard = async (text) => {
                 <button class="btn btn-primary" style="width: auto; padding: 6px 14px; font-size: 0.8rem; align-self: flex-start;" @click="emit('activate-cloud-sync')">
                   ☁️ Activa la sincronització per a aquest projecte
                 </button>
+
+                <!-- Fase 31: llistat pel nom real -- per sobre del camp
+                     d'enganxar un identificador, que queda com a reserva
+                     (p. ex. si encara no ets a la llista perquè t'acaben
+                     d'afegir i no has tornat a obrir aquest panell). -->
+                <div v-if="myCloudProjects.length" style="display: flex; flex-direction: column; gap: 6px; margin-top: 8px; border-top: 1px solid var(--border-color); padding-top: 8px;">
+                  <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">Projectes als quals tens accés</span>
+                  <div v-for="proj in myCloudProjects" :key="proj.projectId" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem; gap: 8px;">
+                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                      {{ proj.projectName }}
+                      <span style="font-size: 0.7rem; color: var(--text-muted);">({{ proj.ownerEmail === cloudCurrentUserEmail ? 'el teu' : proj.ownerEmail }})</span>
+                    </span>
+                    <button
+                      class="btn btn-secondary"
+                      style="width: auto; padding: 3px 10px; font-size: 0.74rem; flex-shrink: 0;"
+                      @click="emit('open-cloud-project', proj.projectId, proj.projectName)"
+                    >
+                      Obre
+                    </button>
+                  </div>
+                </div>
+
                 <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
-                  <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);">O uneix-te a un projecte al núvol existent</label>
+                  <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);">O uneix-te amb un identificador</label>
                   <input
                     type="text"
                     v-model="cloudJoinIdInput"

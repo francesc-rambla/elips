@@ -84,6 +84,10 @@ function makeFakeFirestoreBackend() {
     const parts = path.split('/');
     return `projects/${parts[1]}/_access/doc`;
   }
+  function isMemberOfProject(projectId, email) {
+    const access = docsStore.get(`projects/${projectId}/_access/doc`);
+    return !!access && !!email && access.memberEmails.includes(email);
+  }
   function isMember(path, email) {
     const access = docsStore.get(accessPathFor(path));
     return !!access && !!email && access.memberEmails.includes(email);
@@ -91,6 +95,20 @@ function makeFakeFirestoreBackend() {
   function isOwner(path, email) {
     const access = docsStore.get(accessPathFor(path));
     return !!access && !!email && access.ownerEmail === email;
+  }
+  // Fase 30: `userProjects/{userEmail}/projects/{projectId}` -- mateixa
+  // forma de regla real (vegeu el pla): lectura NOMÉS pel propi usuari
+  // (`userEmail` = segment 1 del camí), escriptura per qualsevol membre
+  // LEGÍTIM del projecte en qüestió (`projectId` = segment 3) -- mai pel
+  // "camí" genèric `isMember(path, email)` de dalt, que assumeix
+  // `projects/{id}/...` (aquí el projectId no és el segment 1).
+  function isUserProjectsDocPath(path) {
+    const parts = path.split('/');
+    return parts.length === 4 && parts[0] === 'userProjects' && parts[2] === 'projects';
+  }
+  function isUserProjectsCollectionPath(path) {
+    const parts = path.split('/');
+    return parts.length === 3 && parts[0] === 'userProjects' && parts[2] === 'projects';
   }
 
   function notifyDoc(path) {
@@ -134,6 +152,9 @@ function makeFakeFirestoreBackend() {
           } else if (!isOwner(ref.path, email)) {
             throw permissionDenied();
           }
+        } else if (isUserProjectsDocPath(ref.path)) {
+          const projectId = ref.path.split('/')[3];
+          if (!isMemberOfProject(projectId, email)) throw permissionDenied();
         } else if (!isMember(ref.path, email)) {
           throw permissionDenied();
         }
@@ -144,6 +165,9 @@ function makeFakeFirestoreBackend() {
       async getDoc(ref) {
         if (isAccessDocPath(ref.path)) {
           if (docsStore.has(ref.path) && !isMember(ref.path, email)) throw permissionDenied();
+        } else if (isUserProjectsDocPath(ref.path)) {
+          const userEmail = ref.path.split('/')[1];
+          if (userEmail !== email) throw permissionDenied();
         } else if (!isMember(ref.path, email)) {
           throw permissionDenied();
         }
@@ -151,8 +175,22 @@ function makeFakeFirestoreBackend() {
         return { exists: () => docsStore.has(ref.path), data: () => clone(data) };
       },
 
+      async deleteDoc(ref) {
+        if (isUserProjectsDocPath(ref.path)) {
+          const projectId = ref.path.split('/')[3];
+          if (!isMemberOfProject(projectId, email)) throw permissionDenied();
+        } else if (!isMember(ref.path, email)) {
+          throw permissionDenied();
+        }
+        docsStore.delete(ref.path);
+        notifyDoc(ref.path);
+      },
+
       async getDocs(collRef) {
-        if (!isMember(collRef.path, email)) throw permissionDenied();
+        if (isUserProjectsCollectionPath(collRef.path)) {
+          const userEmail = collRef.path.split('/')[1];
+          if (userEmail !== email) throw permissionDenied();
+        } else if (!isMember(collRef.path, email)) throw permissionDenied();
         const children = childDocsOf(collRef.path);
         return { forEach: (fn) => children.forEach((d) => fn({ data: () => clone(d.data), ref: { path: d.path } })) };
       },
@@ -293,6 +331,7 @@ describe('useCloudSync (Fase 25: document d\'accés + canal de dades al núvol)'
     expect(backend.docsStore.get(`projects/${id}/_access/doc`)).toEqual({
       ownerEmail: 'owner@test.com',
       memberEmails: ['owner@test.com'],
+      projectName: 'ProjecteA',
     });
     expect(backend.docsStore.get(`projects/${id}/channels/data`).snapshot).toEqual({ General: { nom: 'Expedient 1' } });
     expect(localStorage.getItem('ProjecteA:cloudProjectId')).toBe(id);
@@ -1090,5 +1129,128 @@ describe('useCloudSync (Fase 29, reforç: un document ja existent mai es re-semb
     // El contingut local del membre, no relacionat amb cap projecte
     // compartit, es manté intacte -- no s'ha enviat enlloc.
     expect(storeMember.templateText).toBe('Contingut local del membre, document inexistent al núvol');
+  });
+});
+
+describe('useCloudSync (Fase 30: identitat real del projecte + índex "projectes als quals tinc accés")', () => {
+  it('el propietari veu la seva pròpia entrada, pel nom real del projecte, just en activar-se', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('El Meu Projecte Real');
+    await flush();
+
+    expect(backend.docsStore.get(`projects/${id}/_access/doc`).projectName).toBe('El Meu Projecte Real');
+    const mine = await ownerCloud.listMyCloudProjects();
+    expect(mine).toEqual([{ projectId: id, projectName: 'El Meu Projecte Real', ownerEmail: 'owner@test.com' }]);
+  });
+
+  it('un membre acabat d\'afegir ja veu el projecte pel seu nom, ABANS fins i tot d\'unir-s\'hi', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('Projecte Compartit');
+    await flush();
+
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+
+    setActivePinia(createPinia());
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'));
+    const mine = await memberCloud.listMyCloudProjects();
+    expect(mine).toEqual([{ projectId: id, projectName: 'Projecte Compartit', ownerEmail: 'owner@test.com' }]);
+
+    // Treure'l fa desaparèixer l'entrada de seguida.
+    await ownerCloud.removeProjectMember('membre@test.com');
+    await flush();
+    expect(await memberCloud.listMyCloudProjects()).toEqual([]);
+  });
+
+  it('un usuari NO membre rep permission-denied en llegir/escriure l\'índex d\'un altre correu', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    await ownerCloud.activateCloudSync('Projecte Privat');
+    await flush();
+
+    setActivePinia(createPinia());
+    const strangerAuth = makeCloudAuth('estrany@test.com');
+    // Intent directe de llegir l'índex de l'OWNER (no el seu propi) --
+    // mateixa forma de regla real: només `owner@test.com` pot llegir
+    // `userProjects/owner@test.com/...`.
+    const { db, mod } = await backend.createClientFor('estrany@test.com')();
+    await expect(mod.getDocs(mod.collection(db, 'userProjects', 'owner@test.com', 'projects'))).rejects.toMatchObject({ code: 'permission-denied' });
+  });
+});
+
+describe('useCloudSync (Fase 32: indicador de progrés durant la sincronització inicial)', () => {
+  it('isApplyingInitialSync és cert mentre s\'espera la primera instantània d\'un canal, i fals un cop arribada', async () => {
+    const backend = makeFakeFirestoreBackend();
+    useWorkspaceStore();
+    const cloudAuth = makeCloudAuth('owner@test.com');
+    const baseGetDb = backend.createClientFor('owner@test.com');
+
+    // Retarda artificialment NOMÉS el primer onSnapshot de la base del
+    // canal `data`, perquè es pugui observar `isApplyingInitialSync`
+    // encara cert abans que es resolgui (en el backend fals, tot el demés
+    // es resol a l'instant, dins la mateixa volta síncrona).
+    let releaseDelay;
+    const delayPromise = new Promise((resolve) => { releaseDelay = resolve; });
+    const getDb = async () => {
+      const { db, mod } = await baseGetDb();
+      let delayed = false;
+      const wrappedMod = {
+        ...mod,
+        onSnapshot: (ref, cb, errCb) => {
+          if (!delayed && ref.__kind === 'doc' && ref.path.endsWith('channels/data')) {
+            delayed = true;
+            return mod.onSnapshot(ref, async (snap) => { await delayPromise; cb(snap); }, errCb);
+          }
+          return mod.onSnapshot(ref, cb, errCb);
+        },
+      };
+      return { db, mod: wrappedMod };
+    };
+
+    const cloud = useCloudSync(cloudAuth, getDb);
+    expect(cloud.isApplyingInitialSync.value).toBe(false);
+    const activatePromise = cloud.activateCloudSync('ProjecteA');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(cloud.isApplyingInitialSync.value).toBe(true);
+    expect(cloud.cloudSyncStatus.value).toBe('connecting');
+
+    releaseDelay();
+    await activatePromise;
+    expect(cloud.isApplyingInitialSync.value).toBe(false);
+    expect(cloud.cloudSyncStatus.value).toBe('connected');
+  });
+
+  it('un error en un canal durant la sincronització inicial no deixa isApplyingInitialSync encallat per sempre', async () => {
+    const backend = makeFakeFirestoreBackend();
+    useWorkspaceStore();
+    const cloudAuth = makeCloudAuth('owner@test.com');
+    const baseGetDb = backend.createClientFor('owner@test.com');
+    const getDb = async () => {
+      const { db, mod } = await baseGetDb();
+      const wrappedMod = {
+        ...mod,
+        onSnapshot: (ref, cb, errCb) => {
+          if (ref.__kind === 'doc' && ref.path.endsWith('channels/data')) {
+            // Simula un error de xarxa en el primer intent d'escoltar
+            // aquest canal concret -- la resta de canals segueixen bé.
+            errCb({ message: 'simulated network error' });
+            return () => {};
+          }
+          return mod.onSnapshot(ref, cb, errCb);
+        },
+      };
+      return { db, mod: wrappedMod };
+    };
+    const cloud = useCloudSync(cloudAuth, getDb);
+    await cloud.activateCloudSync('ProjecteA');
+    await flush();
+    expect(cloud.isApplyingInitialSync.value).toBe(false);
+    expect(cloud.cloudSyncStatus.value).toBe('connected');
   });
 });

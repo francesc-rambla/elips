@@ -29,6 +29,7 @@ import { useCollabRealtime, generateSessionCredentials, normalizeSignalingServer
 import { getDisplayNameOrFallback, setDisplayName as setCollabDisplayName, getUserColor } from './composables/useCollabIdentity';
 import { useCloudAuth } from './composables/useCloudAuth';
 import { useCloudSync } from './composables/useCloudSync';
+import { dedupeProjectName } from './utils/projectNaming';
 
 // Components
 import FileCard from './components/FileCard.vue';
@@ -197,6 +198,7 @@ window.cloudAuth = cloudAuth;
 const handleCloudSignIn = async ({ email, password }) => {
   try {
     await signInCloud(email, password);
+    await refreshMyCloudProjects();
   } catch (e) {
     // cloudAuthError ja es mostra a CollabPanel.vue -- cap alert() addicional.
   }
@@ -321,13 +323,16 @@ const {
   cloudProjectId,
   lastCloudSyncError,
   cloudActivityLog,
+  isApplyingInitialSync: isCloudApplyingInitialSync,
   projectAccess: cloudProjectAccess,
   isCurrentUserOwner: isCloudProjectOwner,
   activateCloudSync,
+  getCloudProjectInfo,
   joinCloudProject,
   deactivateCloudSync,
   addProjectMember: addCloudProjectMember,
   removeProjectMember: removeCloudProjectMember,
+  listMyCloudProjects,
   bindCloudTemplateDocument,
   captureExcelFileIfChanged,
   bindCloudRefDocDocument,
@@ -342,14 +347,24 @@ const handleActivateCloudSync = async () => {
     alert(`Error en activar la sincronització al núvol: ${e.message}`);
   }
 };
+// Fase 31 (veure el pla): unir-se a un projecte al núvol SEMPRE crea un
+// projecte LOCAL nou (amb el nom real del projecte, desduplicat), mai
+// sobreescriu el que ja tinguis obert -- per això ja no cal cap confirm()
+// d'avís de sobreescriptura. `getCloudProjectInfo` (abans part de
+// `joinCloudProject`) cal cridar-lo ABANS de decidir el nom local nou.
 const handleJoinCloudProject = async (id) => {
-  if (!confirm('Unir-te a aquest projecte al núvol sobreescriurà el contingut del projecte local actual amb el que hi hagi al núvol. Continuar?')) {
-    return;
-  }
   try {
-    await joinCloudProject(currentProjectName.value, id, activeDocName.value);
+    const info = await getCloudProjectInfo(id);
+    await joinCloudProjectAsNewLocalProject(info.projectId, info.projectName);
   } catch (e) {
     alert(`Error en unir-te al projecte al núvol: ${e.message}`);
+  }
+};
+const handleOpenCloudProjectFromListing = async (projectId, projectName) => {
+  try {
+    await joinCloudProjectAsNewLocalProject(projectId, projectName);
+  } catch (e) {
+    alert(`Error en obrir el projecte al núvol: ${e.message}`);
   }
 };
 // Desconnexió manual (botó de CollabPanel.vue) -- a diferència de canviar
@@ -375,6 +390,25 @@ const handleRemoveCloudProjectMember = async (email) => {
     alert(`Error en treure el membre: ${e.message}`);
   }
 };
+
+// Fase 31: llistat "Projectes als quals tens accés" a CollabPanel.vue --
+// a diferència de `cloudProjectAccess` (que és d'AQUEST projecte local, via
+// `onSnapshot`), aquest és un llistat d'ABAST DE COMPTE (quins projectes al
+// núvol, sencers, té accés aquest correu), llegit amb `getDocs` d'un sol
+// cop (no cal `onSnapshot` -- canvia només quan algú t'afegeix/treu, cosa
+// que ja es reflecteix en refer la llista la pròxima vegada que s'obri el
+// panell). Refet en obrir el panell (si ja hi ha sessió) i just després
+// d'iniciar sessió.
+const myCloudProjects = ref([]);
+const refreshMyCloudProjects = async () => {
+  if (!cloudCurrentUser.value) { myCloudProjects.value = []; return; }
+  try {
+    myCloudProjects.value = await listMyCloudProjects();
+  } catch (e) {
+    store.addLog(`Error en llistar els projectes al núvol: ${e.message}`, 'warning');
+  }
+};
+watch(isCollabPanelOpen, (open) => { if (open) refreshMyCloudProjects(); });
 
 // Fase 27 (vegeu el pla): reconnexió transparent a la sincronització al
 // núvol prèvia d'aquest projecte en reobrir-lo -- mateix criteri que
@@ -739,17 +773,14 @@ const openProjectsModal = () => {
 };
 
 // Crea un projecte nou en blanc: desa l'estat actual, neteja l'store i inicialitza la persistència del projecte nou
-const createNewProject = async () => {
-  const name = prompt("Introdueix el nom del nou projecte:");
-  if (!name) return;
-  const cleanName = name.trim();
-  if (!cleanName) return;
-  
-  if (savedProjectsList.value.includes(cleanName)) {
-    alert("Ja existeix un projecte amb aquest nom.");
-    return;
-  }
-
+// Factoritzada fora de createNewProject (Fase 31) perquè
+// joinCloudProjectAsNewLocalProject la reutilitzi tal qual: crea/inicialitza
+// un projecte LOCAL nou en blanc i hi canvia -- mateixa neteja d'estat,
+// mateix criteri de tancar primer qualsevol transport de col·laboració
+// vinculat al projecte que es deixa. Assumeix que `cleanName` ja s'ha
+// validat (no buit, no ja existent a savedProjectsList) -- responsabilitat
+// de qui la crida.
+const initializeAndSwitchToNewProject = async (cleanName) => {
   // Una sessió en viu (connectada o només capturant en silenci, Fase 16)
   // té els canals de plantilla/esquema/dades vinculats a
   // store.templateText/editorMetadata/excelJsonData -- deixar-los oberts en
@@ -779,7 +810,7 @@ const createNewProject = async () => {
   const newList = [...savedProjectsList.value, cleanName];
   savedProjectsList.value = newList;
   localStorage.setItem('savedProjectsList', JSON.stringify(newList));
-  
+
   // Clear Pinia store to start fresh
   store.clearLogs();
   store.excelJsonData = null;
@@ -790,7 +821,7 @@ const createNewProject = async () => {
   store.sheetInfo = [];
   store.hierarchySchema = {};
   store.issues = [];
-  
+
   // Set as current project
   currentProjectName.value = cleanName;
   localStorage.setItem('currentProjectName', cleanName);
@@ -801,12 +832,12 @@ const createNewProject = async () => {
   localStorage.setItem(`${cleanName}:documentsList`, JSON.stringify(['Document Principal']));
   activeDocName.value = 'Document Principal';
   localStorage.setItem(`${cleanName}:activeDocName`, 'Document Principal');
-  
+
   // Load and save default blank states
   loadDocumentConfig(cleanName, 'Document Principal');
   saveCurrentProject();
   saveCurrentDocumentState(cleanName, 'Document Principal');
-  
+
   // Initialize version history baseline for new project
   await loadHistory();
   if (historyData.value.length === 0) {
@@ -814,8 +845,38 @@ const createNewProject = async () => {
   }
 
   resumeAutoRecording();
+};
+
+const createNewProject = async () => {
+  const name = prompt("Introdueix el nom del nou projecte:");
+  if (!name) return;
+  const cleanName = name.trim();
+  if (!cleanName) return;
+
+  if (savedProjectsList.value.includes(cleanName)) {
+    alert("Ja existeix un projecte amb aquest nom.");
+    return;
+  }
+
+  await initializeAndSwitchToNewProject(cleanName);
   isProjectsModalOpen.value = false;
   store.addLog(`Projecte '${cleanName}' creat i seleccionat correctament.`, 'success');
+};
+
+// Fase 31 (veure el pla): unir-se a un projecte al núvol -- des del camp
+// d'enganxar un identificador o des del llistat "Projectes als quals tens
+// accés" -- SEMPRE crea un projecte LOCAL nou amb el nom real del projecte
+// al núvol (desduplicat contra els noms ja existents), mai sobreescriu el
+// que ja tinguis obert. `docName` fixat a 'Document Principal' -- el
+// projecte LOCAL nou sempre comença amb aquest únic document (igual que
+// createNewProject), els altres (si n'hi ha) arriben tot seguit via el
+// canal `documentsList` (Fase 28.2) un cop `joinCloudProject` connecti.
+const joinCloudProjectAsNewLocalProject = async (projectId, remoteProjectName) => {
+  const localName = dedupeProjectName(remoteProjectName, savedProjectsList.value);
+  await initializeAndSwitchToNewProject(localName);
+  await joinCloudProject(localName, projectId, 'Document Principal');
+  isCollabPanelOpen.value = false;
+  store.addLog(`T'has unit al projecte al núvol '${remoteProjectName}' -- se n'ha creat una còpia local com a '${localName}'.`, 'success');
 };
 
 // Canvia de projecte actiu: desa l'estat del projecte anterior i restaura documents, dades Excel i fitxers binaris del nou
@@ -3840,8 +3901,10 @@ const generateDocuments = async () => {
       :cloud-project-id="cloudProjectId"
       :cloud-sync-error="lastCloudSyncError"
       :cloud-activity-log="cloudActivityLog"
+      :cloud-is-applying-initial-sync="isCloudApplyingInitialSync"
       :cloud-project-access="cloudProjectAccess"
       :is-cloud-project-owner="isCloudProjectOwner()"
+      :my-cloud-projects="myCloudProjects"
       @close="isCollabPanelOpen = false"
       @connect="handleConnectCollabFolder"
       @disconnect="disconnectCollabFolder"
@@ -3851,6 +3914,7 @@ const generateDocuments = async () => {
       @cloud-sign-out="handleCloudSignOut"
       @activate-cloud-sync="handleActivateCloudSync"
       @join-cloud-project="handleJoinCloudProject"
+      @open-cloud-project="handleOpenCloudProjectFromListing"
       @deactivate-cloud-sync="handleDeactivateCloudSync"
       @add-cloud-project-member="handleAddCloudProjectMember"
       @remove-cloud-project-member="handleRemoveCloudProjectMember"

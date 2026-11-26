@@ -142,6 +142,28 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
 
   function setApplyingRemote(v) { isApplyingRemote.value = v; }
 
+  // Fase 32: deixa saber a `bindToProjectNow` quan aquest canal concret ja
+  // ha rebut com a mínim la seva primera instantània remota (base), perquè
+  // pugui mostrar un indicador de progrés mentre ho espera -- recreat a
+  // cada `startListening()` (no només un sol cop per instància de canal,
+  // que es reutilitza entre vinculacions successives al llarg de la vida
+  // de la pestanya). Resolt també en cas d'error (mai deixa `bindToProjectNow`
+  // penjat per sempre per un sol canal que falla -- l'error ja es registra
+  // per separat via `logEvent`).
+  let resolveFirstSnapshot = null;
+  let firstSnapshotPromise = null;
+  function resetFirstSnapshotGate() {
+    firstSnapshotPromise = new Promise((resolve) => { resolveFirstSnapshot = resolve; });
+  }
+  function markFirstSnapshotReceived() {
+    if (resolveFirstSnapshot) {
+      const resolve = resolveFirstSnapshot;
+      resolveFirstSnapshot = null;
+      resolve();
+    }
+  }
+  resetFirstSnapshotGate();
+
   function channelRefs(db, mod) {
     const projectId = cloudProjectIdRef.value;
     return {
@@ -232,6 +254,7 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
   // (`getDoc`/`getDocs`) prèvia i separada, a diferència del sondeig de la
   // carpeta compartida, que no té cap equivalent "empès".
   async function startListening() {
+    resetFirstSnapshotGate();
     const { db, mod } = await getDb();
     const { base, deltas } = channelRefs(db, mod);
     unsubBase = mod.onSnapshot(base, (snap) => {
@@ -250,7 +273,11 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
           .catch((e) => logEvent(`Error en sembrar el canal al núvol (${channelKey}): ${e.message}`, 'warning'));
       }
       recomputeAndApply();
-    }, (err) => logEvent(`Error de sincronització al núvol (${channelKey}): ${err.message}`, 'error'));
+      markFirstSnapshotReceived();
+    }, (err) => {
+      logEvent(`Error de sincronització al núvol (${channelKey}): ${err.message}`, 'error');
+      markFirstSnapshotReceived();
+    });
     unsubDeltas = mod.onSnapshot(deltas, (snap) => {
       deltaDocs = [];
       snap.forEach((d) => deltaDocs.push(d.data()));
@@ -327,6 +354,7 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
     stopListening,
     scheduleCaptureOnChange,
     cancelPendingCapture,
+    getFirstSnapshotPromise: () => firstSnapshotPromise,
   };
 }
 
@@ -356,6 +384,21 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
  */
 function createCloudBlobChannel({ channelKey, getDb, cloudProjectIdRef, getLocalBuffer, getLocalFileName, setLocal, logEvent, maxFileSizeBytes }) {
   let unsubMeta = null;
+
+  // Fase 32: mateix idioma que `createCloudChannel` -- vegeu el seu comentari.
+  let resolveFirstSnapshot = null;
+  let firstSnapshotPromise = null;
+  function resetFirstSnapshotGate() {
+    firstSnapshotPromise = new Promise((resolve) => { resolveFirstSnapshot = resolve; });
+  }
+  function markFirstSnapshotReceived() {
+    if (resolveFirstSnapshot) {
+      const resolve = resolveFirstSnapshot;
+      resolveFirstSnapshot = null;
+      resolve();
+    }
+  }
+  resetFirstSnapshotGate();
 
   function channelRefs(db, mod) {
     const projectId = cloudProjectIdRef.value;
@@ -455,16 +498,24 @@ function createCloudBlobChannel({ channelKey, getDb, cloudProjectIdRef, getLocal
   // coincideix amb el hash de l'estat local actual (inclòs el cas "és el
   // meu propi eco, acabo de pujar-ho jo mateix"), no cal fer res.
   async function startListening() {
+    resetFirstSnapshotGate();
     const { db, mod } = await getDb();
     const { meta } = channelRefs(db, mod);
     unsubMeta = mod.onSnapshot(meta, async (snap) => {
-      if (!snap.exists()) return; // cap fitxer remot encara -- res a baixar
-      const remoteData = snap.data();
-      const localBuffer = await getLocalBuffer();
-      const localHash = localBuffer ? await sha256Hex(localBuffer) : null;
-      if (remoteData.sha256Hex === localHash) return;
-      await fetchAndApply(remoteData);
-    }, (err) => logEvent(`Error de sincronització al núvol (${channelKey}): ${err.message}`, 'error'));
+      try {
+        if (!snap.exists()) return; // cap fitxer remot encara -- res a baixar
+        const remoteData = snap.data();
+        const localBuffer = await getLocalBuffer();
+        const localHash = localBuffer ? await sha256Hex(localBuffer) : null;
+        if (remoteData.sha256Hex === localHash) return;
+        await fetchAndApply(remoteData);
+      } finally {
+        markFirstSnapshotReceived();
+      }
+    }, (err) => {
+      logEvent(`Error de sincronització al núvol (${channelKey}): ${err.message}`, 'error');
+      markFirstSnapshotReceived();
+    });
   }
 
   // Cridada EXPLÍCITAMENT (mai per un watcher reactiu de bytes -- un
@@ -495,6 +546,7 @@ function createCloudBlobChannel({ channelKey, getDb, cloudProjectIdRef, getLocal
     startListening,
     stopListening,
     captureIfChanged,
+    getFirstSnapshotPromise: () => firstSnapshotPromise,
   };
 }
 
@@ -543,6 +595,12 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
   const cloudProjectId = ref(null);
   const lastCloudSyncError = ref(null);
   const cloudActivityLog = ref([]);
+  // Fase 32: cert mentre `bindToProjectNow` espera que CADA canal rebi com
+  // a mínim la seva primera instantània remota -- `CollabPanel.vue` el fa
+  // servir per mostrar "Sincronitzant..." en lloc de deixar un activar/
+  // unir-se que triga uns segons (o més, en una connexió lenta) semblar
+  // que ha fallat en silenci.
+  const isApplyingInitialSync = ref(false);
   // {ownerEmail, memberEmails: string[]} | null -- mantingut en viu amb el
   // seu propi onSnapshot mentre hi ha un projecte vinculat, perquè
   // CollabPanel.vue pugui mostrar/gestionar els membres de seguida.
@@ -837,6 +895,42 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     return mod.doc(db, 'projects', cloudProjectId.value, '_access', 'doc');
   }
 
+  // Fase 30: índex invers `userProjects/{correu}/projects/{id}` -- permet
+  // a CADA membre (no només el propietari) saber, pel seu nom real, a
+  // quins projectes al núvol té accés ABANS fins i tot d'unir-s'hi mai
+  // (`listMyCloudProjects()`). Escrit per `activateCloudSync` (el
+  // propietari, per a ell mateix) i per `addProjectMember`/
+  // `removeProjectMember` (el propietari, per a l'ALTRE membre que
+  // afegeix/treu -- autoritzat per la regla de seguretat perquè qui ho
+  // crida ja és `isMember(projectId)` d'aquest mateix projecte).
+  async function writeUserProjectIndexEntry(memberEmail, projectId, projectName, ownerEmail) {
+    const { db, mod } = await getDb();
+    await mod.setDoc(mod.doc(db, 'userProjects', memberEmail, 'projects', projectId), {
+      projectName,
+      ownerEmail,
+    });
+  }
+
+  async function removeUserProjectIndexEntry(memberEmail, projectId) {
+    const { db, mod } = await getDb();
+    await mod.deleteDoc(mod.doc(db, 'userProjects', memberEmail, 'projects', projectId));
+  }
+
+  // Exposada des del composable -- llegeix NOMÉS l'espai de noms del propi
+  // usuari (`userProjects/{el-seu-correu}/projects`), mai el d'un altre
+  // (les regles de seguretat ho impedirien de totes maneres). Cridada des
+  // de `CollabPanel.vue` per mostrar la llista "Projectes als quals tens
+  // accés" (Fase 31).
+  async function listMyCloudProjects() {
+    if (!cloudAuth.currentUser.value) return [];
+    const email = normalizeEmail(cloudAuth.currentUser.value.email);
+    const { db, mod } = await getDb();
+    const snap = await mod.getDocs(mod.collection(db, 'userProjects', email, 'projects'));
+    const out = [];
+    snap.forEach((d) => out.push({ projectId: d.ref.path.split('/').pop(), ...d.data() }));
+    return out;
+  }
+
   async function startAccessListener() {
     const { db, mod } = await getDb();
     unsubAccess = mod.onSnapshot(accessDocRef(db, mod), (snap) => {
@@ -909,6 +1003,7 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     await teardownChannels();
     cloudSyncStatus.value = 'connecting';
     cloudProjectId.value = id;
+    isApplyingInitialSync.value = true;
     try {
       if (seed) {
         await Promise.all([...channels, ...blobChannels].map((c) => c.seedInitial()));
@@ -922,6 +1017,17 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
         await attachTemplateChannel(docName, { allowSeed: seed });
         await attachRefDocChannel(docName, { allowSeed: seed });
       }
+      // Fase 32: espera que CADA canal (fix + de blob + el de
+      // document/referència dinàmics, si s'han arribat a vincular) hagi
+      // rebut com a mínim la seva primera instantània remota abans de
+      // donar la vinculació per completada -- així `cloudSyncStatus`
+      // nomÉs arriba a 'connected' quan el contingut ja hi és de debò, no
+      // abans (evita el "no se m'informa del progrés" -- la UI ja sap,
+      // via `isApplyingInitialSync`, que encara s'està esperant).
+      const firstSnapshotWaits = [...channels, ...blobChannels].map((c) => c.getFirstSnapshotPromise());
+      if (templateChannel) firstSnapshotWaits.push(templateChannel.getFirstSnapshotPromise());
+      if (refDocChannel) firstSnapshotWaits.push(refDocChannel.getFirstSnapshotPromise());
+      await Promise.all(firstSnapshotWaits);
       localStorage.setItem(`${projectName}:cloudProjectId`, id);
       cloudSyncStatus.value = 'connected';
     } catch (e) {
@@ -929,6 +1035,8 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
       cloudSyncStatus.value = 'error';
       lastCloudSyncError.value = e.message;
       throw e;
+    } finally {
+      isApplyingInitialSync.value = false;
     }
   }
 
@@ -988,10 +1096,17 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     const email = normalizeEmail(cloudAuth.currentUser.value.email);
     const id = crypto.randomUUID();
     const { db, mod } = await getDb();
+    // Fase 30: `projectName` -- el nom LOCAL del projecte en aquest
+    // instant -- queda desat al propi document d'accés com a nom CANÒNIC i
+    // permanent d'aquest projecte al núvol, independent de com cada membre
+    // anomeni la seva pròpia còpia local més endavant (necessari perquè
+    // `listMyCloudProjects()` pugui mostrar-lo pel seu nom real).
     await mod.setDoc(mod.doc(db, 'projects', id, '_access', 'doc'), {
       ownerEmail: email,
       memberEmails: [email],
+      projectName,
     });
+    await writeUserProjectIndexEntry(email, id, projectName, email);
     // `cloudProjectId.value` no cal fixar-lo aquí -- `bindToProject` ja ho
     // fa com el seu propi primer pas (després de `teardownChannels()`,
     // Fase 29); fixar-lo abans només seria sobreescrit de seguida.
@@ -1001,10 +1116,13 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     return id;
   }
 
-  async function joinCloudProject(projectName, id, docName) {
-    if (!cloudAuth.currentUser.value) {
-      throw new Error('Cal iniciar sessió al núvol abans d\'unir-te a un projecte.');
-    }
+  // Fase 31: factoritzada fora de `joinCloudProject` perquè App.vue l'ha de
+  // poder cridar ABANS de decidir quin nom donar al projecte LOCAL nou que
+  // es crearà (mai se sobreescriu el que ja tinguis obert, vegeu el pla) --
+  // cal conèixer el `projectName` REAL del projecte al núvol (Fase 30)
+  // abans de triar aquest nom, no després. Mateixa comprovació
+  // d'existència/accés que abans, ara reutilitzada per totes dues vies.
+  async function getCloudProjectInfo(id) {
     const cleanId = String(id || '').trim();
     if (!cleanId) throw new Error("Cal indicar l'identificador del projecte al núvol.");
     const { db, mod } = await getDb();
@@ -1013,13 +1131,21 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
       if (!snap.exists()) {
         throw new Error('Aquest identificador de projecte al núvol no existeix.');
       }
+      return { projectId: cleanId, ...snap.data() };
     } catch (e) {
       if (e.code === 'permission-denied') {
         throw new Error("Encara no tens accés a aquest projecte -- demana al propietari que t'hi afegeixi des de \"Gestiona l'accés\" i torna-ho a provar.");
       }
       throw e;
     }
-    await bindToProject(projectName, cleanId, { seed: false, docName });
+  }
+
+  async function joinCloudProject(projectName, id, docName) {
+    if (!cloudAuth.currentUser.value) {
+      throw new Error('Cal iniciar sessió al núvol abans d\'unir-te a un projecte.');
+    }
+    const info = await getCloudProjectInfo(id);
+    await bindToProject(projectName, info.projectId, { seed: false, docName });
     logCloudEvent("T'has unit a un projecte al núvol -- s'està aplicant el seu contingut.", 'success');
   }
 
@@ -1057,6 +1183,12 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     const { db, mod } = await getDb();
     try {
       await mod.updateDoc(accessDocRef(db, mod), { memberEmails: mod.arrayUnion(clean) });
+      // Fase 30: escriu l'índex invers del membre ACABAT D'AFEGIR -- és el
+      // que li permet veure aquest projecte pel seu nom real a
+      // `listMyCloudProjects()` abans fins i tot d'unir-s'hi mai.
+      // `projectAccess.value` ja està en viu (startAccessListener) i, a
+      // partir d'aquesta mateixa fase, inclou `projectName`.
+      await writeUserProjectIndexEntry(clean, cloudProjectId.value, projectAccess.value?.projectName, projectAccess.value?.ownerEmail);
       logCloudEvent(`S'ha afegit ${clean} com a membre d'aquest projecte al núvol.`, 'success');
     } catch (e) {
       logCloudEvent(`Error en afegir ${clean}: ${e.message}`, 'error');
@@ -1070,6 +1202,7 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     const { db, mod } = await getDb();
     try {
       await mod.updateDoc(accessDocRef(db, mod), { memberEmails: mod.arrayRemove(clean) });
+      await removeUserProjectIndexEntry(clean, cloudProjectId.value);
       logCloudEvent(`S'ha tret ${clean} com a membre d'aquest projecte al núvol.`, 'success');
     } catch (e) {
       logCloudEvent(`Error en treure ${clean}: ${e.message}`, 'error');
@@ -1128,13 +1261,16 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     cloudProjectId,
     lastCloudSyncError,
     cloudActivityLog,
+    isApplyingInitialSync,
     projectAccess,
     isCurrentUserOwner,
     activateCloudSync,
+    getCloudProjectInfo,
     joinCloudProject,
     deactivateCloudSync,
     addProjectMember,
     removeProjectMember,
+    listMyCloudProjects,
     bindCloudTemplateDocument,
     captureExcelFileIfChanged,
     bindCloudRefDocDocument,
