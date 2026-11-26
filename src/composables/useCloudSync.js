@@ -530,6 +530,11 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     getLocal: () => [],
     setLocal: () => {},
   };
+  const multiDocAdapter = externalAdapters.multiDoc || {
+    getTemplateText: () => '',
+    getRefDocBuffer: async () => null,
+    getRefDocFileName: () => '',
+  };
 
   // 'disabled' (ningú ha iniciat sessió al núvol) | 'disconnected' (sessió
   // iniciada, cap projecte al núvol vinculat a AQUEST projecte local) |
@@ -693,13 +698,25 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
   // membre ja l'havia creat, o el propi usuari hi torna més tard) --
   // mateix idioma de reconciliació que `bindDocument` (useCollabRealtime.js)
   // ja fa servir per al Y.Text del document.
-  async function attachTemplateChannel(docName) {
-    const channel = makeTemplateChannel(docName);
-    templateChannel = channel;
-    boundTemplateDocName = docName;
+  // `allowSeed` (Fase 29, reforç): `false` NOMÉS quan es crida des de
+  // `joinCloudProject` -- un dispositiu que s'uneix a un projecte no té mai
+  // autoritat per crear/sembrar el canal d'un document que encara no
+  // existeix al núvol (seria, per construcció, contingut seu propi no
+  // relacionat, p. ex. el "Document Principal" d'un altre projecte seu
+  // anterior que coincideix de nom). En aquest cas es queda sense vincular
+  // cap canal -- l'usuari el vincularà correctament en commutar a un
+  // document que sí existeixi de debò al projecte compartit (vegeu
+  // `seedAllDocumentChannels`, que garanteix que tot document ja existent
+  // en activar-se la sincronització ja té el seu canal sembrat pel
+  // propietari abans que ningú més s'hi pugui unir).
+  async function attachTemplateChannel(docName, { allowSeed = true } = {}) {
     const { db, mod } = await getDb();
     const baseRef = mod.doc(db, 'projects', cloudProjectId.value, 'channels', `template:${docName}`);
     const baseSnap = await mod.getDoc(baseRef);
+    if (!baseSnap.exists() && !allowSeed) return;
+    const channel = makeTemplateChannel(docName);
+    templateChannel = channel;
+    boundTemplateDocName = docName;
     if (!baseSnap.exists()) {
       await channel.seedInitial();
     }
@@ -772,13 +789,16 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
   // la seva referència), només s'escolta; si no, se sembra des del contingut
   // local (no-op dins `seedInitial` si el document no té cap fitxer de
   // referència -- mai es crea cap canal/meta buit).
-  async function attachRefDocChannel(docName) {
-    const channel = makeRefDocChannel(docName);
-    refDocChannel = channel;
-    boundRefDocDocName = docName;
+  // `allowSeed`: mateix criteri que `attachTemplateChannel` -- vegeu el seu
+  // comentari.
+  async function attachRefDocChannel(docName, { allowSeed = true } = {}) {
     const { db, mod } = await getDb();
     const metaRef = mod.doc(db, 'projects', cloudProjectId.value, 'channels', `refDoc:${docName}`);
     const metaSnap = await mod.getDoc(metaRef);
+    if (!metaSnap.exists() && !allowSeed) return;
+    const channel = makeRefDocChannel(docName);
+    refDocChannel = channel;
+    boundRefDocDocName = docName;
     if (!metaSnap.exists()) {
       await channel.seedInitial();
     }
@@ -896,8 +916,11 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
       await startAccessListener();
       await Promise.all([...channels, ...blobChannels].map((c) => c.startListening()));
       if (docName) {
-        await attachTemplateChannel(docName);
-        await attachRefDocChannel(docName);
+        // `allowSeed: seed` (Fase 29, reforç) -- vegeu el comentari
+        // d'`attachTemplateChannel`: en unir-se (`seed === false`) mai es
+        // sembra el canal d'un document que encara no existeix al núvol.
+        await attachTemplateChannel(docName, { allowSeed: seed });
+        await attachRefDocChannel(docName, { allowSeed: seed });
       }
       localStorage.setItem(`${projectName}:cloudProjectId`, id);
       cloudSyncStatus.value = 'connected';
@@ -906,6 +929,50 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
       cloudSyncStatus.value = 'error';
       lastCloudSyncError.value = e.message;
       throw e;
+    }
+  }
+
+  // Fase 29 (reforç): sembra el canal template/refDoc de TOTS els
+  // documents del projecte EXCEPTE `skipDocName` (ja sembrat/vinculat per
+  // `attachTemplateChannel`/`attachRefDocChannel` dins `bindToProjectNow`)
+  // -- cridada NOMÉS en activar la sincronització per primer cop (mai en
+  // reconnectar a un projecte ja existent ni en unir-s'hi), perquè cap
+  // altre membre que s'hi uneixi més tard pugui arribar a ser qui sembra
+  // per primer cop el canal d'un document que ja existia en aquest
+  // projecte -- vegeu el comentari d'`attachTemplateChannel`. Escriptura
+  // directa (no instancia els canals complets ni els deixa escoltant --
+  // només calia UN cop, el document no és l'actiu i per tant no necessita
+  // cap vinculació en viu ara mateix).
+  async function seedAllDocumentChannels(skipDocName) {
+    const docNames = documentsListAdapter.getLocal() || [];
+    const { db, mod } = await getDb();
+    for (const dName of docNames) {
+      if (dName === skipDocName) continue;
+      const tplRef = mod.doc(db, 'projects', cloudProjectId.value, 'channels', `template:${dName}`);
+      const tplSnap = await mod.getDoc(tplRef);
+      if (!tplSnap.exists()) {
+        const text = multiDocAdapter.getTemplateText(dName);
+        await mod.setDoc(tplRef, { snapshot: { text: text || '' }, updatedAt: new Date().toISOString(), updatedBy: getOrCreateUserId() });
+      }
+      const refDocMetaRef = mod.doc(db, 'projects', cloudProjectId.value, 'channels', `refDoc:${dName}`);
+      const refDocSnap = await mod.getDoc(refDocMetaRef);
+      if (!refDocSnap.exists()) {
+        const buffer = await multiDocAdapter.getRefDocBuffer(dName);
+        if (buffer) {
+          const fileName = multiDocAdapter.getRefDocFileName(dName);
+          const tmpChannel = createCloudBlobChannel({
+            channelKey: `refDoc:${dName}`,
+            getDb,
+            cloudProjectIdRef: cloudProjectId,
+            getLocalBuffer: async () => buffer,
+            getLocalFileName: () => fileName,
+            setLocal: async () => {},
+            logEvent: logCloudEvent,
+            maxFileSizeBytes: () => (store.config.cloudSyncMaxBinaryFileSizeMB || DEFAULT_MAX_BINARY_FILE_SIZE_MB) * 1024 * 1024,
+          });
+          await tmpChannel.seedInitial();
+        }
+      }
     }
   }
 
@@ -929,6 +996,7 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     // fa com el seu propi primer pas (després de `teardownChannels()`,
     // Fase 29); fixar-lo abans només seria sobreescrit de seguida.
     await bindToProject(projectName, id, { seed: true, docName });
+    await seedAllDocumentChannels(docName);
     logCloudEvent("S'ha activat la sincronització al núvol per a aquest projecte.", 'success');
     return id;
   }

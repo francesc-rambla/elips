@@ -293,10 +293,28 @@ const documentsListCloudAdapter = {
     localStorage.setItem(`${pName}:documentsList`, JSON.stringify(remoteList));
   },
 };
+// Fase 29 (reforç): a diferència de refDocCloudAdapter/excelFileCloudAdapter
+// (sempre sobre el document/fitxer ACTIU), aquest adaptador llegeix el
+// contingut d'un document QUALSEVOL per nom -- usat NOMÉS per
+// useCloudSync.js en activar la sincronització per primer cop, per sembrar
+// per endavant el canal template/refDoc de TOTS els documents del
+// projecte (no només l'actiu en aquell instant). Sense això, un altre
+// membre que s'uneixi més tard i tingui, per coincidència de nom (típicament
+// "Document Principal", el nom per defecte de qualsevol projecte), aquell
+// mateix document com a actiu localment podria arribar a ser qui sembra
+// per primer cop aquell canal -- amb el SEU propi contingut local, no
+// relacionat -- esborrant en aparença el contingut legítim del propietari
+// en commutar-hi (bug real reportat per l'usuari).
+const multiDocCloudAdapter = {
+  getTemplateText: (dName) => localStorage.getItem(`${currentProjectName.value}:doc:${dName}:templateText`) || '',
+  getRefDocBuffer: (dName) => getBinaryFile(`${currentProjectName.value}:doc:${dName}:refDocBuffer`),
+  getRefDocFileName: (dName) => localStorage.getItem(`${currentProjectName.value}:doc:${dName}:refDocFileName`) || '',
+};
 const cloudSync = useCloudSync(cloudAuth, undefined, {
   excelFile: excelFileCloudAdapter,
   refDoc: refDocCloudAdapter,
   documentsList: documentsListCloudAdapter,
+  multiDoc: multiDocCloudAdapter,
 });
 const {
   cloudSyncStatus,

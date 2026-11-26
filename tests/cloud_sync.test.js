@@ -980,3 +980,115 @@ describe('useCloudSync (Fase 29: evita la fuita de listeners en canviar de proje
     expect(storeOwner2.excelJsonData).toEqual({ marcador: 'Y' });
   });
 });
+
+// Adaptador fals de "qualsevol document per nom" (Fase 29, reforç) --
+// mateix contracte que `multiDocCloudAdapter` a App.vue, amb l'estat en
+// mapes en memòria en lloc de `localStorage`/IndexedDB real.
+function makeMultiDocAdapter(templates = {}, refDocs = {}) {
+  return {
+    getTemplateText: (dName) => templates[dName] || '',
+    getRefDocBuffer: async (dName) => (refDocs[dName] ? refDocs[dName].buffer : null),
+    getRefDocFileName: (dName) => (refDocs[dName] ? refDocs[dName].fileName : ''),
+  };
+}
+
+describe('useCloudSync (Fase 29, reforç: un document ja existent mai es re-sembra amb contingut d\'un altre dispositiu)', () => {
+  it('activateCloudSync sembra el canal template/refDoc de TOTS els documents, no només l\'actiu en aquell instant', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const storeOwner = useWorkspaceStore();
+    storeOwner.templateText = 'Contingut del document principal';
+    const { adapter: ownerDocsAdapter } = makeDocumentsListAdapter(() => 'ProjecteA', ['Document Principal', 'Plec de Clàusules']);
+    const multiDoc = makeMultiDocAdapter(
+      { 'Plec de Clàusules': 'Contingut real del plec' },
+      { 'Plec de Clàusules': { buffer: new Uint8Array([9, 9, 9]).buffer, fileName: 'plec.docx' } },
+    );
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'), { documentsList: ownerDocsAdapter, multiDoc });
+    const id = await ownerCloud.activateCloudSync('ProjecteA', 'Document Principal');
+    await flush();
+
+    // El document ACTIU ja es sembra pel camí normal.
+    expect(backend.docsStore.get(`projects/${id}/channels/template:Document Principal`).snapshot).toEqual({ text: 'Contingut del document principal' });
+    // El document NO actiu també ha quedat sembrat -- amb el seu PROPI
+    // contingut (llegit via `multiDoc`), no amb el del document actiu.
+    expect(backend.docsStore.get(`projects/${id}/channels/template:Plec de Clàusules`).snapshot).toEqual({ text: 'Contingut real del plec' });
+    expect(backend.docsStore.get(`projects/${id}/channels/refDoc:Plec de Clàusules`).fileName).toBe('plec.docx');
+  });
+
+  it('un membre que s\'uneix amb un document del mateix nom, però amb contingut propi no relacionat, MAI sobreescriu el contingut ja sembrat pel propietari', async () => {
+    // Reprodueix el bug real reportat: el propietari té diversos documents
+    // creats abans d'activar la sincronització (només l'actiu en aquell
+    // instant quedava sembrat abans d'aquest reforç); un membre s'uneix
+    // tenint, per coincidència de nom ("Document Principal", el nom per
+    // defecte de qualsevol projecte), un document local amb contingut
+    // totalment diferent com a actiu seu.
+    const backend = makeFakeFirestoreBackend();
+    const storeOwner = useWorkspaceStore();
+    const { adapter: ownerDocsAdapter } = makeDocumentsListAdapter(() => 'ProjecteA', ['Document Principal', 'Annex']);
+    // "Document Principal" NO és l'actiu en activar-se -- el seu contingut
+    // real només és conegut via `multiDoc` (equivalent al que `App.vue`
+    // llegiria de `localStorage`, no de `store.templateText`, que només
+    // reflecteix el document ACTIU en cada moment).
+    const ownerMultiDoc = makeMultiDocAdapter({ 'Document Principal': 'Contingut que NO s\'ha de perdre' });
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'), { documentsList: ownerDocsAdapter, multiDoc: ownerMultiDoc });
+    // Activa estant al document "Annex" -- "Document Principal" queda
+    // sembrat NOMÉS gràcies al reforç (seedAllDocumentChannels), no pel
+    // camí normal (que només cobreix el document actiu).
+    storeOwner.templateText = 'Annex real';
+    const id = await ownerCloud.activateCloudSync('ProjecteA', 'Annex');
+    await flush();
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+    expect(backend.docsStore.get(`projects/${id}/channels/template:Document Principal`).snapshot).toEqual({ text: 'Contingut que NO s\'ha de perdre' });
+
+    setActivePinia(createPinia());
+    const storeMember = useWorkspaceStore();
+    // El membre té el seu propi "Document Principal" com a actiu, amb
+    // contingut totalment no relacionat.
+    storeMember.templateText = 'Contingut del membre, no relacionat';
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'));
+    await memberCloud.joinCloudProject('ProjecteB', id, 'Document Principal');
+    await flush();
+
+    // El membre ha de rebre el contingut LEGÍTIM del propietari, mai el
+    // seu propi "re-sembrat" per sobre.
+    expect(storeMember.templateText).toBe('Contingut que NO s\'ha de perdre');
+    expect(backend.docsStore.get(`projects/${id}/channels/template:Document Principal`).snapshot).toEqual({ text: 'Contingut que NO s\'ha de perdre' });
+
+    // I si, DESPRÉS, el propietari mateix commuta a "Document Principal"
+    // (el cas exacte reportat -- "desapareix en seleccionar el document"),
+    // el seu contingut s'ha de mantenir intacte.
+    storeOwner.templateText = 'un altre valor local momentani';
+    await ownerCloud.bindCloudTemplateDocument('Document Principal');
+    await flush();
+    expect(storeOwner.templateText).toBe('Contingut que NO s\'ha de perdre');
+  });
+
+  it('joinCloudProject mai sembra el canal d\'un document que encara no existeix al projecte compartit', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const storeOwner = useWorkspaceStore();
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteA', 'Document Principal');
+    await flush();
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+
+    setActivePinia(createPinia());
+    const storeMember = useWorkspaceStore();
+    storeMember.templateText = 'Contingut local del membre, document inexistent al núvol';
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'));
+    // El membre s'uneix tenint com a actiu un document que el projecte
+    // compartit NO coneix -- mai s'ha de crear cap canal per a ell.
+    await memberCloud.joinCloudProject('ProjecteB', id, 'Document Inexistent');
+    await flush();
+
+    expect(backend.docsStore.has(`projects/${id}/channels/template:Document Inexistent`)).toBe(false);
+    // El contingut local del membre, no relacionat amb cap projecte
+    // compartit, es manté intacte -- no s'ha enviat enlloc.
+    expect(storeMember.templateText).toBe('Contingut local del membre, document inexistent al núvol');
+  });
+});
