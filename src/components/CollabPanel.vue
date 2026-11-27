@@ -462,8 +462,10 @@ const copyToClipboard = async (text) => {
           </template>
           <template v-else>
             <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0;">
-              Persisteix el projecte en una base de dades al núvol perquè l'equip
-              el pugui sincronitzar encara que mai coincidiu en línia.
+              Còpia de seguretat automàtica de tots els teus projectes locals: en
+              iniciar sessió, cada projecte que encara no en tingui es desa al núvol
+              sol, sense haver de clicar res -- i et queda disponible des de
+              qualsevol altre navegador on tornis a iniciar sessió.
             </p>
 
             <div v-if="cloudAuthStatus === 'signed-in'" style="display: flex; flex-direction: column; gap: 10px;">
@@ -503,6 +505,10 @@ const copyToClipboard = async (text) => {
 
                 <div style="display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border-color); padding-top: 8px;">
                   <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">Gestiona l'accés</span>
+                  <p style="font-size: 0.72rem; color: var(--text-muted); margin: 0;">
+                    Opcional -- només cal si vols que algú altre, a més de tu, pugui
+                    veure i editar aquest projecte concret des del seu propi compte.
+                  </p>
                   <template v-if="isCloudProjectOwner">
                     <div v-for="email in (cloudProjectAccess?.memberEmails || [])" :key="email" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem;">
                       <span>{{ email }}<span v-if="email === cloudProjectAccess?.ownerEmail" style="font-size: 0.7rem; color: var(--text-muted);"> (propietari)</span></span>
@@ -533,6 +539,11 @@ const copyToClipboard = async (text) => {
                 <button class="btn btn-primary" style="width: auto; padding: 6px 14px; font-size: 0.8rem; align-self: flex-start;" @click="emit('activate-cloud-sync')">
                   ☁️ Activa la sincronització per a aquest projecte
                 </button>
+                <p style="font-size: 0.72rem; color: var(--text-muted); margin: 0;">
+                  Normalment no cal -- els teus projectes es sincronitzen automàticament
+                  en iniciar sessió. Fes servir aquest botó només per reintentar-ho si
+                  no s'ha fet sol, o si acabes de crear aquest projecte.
+                </p>
 
                 <!-- Fase 31: llistat pel nom real -- per sobre del camp
                      d'enganxar un identificador, que queda com a reserva
