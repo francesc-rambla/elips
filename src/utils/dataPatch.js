@@ -59,3 +59,26 @@ export const applyDataPatch = (doc, patch) => {
   if (!patch || patch.length === 0) return doc;
   return jsonPatchApply(doc, patch, false, false).newDocument;
 };
+
+// Fase 34 (veure pla): extreta de `recomputeAndApply` (useCloudSync.js),
+// sense cap canvi de comportament -- la mateixa fórmula "base + totes les
+// entrades conegudes, ordenades per (ts, userId), aplicades des de zero"
+// que el canal viu ja fa servir, ara també reutilitzable per a una lectura
+// D'UN SOL COP (sense `onSnapshot`) de l'estat actual d'un projecte al
+// núvol que no s'està escoltant en viu (p. ex. en comparar-lo durant una
+// resolució de conflicte, Fase 36).
+export const mergeChannelFromDocs = (baseline, deltaDocs) => {
+  if (baseline === null || baseline === undefined) return baseline;
+  const sorted = [...(deltaDocs || [])].sort((a, b) => {
+    if (a.ts < b.ts) return -1;
+    if (a.ts > b.ts) return 1;
+    return String(a.userId).localeCompare(String(b.userId));
+  });
+  let merged = JSON.parse(JSON.stringify(baseline));
+  for (const entry of sorted) {
+    if (entry.patch && entry.patch.length > 0) {
+      merged = applyDataPatch(merged, entry.patch);
+    }
+  }
+  return merged;
+};

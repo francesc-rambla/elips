@@ -56,7 +56,7 @@
  */
 import { ref, watch, nextTick } from 'vue';
 import { useWorkspaceStore } from '../stores/workspace.js';
-import { computeDataPatch, computeMetaPatch, applyDataPatch } from '../utils/dataPatch.js';
+import { computeDataPatch, computeMetaPatch, applyDataPatch, mergeChannelFromDocs } from '../utils/dataPatch.js';
 import { getOrCreateUserId, getDisplayNameOrFallback } from './useCollabIdentity.js';
 import { getFirebaseApp } from './useCloudAuth.js';
 // `chunkBytes`/`concatChunks` (Fase 14) ja són funcions pures reutilitzables
@@ -176,18 +176,11 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
     if (baseline === null) return;
     // SEMPRE reconstruït des de zero (base + totes les entrades conegudes,
     // en ordre determinista), mai incrementalment -- mateix invariant que
-    // pollCycle() ja garanteix per a la carpeta compartida.
-    const sorted = [...deltaDocs].sort((a, b) => {
-      if (a.ts < b.ts) return -1;
-      if (a.ts > b.ts) return 1;
-      return String(a.userId).localeCompare(String(b.userId));
-    });
-    let merged = JSON.parse(JSON.stringify(baseline));
-    for (const entry of sorted) {
-      if (entry.patch && entry.patch.length > 0) {
-        merged = applyDataPatch(merged, entry.patch);
-      }
-    }
+    // pollCycle() ja garanteix per a la carpeta compartida. Fórmula extreta
+    // a `mergeChannelFromDocs` (Fase 34, `src/utils/dataPatch.js`) perquè
+    // també la pugui reutilitzar una lectura d'un sol cop (sense
+    // `onSnapshot`) d'un projecte que no s'escolta en viu.
+    const merged = mergeChannelFromDocs(baseline, deltaDocs);
     if (JSON.stringify(merged) !== JSON.stringify(lastMergedState.value)) {
       setApplyingRemote(true);
       setLocal(unwrap(merged));
@@ -210,7 +203,7 @@ function createCloudChannel({ channelKey, getDb, cloudProjectIdRef, getLocal, se
     // `merged` ÉS, per construcció, l'estat fusionat correcte d'aquest
     // cicle. Compactar amb el valor desactualitzat perdria l'edició que
     // encara no s'hagués reflectit a `lastMergedState`.
-    maybeCompact(merged, sorted.length);
+    maybeCompact(merged, deltaDocs.length);
   }
 
   async function maybeCompact(merged, deltaCount) {
@@ -1084,6 +1077,152 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     }
   }
 
+  // Fase 34 (veure pla, "Fases 34-37"): primitiva D'UN SOL COP (sense
+  // `onSnapshot`, sense vincular res en viu) per crear un projecte al núvol
+  // SENCER a partir d'una instantània arbitrària -- a diferència
+  // d'`activateCloudSync`/`bindToProject` (acoblats a `store.*`, pensats
+  // per al projecte ACTIU), aquí `snapshot` pot venir de QUALSEVOL projecte
+  // local, actiu o no (vegeu `readLocalProjectSnapshot`,
+  // `src/utils/projectSnapshot.js`). Mateix patró que `seedAllDocumentChannels`
+  // (instàncies llençadores dels canals, només `seedInitial()`, mai
+  // `startListening()` -- no cal, ningú edita aquest projecte ara mateix).
+  // `projectName` és un paràmetre PROPI (no el nom del projecte local) --
+  // en una còpia de seguretat ordinària coincideixen, però en resoldre un
+  // conflicte amb l'opció "crea'n un de nou amb un altre nom" (Fase 36) no
+  // cal canviar el nom LOCAL, només el que es desa a `_access/doc`.
+  async function seedCloudProjectFromSnapshot(projectId, projectName, snapshot) {
+    const email = normalizeEmail(cloudAuth.currentUser.value.email);
+    const { db, mod } = await getDb();
+    await mod.setDoc(mod.doc(db, 'projects', projectId, '_access', 'doc'), {
+      ownerEmail: email,
+      memberEmails: [email],
+      projectName,
+    });
+    await writeUserProjectIndexEntry(email, projectId, projectName, email);
+
+    const projectIdRef = ref(projectId);
+    const maxFileSizeBytes = () => (store.config.cloudSyncMaxBinaryFileSizeMB || DEFAULT_MAX_BINARY_FILE_SIZE_MB) * 1024 * 1024;
+    const jsonChannelSpecs = [
+      { channelKey: 'data', getLocal: () => snapshot.excelJsonData, computePatch: computeDataPatch },
+      { channelKey: 'schema', getLocal: () => snapshot.editorMetadata, computePatch: computeMetaPatch },
+      { channelKey: 'sheetInfo', getLocal: () => snapshot.sheetInfo, computePatch: computeMetaPatch },
+      { channelKey: 'hierarchySchema', getLocal: () => snapshot.hierarchySchema, computePatch: computeDataPatch },
+      { channelKey: 'documentsList', getLocal: () => snapshot.documentsList, computePatch: computeMetaPatch },
+    ];
+    await Promise.all(jsonChannelSpecs.map((spec) => createCloudChannel({
+      ...spec,
+      getDb,
+      cloudProjectIdRef: projectIdRef,
+      setLocal: () => {},
+      logEvent: logCloudEvent,
+    }).seedInitial()));
+
+    if (snapshot.excelFileBuffer) {
+      await createCloudBlobChannel({
+        channelKey: 'excelFile',
+        getDb,
+        cloudProjectIdRef: projectIdRef,
+        getLocalBuffer: async () => snapshot.excelFileBuffer,
+        getLocalFileName: () => snapshot.excelFileName,
+        setLocal: async () => {},
+        logEvent: logCloudEvent,
+        maxFileSizeBytes,
+      }).seedInitial();
+    }
+
+    for (const docName of (snapshot.documentsList || [])) {
+      const docData = (snapshot.docs && snapshot.docs[docName]) || null;
+      if (!docData) continue;
+      await createCloudChannel({
+        channelKey: `template:${docName}`,
+        getDb,
+        cloudProjectIdRef: projectIdRef,
+        getLocal: () => docData.templateText || '',
+        setLocal: () => {},
+        wrap: (v) => ({ text: v || '' }),
+        unwrap: (v) => v?.text || '',
+        computePatch: computeDataPatch,
+        logEvent: logCloudEvent,
+      }).seedInitial();
+      if (docData.refDocBuffer) {
+        await createCloudBlobChannel({
+          channelKey: `refDoc:${docName}`,
+          getDb,
+          cloudProjectIdRef: projectIdRef,
+          getLocalBuffer: async () => docData.refDocBuffer,
+          getLocalFileName: () => docData.refDocFileName,
+          setLocal: async () => {},
+          logEvent: logCloudEvent,
+          maxFileSizeBytes,
+        }).seedInitial();
+      }
+    }
+    return projectId;
+  }
+
+  // Fase 34: la inversa de lectura -- reconstrueix l'estat MERGED actual
+  // (base + deltes, mateixa fórmula que `recomputeAndApply`) de TOTS els
+  // canals d'un projecte al núvol, D'UN SOL COP (sense `onSnapshot`), per a
+  // un projecte que no s'escolta en viu. Qui ho crida ha de ser membre
+  // d'aquest projecte -- igual que a la resta de l'arxiu, una manca
+  // d'accés es tradueix en `permission-denied` (mai capturat aquí).
+  async function fetchCloudProjectSnapshotOnce(projectId) {
+    const { db, mod } = await getDb();
+    async function readJsonChannel(channelKey, unwrap = (v) => v) {
+      const baseSnap = await mod.getDoc(mod.doc(db, 'projects', projectId, 'channels', channelKey));
+      if (!baseSnap.exists()) return null;
+      const deltasSnap = await mod.getDocs(mod.collection(db, 'projects', projectId, 'channels', channelKey, 'deltas'));
+      const deltaDocs = [];
+      deltasSnap.forEach((d) => deltaDocs.push(d.data()));
+      return unwrap(mergeChannelFromDocs(baseSnap.data().snapshot, deltaDocs));
+    }
+    async function readBlobChannel(channelKey) {
+      const metaSnap = await mod.getDoc(mod.doc(db, 'projects', projectId, 'channels', channelKey));
+      if (!metaSnap.exists()) return null;
+      const meta = metaSnap.data();
+      const chunksSnap = await mod.getDocs(mod.collection(db, 'projects', projectId, 'channels', channelKey, 'chunks'));
+      const ordered = new Array(meta.totalChunks);
+      chunksSnap.forEach((d) => {
+        const idx = parseInt(d.ref.path.split('/').pop(), 10);
+        if (!Number.isNaN(idx) && idx < meta.totalChunks) ordered[idx] = d.data().data.toUint8Array();
+      });
+      if (ordered.some((c) => !c)) return null; // incomplet -- tractat com absent en aquesta lectura d'un sol cop
+      const bytes = concatChunks(ordered);
+      const hash = await sha256Hex(bytes);
+      if (hash !== meta.sha256Hex) return null; // integritat incorrecta -- mateix criteri que fetchAndApply
+      return { buffer: bytes.buffer, fileName: meta.fileName };
+    }
+
+    const [excelJsonData, editorMetadata, sheetInfo, hierarchySchema, documentsList] = await Promise.all([
+      readJsonChannel('data'),
+      readJsonChannel('schema'),
+      readJsonChannel('sheetInfo'),
+      readJsonChannel('hierarchySchema'),
+      readJsonChannel('documentsList'),
+    ]);
+    const excelFile = await readBlobChannel('excelFile');
+    const docs = {};
+    for (const docName of (documentsList || [])) {
+      const templateText = await readJsonChannel(`template:${docName}`, (v) => v?.text || '');
+      const refDoc = await readBlobChannel(`refDoc:${docName}`);
+      docs[docName] = {
+        templateText: templateText || '',
+        refDocBuffer: refDoc ? refDoc.buffer : null,
+        refDocFileName: refDoc ? refDoc.fileName : '',
+      };
+    }
+    return {
+      excelJsonData,
+      editorMetadata: editorMetadata || [],
+      sheetInfo: sheetInfo || [],
+      hierarchySchema: hierarchySchema || {},
+      documentsList: documentsList || [],
+      excelFileBuffer: excelFile ? excelFile.buffer : null,
+      excelFileName: excelFile ? excelFile.fileName : '',
+      docs,
+    };
+  }
+
   // Fase 30, reforç: un projecte vinculat ABANS que aquesta fase existís té
   // un `_access/doc` sense `projectName` i cap entrada pròpia a
   // `userProjects/` -- totes dues només s'escrivien en CREAR el projecte
@@ -1303,6 +1442,8 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     addProjectMember,
     removeProjectMember,
     listMyCloudProjects,
+    seedCloudProjectFromSnapshot,
+    fetchCloudProjectSnapshotOnce,
     bindCloudTemplateDocument,
     captureExcelFileIfChanged,
     bindCloudRefDocDocument,

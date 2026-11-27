@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { computeDataPatch, computeMetaPatch, applyDataPatch } from '../src/utils/dataPatch.js';
+import { computeDataPatch, computeMetaPatch, applyDataPatch, mergeChannelFromDocs } from '../src/utils/dataPatch.js';
 
 describe('dataPatch', () => {
   it('computeDataPatch returns null when nothing changed', () => {
@@ -62,5 +62,30 @@ describe('dataPatch', () => {
     const patch1 = computeDataPatch(before, after);
     const patch2 = computeDataPatch(before, after);
     expect(patch1).toEqual(patch2);
+  });
+
+  describe('mergeChannelFromDocs (Fase 34: extreta de useCloudSync.js, sense canvi de comportament)', () => {
+    it('returns the baseline unchanged when there are no deltas', () => {
+      const baseline = { General: { nom: 'P1' } };
+      expect(mergeChannelFromDocs(baseline, [])).toEqual(baseline);
+    });
+
+    it('applies deltas in deterministic (ts, userId) order regardless of array order', () => {
+      const baseline = { General: { a: 1, b: 1 } };
+      const deltaA = { userId: 'a', ts: '2026-01-01T10:00:00.000Z', patch: computeDataPatch(baseline, { General: { a: 2, b: 1 } }) };
+      const deltaB = { userId: 'b', ts: '2026-01-01T10:00:01.000Z', patch: computeDataPatch({ General: { a: 2, b: 1 } }, { General: { a: 2, b: 2 } }) };
+      expect(mergeChannelFromDocs(baseline, [deltaB, deltaA])).toEqual({ General: { a: 2, b: 2 } });
+      expect(mergeChannelFromDocs(baseline, [deltaA, deltaB])).toEqual({ General: { a: 2, b: 2 } });
+    });
+
+    it('returns null/undefined baseline unchanged (no base snapshot known yet)', () => {
+      expect(mergeChannelFromDocs(null, [])).toBeNull();
+      expect(mergeChannelFromDocs(undefined, [])).toBeUndefined();
+    });
+
+    it('ignores deltas with an empty/missing patch', () => {
+      const baseline = { General: { a: 1 } };
+      expect(mergeChannelFromDocs(baseline, [{ userId: 'a', ts: 't1', patch: null }, { userId: 'b', ts: 't2', patch: [] }])).toEqual(baseline);
+    });
   });
 });

@@ -1310,3 +1310,91 @@ describe('useCloudSync (Fase 32: indicador de progrés durant la sincronització
     expect(cloud.cloudSyncStatus.value).toBe('connected');
   });
 });
+
+describe('useCloudSync (Fase 34: seedCloudProjectFromSnapshot / fetchCloudProjectSnapshotOnce -- primitives per a un projecte no actiu)', () => {
+  function makeSnapshot(overrides = {}) {
+    return {
+      excelJsonData: { General: { nom: 'Expedient en segon pla' } },
+      editorMetadata: [{ key: 'nom', label: 'Nom' }],
+      sheetInfo: [{ sheet: 'General' }],
+      hierarchySchema: { General: { children: {} } },
+      documentsList: ['Document Principal', 'Annex'],
+      excelFileName: 'origen.xlsx',
+      excelFileBuffer: new Uint8Array([1, 2, 3, 4]).buffer,
+      docs: {
+        'Document Principal': { templateText: 'Plantilla principal', refDocFileName: '', refDocBuffer: null },
+        Annex: { templateText: 'Plantilla annex', refDocFileName: 'ref.docx', refDocBuffer: new Uint8Array([9, 9]).buffer },
+      },
+      ...overrides,
+    };
+  }
+
+  it('seedCloudProjectFromSnapshot crea un projecte complet al núvol SENSE passar mai per store.* -- fetchCloudProjectSnapshotOnce el rellegeix idèntic', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    // Cap crida a activateCloudSync -- aquest useCloudSync ni tan sols
+    // arriba a vincular-se a cap projecte, mateix esperit que una còpia de
+    // seguretat en segon pla d'un projecte que no és l'obert ara mateix.
+    const cloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const snapshot = makeSnapshot();
+    const id = crypto.randomUUID();
+
+    await cloud.seedCloudProjectFromSnapshot(id, 'ProjecteEnSegonPla', snapshot);
+
+    expect(backend.docsStore.get(`projects/${id}/_access/doc`)).toEqual({
+      ownerEmail: 'owner@test.com',
+      memberEmails: ['owner@test.com'],
+      projectName: 'ProjecteEnSegonPla',
+    });
+    expect(backend.docsStore.get(`userProjects/owner@test.com/projects/${id}`)).toEqual({
+      projectName: 'ProjecteEnSegonPla',
+      ownerEmail: 'owner@test.com',
+    });
+    expect(backend.docsStore.get(`projects/${id}/channels/data`).snapshot).toEqual(snapshot.excelJsonData);
+    expect(backend.docsStore.get(`projects/${id}/channels/documentsList`).snapshot).toEqual(snapshot.documentsList);
+    expect(backend.docsStore.get(`projects/${id}/channels/template:Annex`).snapshot).toEqual({ text: 'Plantilla annex' });
+    expect(backend.docsStore.get(`projects/${id}/channels/excelFile`).fileName).toBe('origen.xlsx');
+    expect(backend.docsStore.get(`projects/${id}/channels/refDoc:Annex`).fileName).toBe('ref.docx');
+    // El document SENSE fitxer de referència no ha de tenir cap canal
+    // refDoc -- mateix criteri que seedInitial() ja garanteix (mai es crea
+    // un canal/meta buit).
+    expect(backend.docsStore.has(`projects/${id}/channels/refDoc:Document Principal`)).toBe(false);
+
+    const reread = await cloud.fetchCloudProjectSnapshotOnce(id);
+    expect(reread).toEqual(snapshot);
+  });
+
+  it('fetchCloudProjectSnapshotOnce reconstrueix l\'estat ja fusionat (base + deltes) d\'un projecte que un altre membre ha editat en viu, sense cap onSnapshot propi', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const store = useWorkspaceStore();
+    store.config.cloudSyncCaptureDebounceSeconds = CAPTURE_DEBOUNCE_SECONDS_TEST;
+    store.excelJsonData = { General: { nom: 'Abans d\'editar' } };
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteViu');
+    await flush();
+
+    store.excelJsonData = { General: { nom: 'Editat en viu' } };
+    await flush();
+
+    // Un segon client, mai vinculat en viu a aquest projecte -- NOMÉS fa la
+    // lectura d'un sol cop.
+    setActivePinia(createPinia());
+    useWorkspaceStore();
+    const outsideCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const snapshot = await outsideCloud.fetchCloudProjectSnapshotOnce(id);
+    expect(snapshot.excelJsonData.General.nom).toBe('Editat en viu');
+  });
+
+  it('fetchCloudProjectSnapshotOnce rebutja qui no és membre del projecte', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+
+    const outsiderAuth = makeCloudAuth('fora@test.com');
+    const outsiderCloud = useCloudSync(outsiderAuth, backend.createClientFor('fora@test.com'));
+    await expect(outsiderCloud.fetchCloudProjectSnapshotOnce(id)).rejects.toThrow();
+  });
+});
