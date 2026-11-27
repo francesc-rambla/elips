@@ -29,6 +29,8 @@ import { useCollabRealtime, generateSessionCredentials, normalizeSignalingServer
 import { getDisplayNameOrFallback, setDisplayName as setCollabDisplayName, getUserColor } from './composables/useCollabIdentity';
 import { useCloudAuth } from './composables/useCloudAuth';
 import { useCloudSync } from './composables/useCloudSync';
+import { syncWholeWorkspace } from './composables/useWorkspaceCloudBackup';
+import { readLocalProjectSnapshot } from './utils/projectSnapshot';
 import { dedupeProjectName } from './utils/projectNaming';
 
 // Components
@@ -333,6 +335,7 @@ const {
   addProjectMember: addCloudProjectMember,
   removeProjectMember: removeCloudProjectMember,
   listMyCloudProjects,
+  seedCloudProjectFromSnapshot,
   bindCloudTemplateDocument,
   captureExcelFileIfChanged,
   bindCloudRefDocDocument,
@@ -410,6 +413,38 @@ const refreshMyCloudProjects = async () => {
 };
 watch(isCollabPanelOpen, (open) => { if (open) refreshMyCloudProjects(); });
 
+// Fase 35 (veure el pla, "Fases 34-37: de 'compartir un projecte' a 'còpia
+// de seguretat de tot l'espai de treball al núvol'"): en lloc de requerir
+// un clic d'"Activa" per cada projecte, en connectar-se al núvol es
+// comprova TOT `savedProjectsList` -- qualsevol projecte encara no
+// vinculat es crea automàticament al núvol (còpia de seguretat silenciosa)
+// si el seu nom és lliure, o es registra com a conflicte pendent (Fase 36)
+// si ja hi ha un projecte al núvol amb aquest mateix nom. `pendingCloudConflicts`
+// és llegit/consumit per `CollabPanel.vue` (Fase 36).
+const pendingCloudConflicts = ref([]);
+const syncWholeWorkspaceWithCloud = async () => {
+  if (!cloudCurrentUser.value) return;
+  try {
+    await syncWholeWorkspace({
+      savedProjectNames: savedProjectsList.value,
+      isLinked: (name) => !!localStorage.getItem(`${name}:cloudProjectId`),
+      linkProject: (name, id) => localStorage.setItem(`${name}:cloudProjectId`, id),
+      listMyCloudProjects,
+      readLocalProjectSnapshot,
+      seedCloudProjectFromSnapshot,
+      logEvent: (text, type) => store.addLog(text, type),
+      onConflict: (conflict) => {
+        if (!pendingCloudConflicts.value.some((c) => c.localName === conflict.localName)) {
+          pendingCloudConflicts.value.push(conflict);
+          store.addLog(`El projecte '${conflict.localName}' coincideix de nom amb un projecte ja existent al núvol -- cal decidir què fer-ne (obre el panell de col·laboració).`, 'warning');
+        }
+      },
+    });
+  } catch (e) {
+    store.addLog(`Error en sincronitzar l'espai de treball amb el núvol: ${e.message}`, 'warning');
+  }
+};
+
 // Fase 27 (vegeu el pla): reconnexió transparent a la sincronització al
 // núvol prèvia d'aquest projecte en reobrir-lo -- mateix criteri que
 // tryAutoReconnectRealtime (Fase 15): sense cap botó ni confirmació, i cap
@@ -448,6 +483,7 @@ watch(cloudCurrentUser, (user) => {
     // això, `myCloudProjects` es queda buit per sempre i el tauler només
     // mostra el camp d'enganxar un identificador.
     if (isCollabPanelOpen.value) refreshMyCloudProjects();
+    syncWholeWorkspaceWithCloud();
   }
 });
 
@@ -870,6 +906,13 @@ const createNewProject = async () => {
   await initializeAndSwitchToNewProject(cleanName);
   isProjectsModalOpen.value = false;
   store.addLog(`Projecte '${cleanName}' creat i seleccionat correctament.`, 'success');
+  // Fase 35: si ja hi ha sessió al núvol, aquest projecte nou (encara no
+  // n'hi havia cap, per construcció) queda cobert pel mateix escombrat de
+  // còpia de seguretat sense esperar al pròxim inici de sessió --
+  // `tryAutoReconnectCloudSync` el vincula en viu de seguida si l'escombrat
+  // l'ha pogut enllaçar sense cap xoc de nom.
+  await syncWholeWorkspaceWithCloud();
+  await tryAutoReconnectCloudSync(currentProjectName.value);
 };
 
 // Fase 31 (veure el pla): unir-se a un projecte al núvol -- des del camp
@@ -1772,6 +1815,10 @@ const importProjectZip = async (file) => {
 
     store.addLog(`Projecte '${pName}' restaurat correctament des del fitxer ZIP.`, 'success');
     alert(`El projecte '${pName}' s'ha carregat i restaurat satisfactòriament!`);
+    // Fase 35: mateix criteri que createNewProject -- si ja hi ha sessió al
+    // núvol, aquest projecte (nou o sobreescrit) queda cobert de seguida.
+    await syncWholeWorkspaceWithCloud();
+    await tryAutoReconnectCloudSync(pName);
   } catch (err) {
     store.addLog(`Error al carregar el paquet ZIP: ${err.message}`, 'error');
     alert(`Error al carregar el paquet ZIP del projecte: ${err.message}`);
