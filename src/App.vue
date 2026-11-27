@@ -439,7 +439,16 @@ const tryAutoReconnectCloudSync = async (name) => {
 // obert; si l'usuari ja n'ha canviat quan arriba, `currentProjectName.value`
 // ja apunta al nou, que és exactament el que cal comprovar.
 watch(cloudCurrentUser, (user) => {
-  if (user) tryAutoReconnectCloudSync(currentProjectName.value);
+  if (user) {
+    tryAutoReconnectCloudSync(currentProjectName.value);
+    // Si el tauler ja estava obert ABANS que `onAuthStateChanged` es
+    // resolgués (el cas habitual en recarregar la pàgina amb una sessió
+    // de Firebase ja persistida), `watch(isCollabPanelOpen, ...)` no es
+    // torna a disparar perquè `isCollabPanelOpen` no canvia -- sense
+    // això, `myCloudProjects` es queda buit per sempre i el tauler només
+    // mostra el camp d'enganxar un identificador.
+    if (isCollabPanelOpen.value) refreshMyCloudProjects();
+  }
 });
 
 // Desat per poder tornar a intentar la connexió, amb les mateixes
