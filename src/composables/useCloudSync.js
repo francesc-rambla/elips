@@ -1090,17 +1090,18 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
   // en una còpia de seguretat ordinària coincideixen, però en resoldre un
   // conflicte amb l'opció "crea'n un de nou amb un altre nom" (Fase 36) no
   // cal canviar el nom LOCAL, només el que es desa a `_access/doc`.
-  async function seedCloudProjectFromSnapshot(projectId, projectName, snapshot) {
-    const email = normalizeEmail(cloudAuth.currentUser.value.email);
-    const { db, mod } = await getDb();
-    await mod.setDoc(mod.doc(db, 'projects', projectId, '_access', 'doc'), {
-      ownerEmail: email,
-      memberEmails: [email],
-      projectName,
-    });
-    await writeUserProjectIndexEntry(email, projectId, projectName, email);
-
-    const projectIdRef = ref(projectId);
+  // Fase 36 (veure pla): extreta de `seedCloudProjectFromSnapshot` perquè
+  // `overwriteCloudProjectContent` (opcions "sobreescriu el núvol"/"fusiona"
+  // de la resolució de conflictes) en pugui reutilitzar EXACTAMENT la
+  // mateixa lògica de reemplenat de canals -- la diferència entre crear un
+  // projecte NOU i sobreescriure'n un ja existent és NOMÉS si es toca
+  // `_access/doc`/l'índex (mai en aquesta funció) i si cal buidar deltes ja
+  // acumulats (tampoc aquí -- `seedInitial()` ja sobreescriu la base
+  // incondicionalment; vegeu `overwriteCloudProjectContent` per qui sí ho
+  // fa). Retorna els `channelKey` de tots els canals JSON escrits (inclosos
+  // els `template:<docName>` dinàmics), perquè qui vulgui buidar-ne els
+  // deltes sàpiga exactament quins.
+  async function seedAllChannelsFromSnapshot(projectIdRef, snapshot) {
     const maxFileSizeBytes = () => (store.config.cloudSyncMaxBinaryFileSizeMB || DEFAULT_MAX_BINARY_FILE_SIZE_MB) * 1024 * 1024;
     const jsonChannelSpecs = [
       { channelKey: 'data', getLocal: () => snapshot.excelJsonData, computePatch: computeDataPatch },
@@ -1109,6 +1110,17 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
       { channelKey: 'hierarchySchema', getLocal: () => snapshot.hierarchySchema, computePatch: computeDataPatch },
       { channelKey: 'documentsList', getLocal: () => snapshot.documentsList, computePatch: computeMetaPatch },
     ];
+    for (const docName of (snapshot.documentsList || [])) {
+      const docData = (snapshot.docs && snapshot.docs[docName]) || null;
+      if (!docData) continue;
+      jsonChannelSpecs.push({
+        channelKey: `template:${docName}`,
+        getLocal: () => docData.templateText || '',
+        wrap: (v) => ({ text: v || '' }),
+        unwrap: (v) => v?.text || '',
+        computePatch: computeDataPatch,
+      });
+    }
     await Promise.all(jsonChannelSpecs.map((spec) => createCloudChannel({
       ...spec,
       getDb,
@@ -1129,22 +1141,9 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
         maxFileSizeBytes,
       }).seedInitial();
     }
-
     for (const docName of (snapshot.documentsList || [])) {
       const docData = (snapshot.docs && snapshot.docs[docName]) || null;
-      if (!docData) continue;
-      await createCloudChannel({
-        channelKey: `template:${docName}`,
-        getDb,
-        cloudProjectIdRef: projectIdRef,
-        getLocal: () => docData.templateText || '',
-        setLocal: () => {},
-        wrap: (v) => ({ text: v || '' }),
-        unwrap: (v) => v?.text || '',
-        computePatch: computeDataPatch,
-        logEvent: logCloudEvent,
-      }).seedInitial();
-      if (docData.refDocBuffer) {
+      if (docData && docData.refDocBuffer) {
         await createCloudBlobChannel({
           channelKey: `refDoc:${docName}`,
           getDb,
@@ -1157,7 +1156,51 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
         }).seedInitial();
       }
     }
+    return jsonChannelSpecs.map((spec) => spec.channelKey);
+  }
+
+  async function seedCloudProjectFromSnapshot(projectId, projectName, snapshot) {
+    const email = normalizeEmail(cloudAuth.currentUser.value.email);
+    const { db, mod } = await getDb();
+    await mod.setDoc(mod.doc(db, 'projects', projectId, '_access', 'doc'), {
+      ownerEmail: email,
+      memberEmails: [email],
+      projectName,
+    });
+    await writeUserProjectIndexEntry(email, projectId, projectName, email);
+    await seedAllChannelsFromSnapshot(ref(projectId), snapshot);
     return projectId;
+  }
+
+  // Fase 36: esborra TOTS els deltes ja acumulats d'un canal (mateix
+  // escombratge per lots de 450 que `maybeCompact` ja fa) -- necessari
+  // després de `seedInitial()` sobre un canal JA EXISTENT (a diferència
+  // d'un de nou, acabat de crear, que mai en té cap): sense això, deltes
+  // vells d'abans de la sobreescriptura es reaplicarien per sobre del
+  // contingut nou la pròxima vegada que algú s'hi vinculi en viu.
+  async function clearChannelDeltas(projectId, channelKey) {
+    const { db, mod } = await getDb();
+    const deltasRef = mod.collection(db, 'projects', projectId, 'channels', channelKey, 'deltas');
+    const snap = await mod.getDocs(deltasRef);
+    const refsToDelete = [];
+    snap.forEach((d) => refsToDelete.push(d.ref));
+    for (let i = 0; i < refsToDelete.length; i += 450) {
+      const batch = mod.writeBatch(db);
+      refsToDelete.slice(i, i + 450).forEach((r) => batch.delete(r));
+      await batch.commit();
+    }
+  }
+
+  // Fase 36: "sobreescriu el núvol amb el local" / la banda de núvol d'una
+  // fusió trivial -- a diferència de `seedCloudProjectFromSnapshot`, NO
+  // toca `_access/doc` ni l'índex `userProjects/` (el projecte JA existeix,
+  // amb la seva pròpia pertinença -- sobreescriure`_access/doc` hi perdria
+  // qualsevol membre que no fos l'usuari actual). Només reemplena el
+  // contingut dels canals i en buida els deltes acumulats.
+  async function overwriteCloudProjectContent(projectId, snapshot) {
+    const projectIdRef = ref(projectId);
+    const channelKeys = await seedAllChannelsFromSnapshot(projectIdRef, snapshot);
+    await Promise.all(channelKeys.map((key) => clearChannelDeltas(projectId, key)));
   }
 
   // Fase 34: la inversa de lectura -- reconstrueix l'estat MERGED actual
@@ -1443,6 +1486,7 @@ export function useCloudSync(cloudAuth, getDb = defaultGetFirestoreModule, exter
     removeProjectMember,
     listMyCloudProjects,
     seedCloudProjectFromSnapshot,
+    overwriteCloudProjectContent,
     fetchCloudProjectSnapshotOnce,
     bindCloudTemplateDocument,
     captureExcelFileIfChanged,

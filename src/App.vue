@@ -30,7 +30,7 @@ import { getDisplayNameOrFallback, setDisplayName as setCollabDisplayName, getUs
 import { useCloudAuth } from './composables/useCloudAuth';
 import { useCloudSync } from './composables/useCloudSync';
 import { syncWholeWorkspace } from './composables/useWorkspaceCloudBackup';
-import { readLocalProjectSnapshot } from './utils/projectSnapshot';
+import { readLocalProjectSnapshot, writeLocalProjectSnapshot, classifyConflictMergeability } from './utils/projectSnapshot';
 import { dedupeProjectName } from './utils/projectNaming';
 
 // Components
@@ -336,6 +336,8 @@ const {
   removeProjectMember: removeCloudProjectMember,
   listMyCloudProjects,
   seedCloudProjectFromSnapshot,
+  overwriteCloudProjectContent,
+  fetchCloudProjectSnapshotOnce,
   bindCloudTemplateDocument,
   captureExcelFileIfChanged,
   bindCloudRefDocDocument,
@@ -422,6 +424,7 @@ watch(isCollabPanelOpen, (open) => { if (open) refreshMyCloudProjects(); });
 // si ja hi ha un projecte al núvol amb aquest mateix nom. `pendingCloudConflicts`
 // és llegit/consumit per `CollabPanel.vue` (Fase 36).
 const pendingCloudConflicts = ref([]);
+window.pendingCloudConflicts = pendingCloudConflicts;
 const syncWholeWorkspaceWithCloud = async () => {
   if (!cloudCurrentUser.value) return;
   try {
@@ -468,6 +471,95 @@ const tryAutoReconnectCloudSync = async (name) => {
     store.addLog(`No s'ha pogut reconnectar automàticament a la sincronització al núvol: ${e.message}`, 'info');
   }
 };
+
+// Fase 36 (veure el pla): resolució dels conflictes que l'escombrat de la
+// Fase 35 deixa pendents -- les quatre opcions que l'usuari ha demanat.
+// Totes quatre acaben traient l'entrada de `pendingCloudConflicts` i
+// desant `${localName}:cloudProjectId`, EXCEPTE "fusiona" quan la fusió no
+// és possible (es queda pendent, amb un avís del motiu).
+const removeCloudConflict = (localName) => {
+  pendingCloudConflicts.value = pendingCloudConflicts.value.filter((c) => c.localName !== localName);
+};
+
+// (a) Crea un projecte NOU al núvol amb un nom diferent (desduplicat) --
+// el nom LOCAL no canvia, només el que es desa a `_access/doc` d'aquest
+// altre projecte (mateixa asimetria ja acceptada des de la Fase 31).
+const resolveCloudConflictCreateNew = async (conflict) => {
+  const localSnapshot = await readLocalProjectSnapshot(conflict.localName);
+  const existingCloudNames = (await listMyCloudProjects()).map((p) => p.projectName);
+  const newCloudName = dedupeProjectName(conflict.localName, existingCloudNames);
+  const id = crypto.randomUUID();
+  await seedCloudProjectFromSnapshot(id, newCloudName, localSnapshot);
+  localStorage.setItem(`${conflict.localName}:cloudProjectId`, id);
+  removeCloudConflict(conflict.localName);
+  if (conflict.localName === currentProjectName.value) await tryAutoReconnectCloudSync(conflict.localName);
+  store.addLog(`S'ha creat un projecte nou al núvol ("${newCloudName}") per al projecte local '${conflict.localName}'.`, 'success');
+};
+
+// (b) Sobreescriu el projecte JA EXISTENT al núvol amb el contingut local.
+const resolveCloudConflictOverwriteCloud = async (conflict) => {
+  const localSnapshot = await readLocalProjectSnapshot(conflict.localName);
+  await overwriteCloudProjectContent(conflict.cloudProjectId, localSnapshot);
+  localStorage.setItem(`${conflict.localName}:cloudProjectId`, conflict.cloudProjectId);
+  removeCloudConflict(conflict.localName);
+  if (conflict.localName === currentProjectName.value) await tryAutoReconnectCloudSync(conflict.localName);
+  store.addLog(`El projecte al núvol s'ha sobreescrit amb el contingut local de '${conflict.localName}'.`, 'success');
+};
+
+// (c) Sobreescriu el projecte LOCAL amb el contingut del núvol -- si és
+// l'ACTIU, mai s'escriu `localStorage` directament (quedaria desactualitzat
+// respecte a `store.*`): en lloc d'això, es desa l'enllaç i es reutilitza
+// `activateCloudSync` (branca de reconnexió, `seed:false`), que ja sap
+// aplicar el contingut remot a `store.*` en viu pel mateix mecanisme de
+// sempre.
+const resolveCloudConflictOverwriteLocal = async (conflict) => {
+  if (conflict.localName === currentProjectName.value) {
+    localStorage.setItem(`${conflict.localName}:cloudProjectId`, conflict.cloudProjectId);
+    removeCloudConflict(conflict.localName);
+    await activateCloudSync(conflict.localName, activeDocName.value);
+  } else {
+    const cloudSnapshot = await fetchCloudProjectSnapshotOnce(conflict.cloudProjectId);
+    await writeLocalProjectSnapshot(conflict.localName, cloudSnapshot);
+    localStorage.setItem(`${conflict.localName}:cloudProjectId`, conflict.cloudProjectId);
+    removeCloudConflict(conflict.localName);
+  }
+  store.addLog(`El projecte local '${conflict.localName}' s'ha sobreescrit amb el contingut del núvol.`, 'success');
+};
+
+// (d) Intenta fusionar-los -- només quan les dades centrals coincideixen
+// EXACTAMENT a totes dues bandes (vegeu `classifyConflictMergeability`,
+// límit honest documentat allà). Si no és possible, es queda pendent amb
+// un avís del motiu -- mai s'aplica una fusió parcial en silenci.
+const resolveCloudConflictMerge = async (conflict) => {
+  const [localSnapshot, cloudSnapshot] = await Promise.all([
+    readLocalProjectSnapshot(conflict.localName),
+    fetchCloudProjectSnapshotOnce(conflict.cloudProjectId),
+  ]);
+  const result = classifyConflictMergeability(localSnapshot, cloudSnapshot);
+  if (!result.mergeable) {
+    store.addLog(`No s'ha pogut fusionar '${conflict.localName}' automàticament: ${result.reason} Tria una altra opció.`, 'warning');
+    return;
+  }
+  await overwriteCloudProjectContent(conflict.cloudProjectId, result.mergedSnapshot);
+  localStorage.setItem(`${conflict.localName}:cloudProjectId`, conflict.cloudProjectId);
+  removeCloudConflict(conflict.localName);
+  if (conflict.localName === currentProjectName.value) await activateCloudSync(conflict.localName, activeDocName.value);
+  store.addLog(`El projecte '${conflict.localName}' s'ha fusionat correctament amb el del núvol.`, 'success');
+};
+
+const handleResolveCloudConflict = async ({ localName, option }) => {
+  const conflict = pendingCloudConflicts.value.find((c) => c.localName === localName);
+  if (!conflict) return;
+  try {
+    if (option === 'create-new') await resolveCloudConflictCreateNew(conflict);
+    else if (option === 'overwrite-cloud') await resolveCloudConflictOverwriteCloud(conflict);
+    else if (option === 'overwrite-local') await resolveCloudConflictOverwriteLocal(conflict);
+    else if (option === 'merge') await resolveCloudConflictMerge(conflict);
+  } catch (e) {
+    store.addLog(`Error en resoldre el conflicte de '${localName}': ${e.message}`, 'error');
+  }
+};
+window.handleResolveCloudConflict = handleResolveCloudConflict;
 
 // Reintent en resoldre's la sessió de Firebase DESPRÉS que el projecte ja
 // estigui carregat (vegeu més amunt) -- només per al projecte ACTUALMENT
@@ -3961,7 +4053,9 @@ const generateDocuments = async () => {
       :cloud-project-access="cloudProjectAccess"
       :is-cloud-project-owner="isCloudProjectOwner()"
       :my-cloud-projects="myCloudProjects"
+      :pending-cloud-conflicts="pendingCloudConflicts"
       @close="isCollabPanelOpen = false"
+      @resolve-cloud-conflict="handleResolveCloudConflict"
       @connect="handleConnectCollabFolder"
       @disconnect="disconnectCollabFolder"
       @request-permission="requestCollabPermission"

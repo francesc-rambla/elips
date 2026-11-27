@@ -1398,3 +1398,62 @@ describe('useCloudSync (Fase 34: seedCloudProjectFromSnapshot / fetchCloudProjec
     await expect(outsiderCloud.fetchCloudProjectSnapshotOnce(id)).rejects.toThrow();
   });
 });
+
+describe('useCloudSync (Fase 36: overwriteCloudProjectContent -- "sobreescriu el núvol amb el local" / banda de núvol d\'una fusió)', () => {
+  it('reemplena el contingut, buida els deltes acumulats, i preserva _access/doc (ownerEmail/memberEmails/projectName) intacte', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const store = useWorkspaceStore();
+    store.config.cloudSyncCaptureDebounceSeconds = CAPTURE_DEBOUNCE_SECONDS_TEST;
+    store.excelJsonData = { General: { nom: 'Contingut original' } };
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+
+    // Acumula un delta real abans de sobreescriure -- ha de desaparèixer.
+    store.excelJsonData = { General: { nom: 'Edició abans de sobreescriure' } };
+    await flush();
+    expect([...backend.docsStore.keys()].some((k) => k.startsWith(`projects/${id}/channels/data/deltas/`))).toBe(true);
+
+    const newSnapshot = {
+      excelJsonData: { General: { nom: 'Contingut local de substitució' } },
+      editorMetadata: [], sheetInfo: [], hierarchySchema: {},
+      documentsList: ['Document Principal'],
+      excelFileName: '', excelFileBuffer: null,
+      docs: { 'Document Principal': { templateText: 'Plantilla nova', refDocFileName: '', refDocBuffer: null } },
+    };
+    await ownerCloud.overwriteCloudProjectContent(id, newSnapshot);
+
+    expect(backend.docsStore.get(`projects/${id}/channels/data`).snapshot).toEqual(newSnapshot.excelJsonData);
+    expect([...backend.docsStore.keys()].some((k) => k.startsWith(`projects/${id}/channels/data/deltas/`))).toBe(false);
+    expect(backend.docsStore.get(`projects/${id}/channels/template:Document Principal`).snapshot).toEqual({ text: 'Plantilla nova' });
+    // _access/doc intacte -- el membre afegit abans de sobreescriure NO ha desaparegut.
+    expect(backend.docsStore.get(`projects/${id}/_access/doc`)).toEqual({
+      ownerEmail: 'owner@test.com',
+      memberEmails: ['owner@test.com', 'membre@test.com'],
+      projectName: 'ProjecteA',
+    });
+  });
+
+  it('un membre que NO és propietari també pot sobreescriure el contingut (només _access/doc exigeix ser-ne el propietari, mai els canals)', async () => {
+    const backend = makeFakeFirestoreBackend();
+    const ownerAuth = makeCloudAuth('owner@test.com');
+    const ownerCloud = useCloudSync(ownerAuth, backend.createClientFor('owner@test.com'));
+    const id = await ownerCloud.activateCloudSync('ProjecteA');
+    await flush();
+    await ownerCloud.addProjectMember('membre@test.com');
+    await flush();
+
+    const memberAuth = makeCloudAuth('membre@test.com');
+    const memberCloud = useCloudSync(memberAuth, backend.createClientFor('membre@test.com'));
+    const snapshot = {
+      excelJsonData: { General: { nom: 'Escrit pel membre' } },
+      editorMetadata: [], sheetInfo: [], hierarchySchema: {}, documentsList: ['Document Principal'],
+      excelFileName: '', excelFileBuffer: null, docs: { 'Document Principal': { templateText: '', refDocFileName: '', refDocBuffer: null } },
+    };
+    await expect(memberCloud.overwriteCloudProjectContent(id, snapshot)).resolves.not.toThrow();
+    expect(backend.docsStore.get(`projects/${id}/channels/data`).snapshot).toEqual(snapshot.excelJsonData);
+  });
+});

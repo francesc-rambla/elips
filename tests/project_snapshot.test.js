@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { readLocalProjectSnapshot, writeLocalProjectSnapshot } from '../src/utils/projectSnapshot.js';
+import { readLocalProjectSnapshot, writeLocalProjectSnapshot, classifyConflictMergeability } from '../src/utils/projectSnapshot.js';
 
 beforeEach(() => {
   if (typeof globalThis.localStorage === 'undefined') {
@@ -112,5 +112,63 @@ describe('readLocalProjectSnapshot / writeLocalProjectSnapshot (Fase 34: primiti
     const reread = await readLocalProjectSnapshot('ProjecteProva', { getItem: db.getItem });
     expect(reread.excelJsonData).toEqual({ General: { nom: 'Versió nova' } });
     expect(reread.docs['Document Principal'].templateText).toBe('Nou');
+  });
+});
+
+describe('classifyConflictMergeability (Fase 36: límit honest de la fusió automàtica)', () => {
+  function makeSnapshot(overrides = {}) {
+    return {
+      excelJsonData: { General: { nom: 'Expedient 1' } },
+      editorMetadata: [{ key: 'nom' }],
+      sheetInfo: [{ sheet: 'General' }],
+      hierarchySchema: {},
+      documentsList: ['Document Principal'],
+      excelFileName: 'origen.xlsx',
+      excelFileBuffer: new Uint8Array([1, 2, 3]).buffer,
+      docs: { 'Document Principal': { templateText: 'Plantilla', refDocFileName: '', refDocBuffer: null } },
+      ...overrides,
+    };
+  }
+
+  it('és fusionable quan totes dues bandes són EXACTAMENT idèntiques -- cas típic: el mateix projecte, vist des d\'un altre dispositiu', () => {
+    const local = makeSnapshot();
+    const cloud = makeSnapshot();
+    const result = classifyConflictMergeability(local, cloud);
+    expect(result.mergeable).toBe(true);
+    expect(result.mergedSnapshot.documentsList).toEqual(['Document Principal']);
+  });
+
+  it('fusiona per unió de documents quan les dades centrals coincideixen però cada banda té documents diferents', () => {
+    const local = makeSnapshot({ documentsList: ['Document Principal', 'Annex Local'], docs: { 'Document Principal': { templateText: 'Plantilla', refDocFileName: '', refDocBuffer: null }, 'Annex Local': { templateText: 'Només local', refDocFileName: '', refDocBuffer: null } } });
+    const cloud = makeSnapshot({ documentsList: ['Document Principal', 'Annex Núvol'], docs: { 'Document Principal': { templateText: 'Plantilla', refDocFileName: '', refDocBuffer: null }, 'Annex Núvol': { templateText: 'Només núvol', refDocFileName: '', refDocBuffer: null } } });
+    const result = classifyConflictMergeability(local, cloud);
+    expect(result.mergeable).toBe(true);
+    expect(result.mergedSnapshot.documentsList).toEqual(['Document Principal', 'Annex Local', 'Annex Núvol']);
+    expect(result.mergedSnapshot.docs['Annex Local'].templateText).toBe('Només local');
+    expect(result.mergedSnapshot.docs['Annex Núvol'].templateText).toBe('Només núvol');
+  });
+
+  it('NO és fusionable quan les dades centrals (excelJsonData) difereixen -- mai una fusió parcial silenciosa', () => {
+    const local = makeSnapshot({ excelJsonData: { General: { nom: 'Versió A' } } });
+    const cloud = makeSnapshot({ excelJsonData: { General: { nom: 'Versió B' } } });
+    const result = classifyConflictMergeability(local, cloud);
+    expect(result.mergeable).toBe(false);
+    expect(result.reason).toMatch(/dades del projecte/i);
+  });
+
+  it('NO és fusionable quan un document compartit per totes dues bandes té una plantilla diferent', () => {
+    const local = makeSnapshot({ docs: { 'Document Principal': { templateText: 'Versió A', refDocFileName: '', refDocBuffer: null } } });
+    const cloud = makeSnapshot({ docs: { 'Document Principal': { templateText: 'Versió B', refDocFileName: '', refDocBuffer: null } } });
+    const result = classifyConflictMergeability(local, cloud);
+    expect(result.mergeable).toBe(false);
+    expect(result.reason).toMatch(/Document Principal/);
+  });
+
+  it('NO és fusionable quan el fitxer Excel d\'origen difereix', () => {
+    const local = makeSnapshot({ excelFileBuffer: new Uint8Array([1, 2, 3]).buffer });
+    const cloud = makeSnapshot({ excelFileBuffer: new Uint8Array([9, 9, 9]).buffer });
+    const result = classifyConflictMergeability(local, cloud);
+    expect(result.mergeable).toBe(false);
+    expect(result.reason).toMatch(/Excel/i);
   });
 });

@@ -70,6 +70,11 @@ const props = defineProps({
   // Fase 32: cert mentre s'espera la primera instantània de cada canal
   // just després d'activar/unir-se -- vegeu useCloudSync.js.
   cloudIsApplyingInitialSync: { type: Boolean, default: false },
+  // Fase 35/36: projectes locals l'escombrat automàtic dels quals ha
+  // trobat un xoc de nom amb un projecte al núvol ja existent --
+  // ({localName, cloudProjectId, cloudProjectName}[]), pendents de
+  // resoldre amb una de les quatre opcions.
+  pendingCloudConflicts: { type: Array, default: () => [] },
 });
 
 const emit = defineEmits([
@@ -78,6 +83,7 @@ const emit = defineEmits([
   'request-project-transfer', 'cloud-sign-in', 'cloud-sign-out',
   'activate-cloud-sync', 'join-cloud-project', 'deactivate-cloud-sync',
   'add-cloud-project-member', 'remove-cloud-project-member', 'open-cloud-project',
+  'resolve-cloud-conflict',
 ]);
 
 const nameInput = ref(props.displayName);
@@ -429,6 +435,24 @@ const copyToClipboard = async (text) => {
              real del projecte, selector, indicador de progrés). -->
         <div v-show="activeTab === 'cloud'" style="padding: 0 1.25rem; display: flex; flex-direction: column; gap: 8px; padding-top: 1rem;">
           <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary);">☁️ Sincronització al núvol</span>
+
+          <!-- Fase 36: conflictes de nom pendents de l'escombrat automàtic
+               (Fase 35) -- es mostren per sobre de la resta, abans de
+               qualsevol altra cosa, mentre n'hi hagi cap. -->
+          <div v-if="pendingCloudConflicts.length" style="display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--color-warning, #d97706); border-radius: 6px; padding: 10px; background: var(--bg-tertiary);">
+            <span style="font-size: 0.85rem; font-weight: 700; color: var(--color-warning, #d97706);">⚠️ Conflictes de nom pendents de resoldre</span>
+            <div v-for="conflict in pendingCloudConflicts" :key="conflict.localName" style="display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border-color); padding-top: 8px;">
+              <span style="font-size: 0.8rem; color: var(--text-secondary);">
+                El projecte local <strong>{{ conflict.localName }}</strong> coincideix de nom amb un projecte ja existent al núvol (de <strong>{{ conflict.cloudProjectName }}</strong>).
+              </span>
+              <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                <button class="btn btn-secondary" style="width: auto; padding: 4px 8px; font-size: 0.72rem;" @click="emit('resolve-cloud-conflict', { localName: conflict.localName, option: 'create-new' })">Crea'n un de nou al núvol</button>
+                <button class="btn btn-secondary" style="width: auto; padding: 4px 8px; font-size: 0.72rem;" @click="emit('resolve-cloud-conflict', { localName: conflict.localName, option: 'overwrite-cloud' })">Sobreescriu el núvol amb el local</button>
+                <button class="btn btn-secondary" style="width: auto; padding: 4px 8px; font-size: 0.72rem;" @click="emit('resolve-cloud-conflict', { localName: conflict.localName, option: 'overwrite-local' })">Sobreescriu el local amb el núvol</button>
+                <button class="btn btn-secondary" style="width: auto; padding: 4px 8px; font-size: 0.72rem;" @click="emit('resolve-cloud-conflict', { localName: conflict.localName, option: 'merge' })">Intenta fusionar-los</button>
+              </div>
+            </div>
+          </div>
 
           <template v-if="cloudAuthStatus === 'unconfigured'">
             <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0;">
